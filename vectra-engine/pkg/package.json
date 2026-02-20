@@ -1,0 +1,15 @@
+{
+  "name": "vectra-engine",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "vectra_engine_bg.wasm",
+    "vectra_engine.js",
+    "vectra_engine.d.ts"
+  ],
+  "main": "vectra_engine.js",
+  "types": "vectra_engine.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

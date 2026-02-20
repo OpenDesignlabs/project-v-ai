@@ -1,0 +1,76 @@
+   Compiling quote v1.0.44
+   Compiling rustversion v1.0.22
+   Compiling regex-automata v0.4.13
+   Compiling phf_generator v0.11.3
+   Compiling num-traits v0.2.19
+   Compiling serde_core v1.0.228
+   Compiling memchr v2.7.6
+   Compiling either v1.15.0
+   Compiling pin-project-lite v0.2.16
+   Compiling unicode-width v0.1.14
+   Compiling heck v0.5.0
+   Compiling typenum v1.19.0
+   Compiling better_scoped_tls v0.1.2
+   Compiling siphasher v0.3.11
+   Compiling unicode-id v0.3.6
+   Compiling generic-array v0.14.7
+   Compiling syn v2.0.114
+   Compiling bitflags v2.10.0
+   Compiling zmij v1.0.18
+   Compiling parking_lot_core v0.9.12
+   Compiling serde v1.0.228
+   Compiling libc v0.2.180
+   Compiling serde_json v1.0.149
+   Compiling smartstring v1.0.1
+   Compiling scopeguard v1.2.0
+   Compiling aho-corasick v1.1.4
+   Compiling wasm-bindgen v0.2.108
+   Compiling equivalent v1.0.2
+   Compiling regex-syntax v0.8.8
+   Compiling camino v1.2.2
+   Compiling thiserror v1.0.69
+   Compiling itoa v1.0.17
+   Compiling hashbrown v0.16.1
+   Compiling num-integer v0.1.46
+   Compiling lock_api v0.4.14
+   Compiling anyhow v1.0.100
+   Compiling static_assertions v1.1.0
+   Compiling num_cpus v1.17.0
+   Compiling vergen v8.3.2
+   Compiling typed-arena v2.0.2
+   Compiling uuid v1.20.0
+   Compiling indexmap v2.13.0
+   Compiling data-encoding v2.10.0
+   Compiling base64 v0.21.7
+   Compiling if_chain v1.0.3
+   Compiling ryu-js v1.0.2
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling regex v1.12.2
+   Compiling sha-1 v0.10.0
+   Compiling Inflector v0.11.4
+   Compiling semver v1.0.27
+   Compiling synstructure v0.13.2
+   Compiling wasm-bindgen-macro-support v0.2.108
+   Compiling swc_macros_common v0.3.14
+   Compiling serde_derive v1.0.228
+   Compiling zerofrom-derive v0.1.6
+   Compiling yoke-derive v0.8.1
+   Compiling zerovec-derive v0.11.2
+   Compiling displaydoc v0.2.5
+   Compiling phf_macros v0.11.3
+   Compiling tracing-attributes v0.1.31
+   Compiling swc_visit_macros v0.5.13
+   Compiling ast_node v0.9.9
+   Compiling from_variant v0.1.9
+   Compiling swc_eq_ignore_macros v0.1.4
+   Compiling string_enum v0.4.4
+   Compiling is-macro v0.3.7
+error: failed to remove D:\project-v\vectra-engine\target\release\deps\from_variant-9f196fe0e04c5887.2o8hmzxu3pdas5n7tgl85ztxh.rcgu.o: The process cannot access the file because it is being used by another process. (os error 32)
+
+error: could not compile `from_variant` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: failed to remove D:\project-v\vectra-engine\target\release\deps\tracing_attributes-5d2bd33ef20ec4e3.tracing_attributes.d9240b0e04482b84-cgu.02.rcgu.o: The process cannot access the file because it is being used by another process. (os error 32)
+
+error: could not compile `tracing-attributes` (lib) due to 1 previous error

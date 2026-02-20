@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Vectra</title>
+  <!-- Babel Standalone (self-hosted): Transpiles AI-generated JSX at runtime.
+       Served from /public — avoids COEP: require-corp blocking unpkg.com. -->
+  <script src="/babel.min.js"></script>
+  <!-- Tailwind Play CDN (self-hosted): Runtime JIT for arbitrary AI-generated classes.
+       Served from /public to avoid COEP: require-corp blocking cdn.tailwindcss.com. -->
+  <script src="/tailwind.js"></script>
+
+</head>
+
+
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

@@ -1,0 +1,50 @@
+{
+  "name": "project-v",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@babel/standalone": "^7.28.6",
+    "@heyputer/puter.js": "^2.2.10",
+    "@insforge/sdk": "^1.1.5",
+    "@number-flow/react": "^0.5.11",
+    "@radix-ui/react-label": "^2.1.8",
+    "@radix-ui/react-slot": "^1.2.4",
+    "@tabler/icons-react": "^3.36.1",
+    "@types/babel__standalone": "^7.1.9",
+    "@webcontainer/api": "^1.6.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "file-saver": "^2.0.5",
+    "framer-motion": "^12.29.2",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.562.0",
+    "openai": "^6.22.0",
+    "react": "^19.2.0",
+    "react-best-gradient-color-picker": "^3.0.14",
+    "react-colorful": "^5.6.1",
+    "react-dom": "^19.2.0",
+    "tailwind-merge": "^3.4.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@types/file-saver": "^2.0.7",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.5",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.1",
+    "eslint": "^9.39.1",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^16.5.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.46.4",
+    "vite": "^7.2.4"
+  }
+}
