@@ -1,7 +1,11 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { EditorProvider, useEditor } from './context/EditorContext';
+import { ProjectProvider } from './context/ProjectContext';
+import { UIProvider, useUI } from './context/UIContext';
 import { ContainerProvider, useContainer } from './context/ContainerContext';
+
 import { useFileSync } from './hooks/useFileSync';
+import { useAssetSync } from './hooks/useAssetSync';
 import { Dashboard } from './components/Dashboard';
 
 // 1. LAZY LOAD CHUNKS
@@ -88,6 +92,7 @@ const EditorLayout = () => {
   const [isImportOpen, setIsImportOpen] = useState(false);
 
   useFileSync();
+  useAssetSync();
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -149,7 +154,8 @@ const EditorLayout = () => {
 
 // --- THE MAIN ROUTER ---
 const MainRouter = () => {
-  const { currentView } = useEditor();
+  // Use UIContext directly — doesn't subscribe to project data changes
+  const { currentView } = useUI();
 
   if (currentView === 'dashboard') {
     return <Dashboard />;
@@ -162,12 +168,19 @@ const MainRouter = () => {
   );
 };
 
+
 const App = () => {
   return (
-    <EditorProvider>
-      <MainRouter />
-    </EditorProvider>
+    <ProjectProvider>
+      <UIProvider>
+        {/* EditorProvider is now a no-op stub kept for import compatibility */}
+        <EditorProvider>
+          <MainRouter />
+        </EditorProvider>
+      </UIProvider>
+    </ProjectProvider>
   );
 };
+
 
 export default App;

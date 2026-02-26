@@ -6,21 +6,63 @@ export class HistoryManager {
     [Symbol.dispose](): void;
     can_redo(): boolean;
     can_undo(): boolean;
+    /**
+     * Diagnostic: total bytes of compressed data currently held in memory.
+     * In a browser devtools console: `wasmModule.historyManager.get_memory_usage()`
+     */
+    get_memory_usage(): number;
     constructor(initial: string);
+    /**
+     * Compress and push a new snapshot.  Truncates the redo stack first.
+     */
     push_state(state: string): void;
+    /**
+     * Step one entry forward and return the decompressed JSON string.
+     */
     redo(): string | undefined;
+    /**
+     * Step one entry back and return the decompressed JSON string.
+     */
     undo(): string | undefined;
 }
 
-export function calculate_snapping(target_val: any, candidates_val: any, delta_x: number, delta_y: number, threshold: number): any;
+export class LayoutEngine {
+    free(): void;
+    [Symbol.dispose](): void;
+    constructor();
+    /**
+     * Fast snap query — only 5 scalar args cross the Wasm boundary.
+     * Phase 9: resolves only rects in nearby grid cells (O(k²) cells,
+     * typically 1–4 cells for threshold=5px and cell_size=100px).
+     */
+    query_snapping(current_x: number, current_y: number, width: number, height: number, threshold: number): any;
+    /**
+     * Push sibling rects into Wasm memory and rebuild the spatial hash.
+     * Call ONCE on drag-start (pointer-down). O(N) serde + O(N×k) grid cost,
+     * where k = number of cells each rect occupies (usually 1–4).
+     */
+    update_rects(rects_val: any): void;
+}
 
+export class SwcCompiler {
+    free(): void;
+    [Symbol.dispose](): void;
+    /**
+     * Compile TSX/JSX source → plain JS (React.createElement calls).
+     * Creates a fresh Globals per call to avoid WASM mutex re-entrancy panics.
+     */
+    compile(code: string): string;
+    constructor();
+}
+
+/**
+ * Free-function shim kept for backward compatibility while callers migrate
+ * to the `SwcCompiler` struct. Delegates to a temporary instance.
+ * DEPRECATED: Prefer `new SwcCompiler().compile(code)` in TypeScript.
+ */
 export function compile_component(code: string): string;
 
-export function delete_node(project_val: any, node_id: string): any;
-
 export function generate_react_code(project_val: any, root_id: string): string;
-
-export function instantiate_template(template_nodes_val: any, root_id: string): any;
 
 export function main_js(): void;
 
@@ -29,18 +71,23 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_historymanager_free: (a: number, b: number) => void;
-    readonly calculate_snapping: (a: any, b: any, c: number, d: number, e: number) => [number, number, number];
+    readonly __wbg_layoutengine_free: (a: number, b: number) => void;
+    readonly __wbg_swccompiler_free: (a: number, b: number) => void;
     readonly compile_component: (a: number, b: number) => [number, number, number, number];
-    readonly delete_node: (a: any, b: number, c: number) => [number, number, number];
     readonly generate_react_code: (a: any, b: number, c: number) => [number, number, number, number];
     readonly historymanager_can_redo: (a: number) => number;
     readonly historymanager_can_undo: (a: number) => number;
+    readonly historymanager_get_memory_usage: (a: number) => number;
     readonly historymanager_new: (a: number, b: number) => number;
     readonly historymanager_push_state: (a: number, b: number, c: number) => void;
     readonly historymanager_redo: (a: number) => [number, number];
     readonly historymanager_undo: (a: number) => [number, number];
-    readonly instantiate_template: (a: any, b: number, c: number) => [number, number, number];
+    readonly layoutengine_new: () => number;
+    readonly layoutengine_query_snapping: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly layoutengine_update_rects: (a: number, b: any) => [number, number];
     readonly main_js: () => void;
+    readonly swccompiler_compile: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly swccompiler_new: () => number;
     readonly __wbindgen_malloc: (a: number, b: number) => number;
     readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __wbindgen_exn_store: (a: number) => void;

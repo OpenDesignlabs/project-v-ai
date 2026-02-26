@@ -2,7 +2,11 @@ import React, { createContext, useContext, useEffect, useState, useCallback, use
 import { WebContainer } from '@webcontainer/api';
 import { VITE_REACT_TEMPLATE } from '../data/fileSystemTemplates';
 
-export type ContainerStatus = 'booting' | 'mounting' | 'installing' | 'starting_server' | 'ready' | 'error';
+// ─── TYPES ────────────────────────────────────────────────────────────────────
+
+// Simplified status — no more 'installing' or 'starting_server' blocking states.
+// The VFS is "ready" as soon as files are mounted. The editor never waits for npm.
+export type ContainerStatus = 'booting' | 'mounting' | 'ready' | 'error';
 
 interface ContainerContextType {
     instance: WebContainer | null;
@@ -12,13 +16,18 @@ interface ContainerContextType {
     writeFile: (path: string, content: string) => Promise<void>;
     removeFile: (path: string) => Promise<void>;
     fileTree: Record<string, any>;
+    // On-demand: triggers pnpm install + vite dev server when the user explicitly asks
     installPackage: (packageName: string) => Promise<void>;
+    startDevServer: () => Promise<void>;
 }
 
 const ContainerContext = createContext<ContainerContextType | undefined>(undefined);
 
-// Global Singleton to persist across re-renders
+// ─── SINGLETON BOOT GUARD ─────────────────────────────────────────────────────
+// Prevents double-boot in React Strict Mode double-invoke and across re-renders.
 let bootPromise: Promise<WebContainer> | null = null;
+
+// ─── PROVIDER ─────────────────────────────────────────────────────────────────
 
 export const ContainerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
     const [instance, setInstance] = useState<WebContainer | null>(null);
@@ -27,131 +36,52 @@ export const ContainerProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     const [url, setUrl] = useState<string | null>(null);
     const [fileTree, setFileTree] = useState<Record<string, any>>({});
 
-    // Safety guard for React Strict Mode
+    // Tracks whether the dev server has ever been launched this session
+    const devServerStarted = useRef(false);
     const isInitialized = useRef(false);
 
+    // ── Logging ──────────────────────────────────────────────────────────────
     const log = useCallback((msg: string) => {
         setTerminalOutput(prev => [...prev.slice(-100), msg]);
-        console.log(`[WebContainer] ${msg}`);
+        console.log(`[VFS] ${msg}`);
     }, []);
 
+    // ── Boot: VFS-only — no npm, no vite ─────────────────────────────────────
     useEffect(() => {
-        // Prevent double-initialization
         if (isInitialized.current) return;
         isInitialized.current = true;
 
         const boot = async () => {
             try {
-                log("⚡ Booting Kernel...");
+                log('⚡ Booting Virtual File System...');
                 if (!bootPromise) bootPromise = WebContainer.boot();
                 const wc = await bootPromise;
                 setInstance(wc);
 
                 setStatus('mounting');
-                log("📂 Mounting File System...");
-                // TEMPORARY FIX: Cast VITE_REACT_TEMPLATE to any or FileSystemTree to satisfy the type checker if needed
-                // The explicit type in fileSystemTemplates.ts should handle this, but being safe.
+                log('📂 Mounting project files...');
                 await wc.mount(VITE_REACT_TEMPLATE);
 
-                setStatus('installing');
-                log("📦 Installing Dependencies...");
-
-                // Helper: run pnpm install and detect network errors in output
-                const runInstall = async (): Promise<number> => {
-                    const install = await wc.spawn('pnpm', ['install']);
-                    install.output.pipeTo(new WritableStream({
-                        write: (data) => {
-                            log(data);
-                            // Detect network failures early for clearer diagnosis
-                            if (data.includes('ERR_SOCKET_TIMEOUT') || data.includes('META_FETCH_FAIL') || data.includes('FETCH_FAIL')) {
-                                log("⚠️ Network error detected — registry.npmjs.org unreachable inside container.");
-                                log("   → Check that the iframe sandbox includes allow-popups and allow-same-origin.");
-                            }
-                        }
-                    }));
-                    return install.exit;
-                };
-
-                let exitCode = await runInstall();
-
-                // Retry once on failure — handles transient registry timeouts
-                if (exitCode !== 0) {
-                    log("⚠️ Install attempt 1 failed. Retrying in 3s...");
-                    await new Promise(r => setTimeout(r, 3000));
-                    exitCode = await runInstall();
-                    if (exitCode !== 0) {
-                        log("⚠️ Install attempt 2 also failed — proceeding anyway (some packages may be missing).");
-                    }
-                }
-
-                setStatus('starting_server');
-                log("🚀 Starting Server...");
-                const dev = await wc.spawn('pnpm', ['run', 'dev']);
-                dev.output.pipeTo(new WritableStream({ write: d => log(d) }));
-
-                wc.on('server-ready', (_, url) => {
-                    setUrl(url);
-                    setStatus('ready');
-                    log(`✅ Server Ready: ${url}`);
-                });
+                // ─── DONE. No npm install. No vite. ──────────────────────────
+                // The WebContainer is now a lightning-fast virtual hard drive.
+                // • useFileSync writes .tsx files to it continuously.
+                // • The Instant Iframe (ContainerPreview) renders AI components.
+                // • startDevServer() / installPackage() are available on-demand
+                //   when the user explicitly clicks "Download" or "Run Server".
+                setStatus('ready');
+                log('✅ Virtual File System ready — instant preview active.');
 
             } catch (e) {
-                console.error(e);
+                console.error('[VFS] Boot failed:', e);
                 setStatus('error');
-                log(`❌ Error: ${e}`);
+                log(`❌ Boot failed: ${e}`);
             }
         };
 
         boot();
     }, [log]);
 
-    const writeFile = useCallback(async (path: string, content: string) => {
-        if (!instance) return;
-
-        try {
-            await instance.fs.writeFile(path, content);
-        } catch (error) {
-            // Retry with directory creation
-            try {
-                const parts = path.split('/');
-                parts.pop(); // Remove filename
-                const dir = parts.join('/');
-                if (dir) {
-                    await instance.fs.mkdir(dir, { recursive: true });
-                    await instance.fs.writeFile(path, content);
-                }
-            } catch (retryError) {
-                console.error(`[VFS] Failed to write ${path}:`, retryError);
-            }
-        }
-    }, [instance]);
-
-    const removeFile = useCallback(async (path: string) => {
-        if (!instance) return;
-        try {
-            await instance.fs.rm(path, { recursive: true, force: true });
-        } catch (error) {
-            console.error(`[VFS] Failed to remove ${path}:`, error);
-        }
-    }, [instance]);
-
-    const installPackage = useCallback(async (packageName: string) => {
-        if (!instance) return;
-        try {
-            log(`📦 Installing ${packageName}...`);
-            const install = await instance.spawn('pnpm', ['install', packageName]);
-            install.output.pipeTo(new WritableStream({ write: d => log(d) }));
-            const exitCode = await install.exit;
-            if (exitCode === 0) {
-                log(`✅ ${packageName} installed successfully`);
-            } else {
-                log(`⚠️ ${packageName} installation failed`);
-            }
-        } catch (error) {
-            log(`❌ Error installing ${packageName}: ${error}`);
-        }
-    }, [instance, log]);
-
+    // ── File tree reader ──────────────────────────────────────────────────────
     const readFileTree = useCallback(async () => {
         if (!instance || status !== 'ready') return;
         try {
@@ -159,41 +89,121 @@ export const ContainerProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 const entries = await instance.fs.readdir(path, { withFileTypes: true });
                 const tree: any = {};
                 for (const entry of entries) {
+                    // Skip heavy dirs — they'd freeze the tree reader
                     if (entry.name === 'node_modules' || entry.name === '.git') continue;
                     const fullPath = path === '/' ? `/${entry.name}` : `${path}/${entry.name}`;
-                    if (entry.isDirectory()) {
-                        tree[entry.name] = {
-                            type: 'folder',
-                            children: await buildTree(fullPath)
-                        };
-                    } else {
-                        tree[entry.name] = { type: 'file' };
-                    }
+                    tree[entry.name] = entry.isDirectory()
+                        ? { type: 'folder', children: await buildTree(fullPath) }
+                        : { type: 'file' };
                 }
                 return tree;
             };
-            const tree = await buildTree('/');
-            setFileTree(tree);
-        } catch (error) {
-            console.error('[VFS] Failed to read file tree:', error);
+            setFileTree(await buildTree('/'));
+        } catch (err) {
+            console.error('[VFS] readFileTree error:', err);
         }
     }, [instance, status]);
 
     useEffect(() => {
-        if (status === 'ready') {
-            readFileTree();
-        }
+        if (status === 'ready') readFileTree();
     }, [status, readFileTree]);
 
+    // ── writeFile (with auto-mkdir on first write to a new directory) ─────────
+    const writeFile = useCallback(async (path: string, content: string) => {
+        if (!instance) return;
+        try {
+            await instance.fs.writeFile(path, content);
+        } catch {
+            // File write failed — usually because parent directory doesn't exist yet.
+            // Create it recursively and retry.
+            try {
+                const dir = path.split('/').slice(0, -1).join('/');
+                if (dir) await instance.fs.mkdir(dir, { recursive: true });
+                await instance.fs.writeFile(path, content);
+            } catch (retryErr) {
+                console.error(`[VFS] Failed to write ${path}:`, retryErr);
+            }
+        }
+    }, [instance]);
+
+    // ── removeFile ────────────────────────────────────────────────────────────
+    const removeFile = useCallback(async (path: string) => {
+        if (!instance) return;
+        try {
+            await instance.fs.rm(path, { recursive: true, force: true });
+        } catch (err) {
+            console.error(`[VFS] Failed to remove ${path}:`, err);
+        }
+    }, [instance]);
+
+    // ── startDevServer (on-demand — called before installPackage or by a
+    //    future "Run Full Server" / "Download" button) ──────────────────────
+    const startDevServer = useCallback(async () => {
+        if (!instance || devServerStarted.current) return;
+        devServerStarted.current = true;
+
+        log('📦 Installing dependencies (on-demand)...');
+        const install = await instance.spawn('pnpm', ['install']);
+        install.output.pipeTo(new WritableStream({ write: d => log(d) }));
+        const exitCode = await install.exit;
+
+        if (exitCode !== 0) {
+            log('⚠️ pnpm install failed — some packages may be missing.');
+        }
+
+        log('🚀 Starting Vite dev server...');
+        const dev = await instance.spawn('pnpm', ['run', 'dev']);
+        dev.output.pipeTo(new WritableStream({ write: d => log(d) }));
+
+        instance.on('server-ready', (_, serverUrl) => {
+            setUrl(serverUrl);
+            log(`✅ Dev server ready: ${serverUrl}`);
+        });
+    }, [instance, log]);
+
+    // ── installPackage (NPM panel in LeftSidebar) ─────────────────────────────
+    // Ensures the dev server is running before adding a package, then installs it.
+    const installPackage = useCallback(async (packageName: string) => {
+        if (!instance) return;
+        try {
+            // Lazy-start the dev server if it hasn't been started yet
+            await startDevServer();
+
+            log(`📦 Installing ${packageName}...`);
+            const install = await instance.spawn('pnpm', ['add', packageName]);
+            install.output.pipeTo(new WritableStream({ write: d => log(d) }));
+            const exitCode = await install.exit;
+            log(exitCode === 0
+                ? `✅ ${packageName} installed successfully.`
+                : `⚠️ ${packageName} installation failed (exit ${exitCode}).`
+            );
+        } catch (err) {
+            log(`❌ Error installing ${packageName}: ${err}`);
+        }
+    }, [instance, log, startDevServer]);
+
+    // ── Provider value ────────────────────────────────────────────────────────
     return (
-        <ContainerContext.Provider value={{ instance, status, terminalOutput, url, writeFile, removeFile, fileTree, installPackage }}>
+        <ContainerContext.Provider value={{
+            instance,
+            status,
+            terminalOutput,
+            url,
+            writeFile,
+            removeFile,
+            fileTree,
+            installPackage,
+            startDevServer,
+        }}>
             {children}
         </ContainerContext.Provider>
     );
 };
 
+// ─── HOOK ─────────────────────────────────────────────────────────────────────
+
 export const useContainer = () => {
     const context = useContext(ContainerContext);
-    if (!context) throw new Error("useContainer must be used within ContainerProvider");
+    if (!context) throw new Error('useContainer must be used within ContainerProvider');
     return context;
 };

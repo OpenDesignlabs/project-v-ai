@@ -26,6 +26,15 @@ export class HistoryManager {
         return ret !== 0;
     }
     /**
+     * Diagnostic: total bytes of compressed data currently held in memory.
+     * In a browser devtools console: `wasmModule.historyManager.get_memory_usage()`
+     * @returns {number}
+     */
+    get_memory_usage() {
+        const ret = wasm.historymanager_get_memory_usage(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * @param {string} initial
      */
     constructor(initial) {
@@ -37,6 +46,7 @@ export class HistoryManager {
         return this;
     }
     /**
+     * Compress and push a new snapshot.  Truncates the redo stack first.
      * @param {string} state
      */
     push_state(state) {
@@ -45,6 +55,7 @@ export class HistoryManager {
         wasm.historymanager_push_state(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Step one entry forward and return the decompressed JSON string.
      * @returns {string | undefined}
      */
     redo() {
@@ -57,6 +68,7 @@ export class HistoryManager {
         return v1;
     }
     /**
+     * Step one entry back and return the decompressed JSON string.
      * @returns {string | undefined}
      */
     undo() {
@@ -71,23 +83,106 @@ export class HistoryManager {
 }
 if (Symbol.dispose) HistoryManager.prototype[Symbol.dispose] = HistoryManager.prototype.free;
 
-/**
- * @param {any} target_val
- * @param {any} candidates_val
- * @param {number} delta_x
- * @param {number} delta_y
- * @param {number} threshold
- * @returns {any}
- */
-export function calculate_snapping(target_val, candidates_val, delta_x, delta_y, threshold) {
-    const ret = wasm.calculate_snapping(target_val, candidates_val, delta_x, delta_y, threshold);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
+export class LayoutEngine {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        LayoutEngineFinalization.unregister(this);
+        return ptr;
     }
-    return takeFromExternrefTable0(ret[0]);
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_layoutengine_free(ptr, 0);
+    }
+    constructor() {
+        const ret = wasm.layoutengine_new();
+        this.__wbg_ptr = ret >>> 0;
+        LayoutEngineFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Fast snap query — only 5 scalar args cross the Wasm boundary.
+     * Phase 9: resolves only rects in nearby grid cells (O(k²) cells,
+     * typically 1–4 cells for threshold=5px and cell_size=100px).
+     * @param {number} current_x
+     * @param {number} current_y
+     * @param {number} width
+     * @param {number} height
+     * @param {number} threshold
+     * @returns {any}
+     */
+    query_snapping(current_x, current_y, width, height, threshold) {
+        const ret = wasm.layoutengine_query_snapping(this.__wbg_ptr, current_x, current_y, width, height, threshold);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
+     * Push sibling rects into Wasm memory and rebuild the spatial hash.
+     * Call ONCE on drag-start (pointer-down). O(N) serde + O(N×k) grid cost,
+     * where k = number of cells each rect occupies (usually 1–4).
+     * @param {any} rects_val
+     */
+    update_rects(rects_val) {
+        const ret = wasm.layoutengine_update_rects(this.__wbg_ptr, rects_val);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
 }
+if (Symbol.dispose) LayoutEngine.prototype[Symbol.dispose] = LayoutEngine.prototype.free;
+
+export class SwcCompiler {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        SwcCompilerFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_swccompiler_free(ptr, 0);
+    }
+    /**
+     * Compile TSX/JSX source → plain JS (React.createElement calls).
+     * Creates a fresh Globals per call to avoid WASM mutex re-entrancy panics.
+     * @param {string} code
+     * @returns {string}
+     */
+    compile(code) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(code, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.swccompiler_compile(this.__wbg_ptr, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    constructor() {
+        const ret = wasm.swccompiler_new();
+        this.__wbg_ptr = ret >>> 0;
+        SwcCompilerFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+}
+if (Symbol.dispose) SwcCompiler.prototype[Symbol.dispose] = SwcCompiler.prototype.free;
 
 /**
+ * Free-function shim kept for backward compatibility while callers migrate
+ * to the `SwcCompiler` struct. Delegates to a temporary instance.
+ * DEPRECATED: Prefer `new SwcCompiler().compile(code)` in TypeScript.
  * @param {string} code
  * @returns {string}
  */
@@ -114,21 +209,6 @@ export function compile_component(code) {
 
 /**
  * @param {any} project_val
- * @param {string} node_id
- * @returns {any}
- */
-export function delete_node(project_val, node_id) {
-    const ptr0 = passStringToWasm0(node_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.delete_node(project_val, ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * @param {any} project_val
  * @param {string} root_id
  * @returns {string}
  */
@@ -151,21 +231,6 @@ export function generate_react_code(project_val, root_id) {
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
     }
-}
-
-/**
- * @param {any} template_nodes_val
- * @param {string} root_id
- * @returns {any}
- */
-export function instantiate_template(template_nodes_val, root_id) {
-    const ptr0 = passStringToWasm0(root_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ret = wasm.instantiate_template(template_nodes_val, ptr0, len0);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
 }
 
 export function main_js() {
@@ -212,10 +277,6 @@ function __wbg_get_imports() {
         __wbg___wbindgen_is_object_5ae8e5880f2c1fbd: function(arg0) {
             const val = arg0;
             const ret = typeof(val) === 'object' && val !== null;
-            return ret;
-        },
-        __wbg___wbindgen_is_string_cd444516edc5b180: function(arg0) {
-            const ret = typeof(arg0) === 'string';
             return ret;
         },
         __wbg___wbindgen_is_undefined_9e4d92534c42d778: function(arg0) {
@@ -334,10 +395,6 @@ function __wbg_get_imports() {
             const ret = new Error();
             return ret;
         },
-        __wbg_new_dca287b076112a51: function() {
-            const ret = new Map();
-            return ret;
-        },
         __wbg_new_dd2b680c8bf6ae29: function(arg0) {
             const ret = new Uint8Array(arg0);
             return ret;
@@ -350,20 +407,8 @@ function __wbg_get_imports() {
             const ret = arg0.next;
             return ret;
         },
-        __wbg_now_a3af9a2f4bbaa4d1: function() {
-            const ret = Date.now();
-            return ret;
-        },
         __wbg_prototypesetcall_bdcdcc5842e4d77d: function(arg0, arg1, arg2) {
             Uint8Array.prototype.set.call(getArrayU8FromWasm0(arg0, arg1), arg2);
-        },
-        __wbg_random_912284dbf636f269: function() {
-            const ret = Math.random();
-            return ret;
-        },
-        __wbg_set_1eb0999cf5d27fc8: function(arg0, arg1, arg2) {
-            const ret = arg0.set(arg1, arg2);
-            return ret;
         },
         __wbg_set_3fda3bac07393de4: function(arg0, arg1, arg2) {
             arg0[arg1] = arg2;
@@ -421,6 +466,12 @@ function __wbg_get_imports() {
 const HistoryManagerFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_historymanager_free(ptr >>> 0, 1));
+const LayoutEngineFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_layoutengine_free(ptr >>> 0, 1));
+const SwcCompilerFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_swccompiler_free(ptr >>> 0, 1));
 
 function addToExternrefTable0(obj) {
     const idx = wasm.__externref_table_alloc();

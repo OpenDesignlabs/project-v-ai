@@ -1,30 +1,60 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { useEditor } from '../context/EditorContext';
+import { useProject } from '../context/ProjectContext';
+import { useUI } from '../context/UIContext';
+import { useEditor } from '../context/EditorContext'; // for handleInteractionMove + componentRegistry (assembled bridge)
 import { RenderNode } from './RenderNode';
 import { ContainerPreview } from './ContainerPreview';
 import { TEMPLATES } from '../data/templates';
 
+/**
+ * ─── CANVAS ────────────────────────────────────────────────────────────────────
+ * Split into three context subscriptions to minimise re-renders:
+ *
+ *  useProject()  → elements, updateProject, activePageId, instantiateTemplate
+ *                  Only re-renders when the document tree mutates.
+ *
+ *  useUI()       → zoom, pan, isPanning, guides, drag, selection, panels
+ *                  Re-renders on every wheel / pointer-move event, but these
+ *                  are now isolated to Canvas — Sidebar/Header stay idle.
+ *
+ *  useEditor()   → handleInteractionMove, componentRegistry
+ *                  Assembled bridge that combines both — read-only bridge values.
+ */
 export const Canvas = () => {
+    // ── Slow-changing project data ─────────────────────────────────────────────
     const {
-        activePageId, zoom, setZoom, pan, setPan,
-        previewMode, setSelectedId, isPanning, setIsPanning,
-        interaction, setInteraction, handleInteractionMove,
-        guides, dragData, setDragData, elements, updateProject,
-        instantiateTemplate, componentRegistry, // <--- USE REGISTRY
-        isInsertDrawerOpen, toggleInsertDrawer // <--- ADD DRAWER STATE
-    } = useEditor();
+        elements, updateProject, activePageId, instantiateTemplate,
+    } = useProject();
+
+    // ── High-frequency viewport + UI state ────────────────────────────────────
+    // These values update 60 fps during pan/zoom. Isolating them here means
+    // Sidebar, Header and PropertyPanel never re-render on pointer move.
+    const {
+        zoom, setZoom,
+        pan, setPan,
+        isPanning, setIsPanning,
+        guides,
+        previewMode,
+        dragData, setDragData,
+        selectedId: _sid, setSelectedId,
+        interaction, setInteraction: _si,
+        isInsertDrawerOpen, toggleInsertDrawer,
+    } = useUI();
+
+    // ── Assembled bridge values (componentRegistry merges static + dynamic) ───
+    const { handleInteractionMove, handleInteractionEnd, componentRegistry } = useEditor();
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const [spacePressed, setSpacePressed] = useState(false);
 
-    // --- 1. EDITOR CONTROLS ---
+    // ── 1. WHEEL — zoom & pan ─────────────────────────────────────────────────
+    // Isolated to Canvas. Only Canvas re-renders on wheel events.
     useEffect(() => {
         const onWheel = (e: WheelEvent) => {
             if (previewMode) return;
             e.preventDefault();
             if (e.ctrlKey || e.metaKey) {
-                const delta = -e.deltaY;
-                const newZoom = Math.min(Math.max(zoom + delta * 0.002, 0.1), 3);
+                const newZoom = Math.min(Math.max(zoom + -e.deltaY * 0.002, 0.1), 3);
                 setZoom(newZoom);
             } else {
                 setPan(prev => ({ x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
@@ -35,6 +65,7 @@ export const Canvas = () => {
         return () => el?.removeEventListener('wheel', onWheel);
     }, [zoom, previewMode, setZoom, setPan]);
 
+    // ── 2. KEYBOARD — spacebar panning ────────────────────────────────────────
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
             if (e.code === 'Space' && !e.repeat && !previewMode) { setSpacePressed(true); setIsPanning(true); }
@@ -44,22 +75,35 @@ export const Canvas = () => {
         };
         window.addEventListener('keydown', onKeyDown);
         window.addEventListener('keyup', onKeyUp);
-        return () => { window.removeEventListener('keydown', onKeyDown); window.removeEventListener('keyup', onKeyUp); };
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('keyup', onKeyUp);
+        };
     }, [previewMode, setIsPanning]);
 
+    // ── 3. POINTER — drag, pan, resize/move interactions ─────────────────────
+    // handleInteractionMove reads elements + zoom from respective contexts
     useEffect(() => {
         const onMove = (e: PointerEvent) => {
             if (isPanning && !previewMode) setPan(p => ({ x: p.x + e.movementX, y: p.y + e.movementY }));
             if (interaction) handleInteractionMove(e);
         };
-        const onUp = () => { if (interaction) setInteraction(null); if (!spacePressed) setIsPanning(false); };
+        const onUp = () => {
+            if (interaction) {
+                // Commit one history entry for the whole drag, then clear state
+                handleInteractionEnd();
+            }
+            if (!spacePressed) setIsPanning(false);
+        };
         window.addEventListener('pointermove', onMove);
         window.addEventListener('pointerup', onUp);
-        return () => { window.removeEventListener('pointermove', onMove); window.removeEventListener('pointerup', onUp); };
-    }, [isPanning, interaction, handleInteractionMove, setPan, setInteraction, spacePressed, previewMode]);
+        return () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+        };
+    }, [isPanning, interaction, handleInteractionMove, handleInteractionEnd, setPan, setIsPanning, spacePressed, previewMode]);
 
-    // --- 2. DROP LOGIC ---
-    // --- 2. DROP LOGIC ---
+    // ── 4. DROP — element creation from sidebar drag ──────────────────────────
     const handleGlobalDrop = (e: React.DragEvent) => {
         e.preventDefault();
         if (!dragData || previewMode) return;
@@ -69,7 +113,7 @@ export const Canvas = () => {
         const worldX = (e.clientX - rect.left - pan.x) / zoom;
         const worldY = (e.clientY - rect.top - pan.y) / zoom;
 
-        // --- NEW: DATA BINDING DROP ON ELEMENT ---
+        // ── Data binding drop ───────────────────────────────────────────────
         if (dragData.type === 'DATA_BINDING') {
             const candidates = Object.values(elements)
                 .filter(el => {
@@ -86,10 +130,7 @@ export const Canvas = () => {
             if (candidates.length > 0) {
                 const targetId = candidates[0].id;
                 const newProject = { ...elements };
-                newProject[targetId] = {
-                    ...newProject[targetId],
-                    content: `{{${dragData.payload}}}`
-                };
+                newProject[targetId] = { ...newProject[targetId], content: `{{${dragData.payload}}}` };
                 updateProject(newProject);
                 setDragData(null);
                 setSelectedId(targetId);
@@ -118,21 +159,31 @@ export const Canvas = () => {
         } else if (dragData.type === 'ASSET_IMAGE' || (dragData.type === 'NEW' && dragData.payload === 'image')) {
             newRootId = `img-${Date.now()}`;
             w = 300; h = 200;
-            const src = dragData.type === 'ASSET_IMAGE' ? dragData.payload : (componentRegistry['image']?.src || 'https://via.placeholder.com/400x300');
+            const src = dragData.type === 'ASSET_IMAGE'
+                ? dragData.payload
+                : (componentRegistry['image']?.src || 'https://via.placeholder.com/400x300');
             newNodes[newRootId] = {
                 id: newRootId, type: 'image', name: 'Image', children: [],
                 props: { style: { width: '300px', height: '200px', borderRadius: '8px' }, className: 'object-cover' },
-                src: src
+                src
             };
         } else if (dragData.type === 'NEW') {
             const conf = componentRegistry[dragData.payload];
             if (!conf) return;
             newRootId = `el-${Date.now()}`;
-            w = dragData.payload === 'webpage' ? 1200 : 200;
-            h = dragData.payload === 'webpage' ? 800 : 100;
+            w = dragData.payload === 'webpage' ? 1440 : 200;
+            h = dragData.payload === 'webpage' ? 1080 : 100;
             newNodes[newRootId] = {
                 id: newRootId, type: dragData.payload, name: conf.label, children: [],
-                props: { ...conf.defaultProps, style: { ...conf.defaultProps?.style, width: `${w}px`, height: `${h}px` } },
+                props: {
+                    ...conf.defaultProps,
+                    style: {
+                        ...conf.defaultProps?.style,
+                        width: `${w}px`,
+                        height: dragData.payload === 'webpage' ? 'auto' : `${h}px`,
+                        ...(dragData.payload === 'webpage' ? { minHeight: `${h}px` } : {}),
+                    }
+                },
                 content: conf.defaultContent, src: conf.src
             };
         }
@@ -142,7 +193,7 @@ export const Canvas = () => {
                 ...newNodes[newRootId].props.style,
                 position: 'absolute',
                 left: `${Math.round(worldX - w / 2)}px`,
-                top: `${Math.round(worldY - h / 2)}px`
+                top: `${Math.round(worldY - h / 2)}px`,
             };
 
             const newProject = { ...elements, ...newNodes };
@@ -156,6 +207,7 @@ export const Canvas = () => {
         setDragData(null);
     };
 
+    // ── 5. RENDER ─────────────────────────────────────────────────────────────
     return (
         <div
             ref={canvasRef}
@@ -163,56 +215,47 @@ export const Canvas = () => {
             style={{ cursor: isPanning || spacePressed ? 'grab' : 'default' }}
             onMouseDown={() => {
                 setSelectedId(null);
-                // Auto-collapse Insert Drawer when clicking canvas
+                // Auto-collapse Insert Drawer when clicking canvas background
                 if (isInsertDrawerOpen) toggleInsertDrawer();
             }}
             onDrop={handleGlobalDrop}
             onDragOver={(e) => e.preventDefault()}
         >
-            {/* CONTENT LAYER */}
             {previewMode ? (
-                // FULL SCREEN OVERLAY
+                // ── Full-screen preview overlay ───────────────────────────────
                 <div className="absolute inset-0 z-[100] bg-black">
                     <ContainerPreview />
                 </div>
             ) : (
+                // ── Transformed canvas world ──────────────────────────────────
                 <div
                     style={{
                         transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-                        transformOrigin: 'top left', // Natural zooming from top-left
+                        transformOrigin: 'top left',
                         width: '100%',
-                        minHeight: '100%', // Allow content to push height
+                        minHeight: '100%',
                         display: 'flex',
                         justifyContent: 'center',
-                        paddingTop: '40px', // Top breathing room
-                        paddingBottom: '400px', // Extra scroll space (Plasmic style)
+                        paddingTop: '40px',
+                        paddingBottom: '400px',
                     }}
                 >
-                    {/* ARTBOARD WRAPPER - Allows content to grow */}
-                    <div
-                        style={{
-                            width: '100%',
-                            maxWidth: '1440px',
-                            minHeight: '100vh', // Minimum full viewport
-                            height: 'auto', // CRITICAL: Grows with content
-                            display: 'flex',
-                            flexDirection: 'column'
-                        }}
-                    >
+                    {/* Artboard — grows with content */}
+                    <div style={{ width: '100%', maxWidth: '1440px', minHeight: '100vh', height: 'auto', display: 'flex', flexDirection: 'column' }}>
                         <RenderNode elementId={activePageId} key={`editor-${activePageId}`} />
                     </div>
 
+                    {/* Smart snap guides */}
                     {guides.map((g, i) => (
                         <div key={i} className="absolute bg-red-500 z-[9999]" style={{
                             left: g.orientation === 'vertical' ? g.pos : g.start,
                             top: g.orientation === 'vertical' ? g.start : g.pos,
                             width: g.orientation === 'vertical' ? '1px' : (g.end - g.start),
-                            height: g.orientation === 'vertical' ? (g.end - g.start) : '1px'
+                            height: g.orientation === 'vertical' ? (g.end - g.start) : '1px',
                         }} />
                     ))}
                 </div>
             )}
-
         </div>
     );
 };

@@ -1,12 +1,19 @@
-import React, { useRef, useState, useEffect, Suspense, lazy } from 'react';
-import { useEditor } from '../context/EditorContext';
+﻿import React, { useRef, useState, useEffect, Suspense, lazy, Component } from 'react';
+import type { ErrorInfo } from 'react';
+import { useProject } from '../context/ProjectContext';
+import { useUI } from '../context/UIContext';
+import { useEditor } from '../context/EditorContext'; // Legacy — for sub-components not yet migrated
+import { SANDBOX_BLOCKED_PATTERNS } from '../utils/codeSanitizer';
 import type { VectraProject, VectraNode } from '../types';
 import { TEMPLATES } from '../data/templates';
 import { Resizer } from './Resizer';
 import { cn } from '../lib/utils';
-import { Loader2, Plus, PlayCircle } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { Loader2, Plus, PlayCircle, Zap } from 'lucide-react';
+// Preserve full framer-motion imports — AnimatePresence etc. are injected into
+// the AI sandbox so components that use them don’t crash with "undefined" errors.
+import { motion, AnimatePresence, useAnimation, useInView, useMotionValue, useTransform } from 'framer-motion';
 import { getIconComponent } from '../data/iconRegistry';
+
 
 // --- LAZY LOAD MARKETPLACE COMPONENTS ---
 const GeometricShapes = lazy(() => import('./marketplace/GeometricShapes'));
@@ -15,122 +22,297 @@ const FeatureHover = lazy(() => import('./marketplace/FeatureHover'));
 const FeaturesSectionWithHoverEffects = lazy(() => import('./marketplace/FeatureHover').then(m => ({ default: m.FeaturesSectionWithHoverEffects })));
 const HeroGeometric = lazy(() => import('./marketplace/HeroGeometric').then(m => ({ default: m.HeroGeometric })));
 
-
 // --- SMART COMPONENTS ---
 import { SmartAccordion, SmartCarousel, SmartTable } from './smart/SmartComponents';
 import * as LucideAll from 'lucide-react';
 
-// --- LIVE COMPILER ---
-// Compiles raw AI-generated JSX code strings into real React components at runtime.
-// Uses Babel Standalone (loaded via index.html) to transpile JSX → CommonJS JS.
-// Scope (React, Lucide, motion, cn) is injected so AI code needs no imports.
-//
-// SECURITY NOTE: new Function() executes with app-origin privileges.
-// We apply a keyword blocklist as defense-in-depth before any transpilation.
-const BLOCKED_PATTERNS = [
-    /\beval\s*\(/,
-    /\bnew\s+Function\s*\(/,
-    /document\s*\.\s*cookie/,
-    /localStorage/,
-    /sessionStorage/,
-    /indexedDB/,
-    /\bfetch\s*\(/,
-    /XMLHttpRequest/,
-    /\bimportScripts\s*\(/,
-    /navigator\s*\.\s*(sendBeacon|geolocation|credentials)/,
-    /window\s*\.\s*open\s*\(/,
-    /location\s*\.\s*(href|replace|assign)/,
-];
+// ─── COMPILER WORKER (Singleton) ─────────────────────────────────────────────
+// Created ONCE at module level so Babel isn’t re-loaded on every component mount.
+// Classic worker mode: the worker uses importScripts('/babel.min.js') internally.
 
-const LiveComponent = ({ code, ...props }: { code: string;[key: string]: any }) => {
+const compilerWorker = new Worker(
+    new URL('../workers/compiler.worker.ts', import.meta.url),
+    { type: 'classic' }
+);
+
+// ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
+// Upgraded to catch BOTH compile-time errors (from LiveComponent's useEffect try/catch)
+// AND runtime errors (React render-phase errors like ReferenceError: Heart is not defined).
+// autoTrigger prop enables full autonomous self-healing without user interaction.
+class ComponentErrorBoundary extends Component<
+    { children: React.ReactNode; label: string; onFix?: (err: string) => Promise<void>; autoTrigger?: boolean },
+    { hasError: boolean; message: string; isFixing: boolean }
+> {
+    constructor(props: any) {
+        super(props);
+        this.state = { hasError: false, message: '', isFixing: false };
+    }
+
+    static getDerivedStateFromError(error: Error) {
+        return { hasError: true, message: error?.message || 'Unknown runtime error' };
+    }
+
+    componentDidCatch(error: Error, info: ErrorInfo) {
+        console.error(`🔴 [${this.props.label}] Runtime Error:`, error, info.componentStack);
+        // AUTONOMOUS FIX: trigger silently if retries remain
+        if (this.props.autoTrigger && this.props.onFix) {
+            setTimeout(() => this.handleFix(), 100);
+        }
+    }
+
+    handleFix = async () => {
+        if (!this.props.onFix) return;
+        this.setState({ isFixing: true });
+        try {
+            await this.props.onFix(this.state.message);
+            this.setState({ hasError: false, message: '', isFixing: false });
+        } catch {
+            this.setState({ isFixing: false });
+        }
+    };
+
+    render() {
+        if (this.state.hasError) {
+            const maxHit = !this.props.autoTrigger;
+            return (
+                <div
+                    onPointerDown={(e: any) => e.stopPropagation()}
+                    className='cursor-auto p-4 border-2 border-dashed border-orange-400 bg-orange-950/30 rounded-lg text-orange-300 text-xs font-mono w-full h-full overflow-auto flex flex-col gap-3 relative'
+                >
+                    <div>
+                        <strong>⚠ AI Runtime Error</strong>
+                        <pre className='mt-1 whitespace-pre-wrap opacity-80'>{this.state.message}</pre>
+                    </div>
+                    {this.props.onFix && (
+                        <button
+                            onClick={this.handleFix}
+                            disabled={this.state.isFixing || maxHit}
+                            className="self-start flex items-center gap-2 bg-orange-500/20 hover:bg-orange-500/30 border border-orange-500/30 text-orange-300 px-3 py-1.5 rounded-md font-sans font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            {this.state.isFixing
+                                ? <><Loader2 className="w-3 h-3 animate-spin" /> Auto-Healing...</>
+                                : maxHit
+                                    ? <><Zap className="w-3 h-3" /> Max Retries Hit</>
+                                    : <><Zap className="w-3 h-3" /> Auto-Fix with AI</>}
+                        </button>
+                    )}
+                </div>
+            );
+        }
+        return this.props.children;
+    }
+}
+
+// ─── LIVE COMPONENT ───────────────────────────────────────────────────────────
+const LiveComponent = ({
+    code,
+    elementId,
+    updateProject,
+    elements,
+    ...props
+}: {
+    code: string;
+    elementId: string;
+    updateProject: (proj: Record<string, any>) => void;
+    elements: Record<string, any>;
+    [key: string]: any;
+}) => {
     const [Component, setComponent] = useState<React.ElementType | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [isFixing, setIsFixing] = useState(false);
+
+    // Safety guardrail: stop looping if AI keeps hallucinating
+    const autoFixRetries = useRef(0);
+    const MAX_RETRIES = 2;
+    // Race-condition guard: only apply results from the LATEST compile request
+    const reqId = useRef(0);
+
+    // ── Unified Auto-Fix Handler ──────────────────────────────────────────────
+    // Handles BOTH compile-time errors (called by the red box button)
+    // AND runtime errors (called by ComponentErrorBoundary's onFix prop).
+    const handleAutoFix = async (errorMessage: string) => {
+        if (autoFixRetries.current >= MAX_RETRIES) {
+            console.warn(`⚠️ Auto-fix: max retries (${MAX_RETRIES}) reached — stopping loop.`);
+            throw new Error('Max retries reached');
+        }
+        autoFixRetries.current += 1;
+        setIsFixing(true);
+        try {
+            const { fixComponentError } = await import('../services/aiAgent');
+            const fixedCode = await fixComponentError(code, errorMessage);
+
+            // Write fixed code back into the canvas element tree
+            const newElements = { ...elements };
+            if (newElements[elementId]) {
+                newElements[elementId] = { ...newElements[elementId], code: fixedCode };
+                updateProject(newElements);
+            }
+            setError(null);
+        } catch (err: any) {
+            console.error('🔴 Auto-fix failed:', err.message);
+            setError(prev => (prev || errorMessage) + '\n\n[Auto-fix failed: ' + err.message + ']');
+            throw err;
+        } finally {
+            setIsFixing(false);
+        }
+    };
 
     useEffect(() => {
         if (!code) return;
-        try {
-            // ── Step 1: Security scan ───────────────────────────────────────
-            const violation = BLOCKED_PATTERNS.find(p => p.test(code));
-            if (violation) throw new Error(`Security violation: ${violation.source.slice(0, 40)}`);
 
-            // ── Step 2: Pre-clean — convert ALL export forms to bare return ──────
-            // This MUST happen before Babel. If Babel sees 'export default' it
-            // emits Object.defineProperty(exports,'__esModule') which our sandbox
-            // can't satisfy. Converting to 'return' means the new Function body
-            // itself returns the component — zero exports lookup needed.
-            const cleanCode = code
-                .replace(/import\s+[\s\S]*?from\s+['"\`][^'"\`]+['"\`];?/g, '') // strip imports
-                .replace(/export\s+default\s+function\s+([A-Za-z0-9_]*)/g,      // export default fn
-                    'return function $1')
-                .replace(/export\s+function\s+([A-Za-z0-9_]+)/g,                // export named fn
-                    'return function $1')
-                .replace(/export\s+default\s+([A-Za-z0-9_]+)\s*;?/g,           // export default id
-                    'return $1;')
-                .trim();
-
-            // ── Step 3: Transpile — sourceType:'script' prevents any module boilerplate ──
-            const Babel = (window as any).Babel;
-            if (!Babel) throw new Error('Babel not loaded. Please wait and try again.');
-
-            const transpiled = Babel.transform(cleanCode, {
-                presets: ['react', 'env'],
-                sourceType: 'script',   // <─ critical: no module polyfills emitted
-                filename: 'component.jsx',
-                configFile: false,
-                babelrc: false,
-            }).code;
-
-            // ── Step 4: Execute — transpiled code contains 'return function Foo(){}' ──
-            // new Function wraps it, so the return bubbles up directly as the component.
-            // eslint-disable-next-line no-new-func
-            const factory = new Function('React', 'Lucide', 'motion', 'cn', transpiled);
-            const Comp = factory(React, LucideAll, motion, cn);
-
-            if (typeof Comp !== 'function') {
-                throw new Error('Code did not return a React component. Ensure it has: export default function MyComponent() { ... }');
-            }
-            setComponent(() => Comp);
-            setError(null);
-
-        } catch (e: any) {
-            console.error('🔴 LiveComponent compile error:', e.message);
-            setError(e.message || 'Unknown compile error');
+        // ── Fast security scan on the main thread (no async needed) ──────────
+        const violation = SANDBOX_BLOCKED_PATTERNS.find(p => p.test(code));
+        if (violation) {
+            setError(`Security violation: ${violation.source.slice(0, 60)}`);
+            return;
         }
+
+        // ── Offload Babel + import-stripping to background worker ─────────────
+        const currentReqId = ++reqId.current;
+
+        const handleWorkerMessage = (e: MessageEvent) => {
+            // Discard stale results from a previous code version
+            if (e.data.id !== currentReqId) return;
+            compilerWorker.removeEventListener('message', handleWorkerMessage);
+
+            if (e.data.error) {
+                const errMsg: string = e.data.error;
+                console.error('🔴 Worker compile error:', errMsg);
+                setError(errMsg);
+                if (autoFixRetries.current < MAX_RETRIES) {
+                    handleAutoFix(errMsg).catch(() => { });
+                }
+                return;
+            }
+
+            // ── Execute pre-compiled sandbox code on the main thread ──────────
+            // new Function() is near-instantaneous — the heavy Babel work is done.
+            try {
+                const fakeExports: Record<string, any> = {};
+                const fakeModule = { exports: fakeExports };
+                // eslint-disable-next-line no-new-func
+                const factory = new Function(
+                    'React', 'Lucide', 'motion', 'AnimatePresence', 'cn', '_framerExtras',
+                    'exports', 'module', 'require',
+                    e.data.sandboxCode
+                );
+                factory(
+                    React, LucideAll, motion, AnimatePresence, cn,
+                    { useAnimation, useInView, useMotionValue, useTransform },
+                    fakeExports, fakeModule,
+                    () => { throw new Error('require() not available in sandbox'); }
+                );
+
+                const Comp: React.ElementType =
+                    fakeExports['default']
+                    ?? fakeModule.exports['default']
+                    ?? (Object.values(fakeExports).find(v => typeof v === 'function') as any);
+
+                if (typeof Comp !== 'function') {
+                    throw new Error('No default export found. The AI component must use: export default function MyComponent() { ... }');
+                }
+
+                setComponent(() => Comp);
+                setError(null);
+                autoFixRetries.current = 0; // ✨ Reset on clean success
+
+                // ── Write cleanCode back into the element tree ────────────────
+                // The worker already sanitised the code (stripped imports, fixed
+                // quotes, fixed icon syntax). Persisting this means subsequent
+                // compile passes skip re-sanitising, saving CPU every re-render.
+                if (e.data.cleanCode && e.data.cleanCode !== code) {
+                    setTimeout(() => {
+                        const newEls = { ...elements };
+                        if (newEls[elementId]) {
+                            newEls[elementId] = { ...newEls[elementId], code: e.data.cleanCode };
+                            updateProject(newEls);
+                        }
+                    }, 0);
+                }
+
+            } catch (execErr: any) {
+                const errMsg = execErr.message || 'Unknown sandbox execution error';
+                console.error('🔴 Sandbox execution error:', errMsg);
+                setError(errMsg);
+                if (autoFixRetries.current < MAX_RETRIES) {
+                    handleAutoFix(errMsg).catch(() => { });
+                }
+            }
+        };
+
+        compilerWorker.addEventListener('message', handleWorkerMessage);
+        compilerWorker.postMessage({ code, id: currentReqId });
+
+        // Cleanup: remove stale listener if code prop changes before worker responds
+        return () => {
+            compilerWorker.removeEventListener('message', handleWorkerMessage);
+        };
     }, [code]);
 
+    // ── Compile-time error UI (red) ───────────────────────────────────────────
     if (error) return (
-        <div className='p-4 border-2 border-dashed border-red-400 bg-red-950/30 rounded-lg text-red-400 text-sm font-mono w-full h-full overflow-auto'>
-            <strong>⚠ Live Compile Error</strong>
-            <pre className='mt-2 whitespace-pre-wrap text-xs'>{error}</pre>
+        <div
+            onPointerDown={(e) => e.stopPropagation()}
+            className='cursor-auto p-4 border-2 border-dashed border-red-400 bg-red-950/30 rounded-lg text-red-400 text-sm font-mono w-full h-full overflow-auto flex flex-col gap-3'
+        >
+            <div>
+                <strong>⚠ Component Compile Error</strong>
+                <pre className='mt-2 whitespace-pre-wrap text-[10px] opacity-80'>{error}</pre>
+            </div>
+            <button
+                onClick={() => handleAutoFix(error).catch(() => { })}
+                disabled={isFixing || autoFixRetries.current >= MAX_RETRIES}
+                className="self-start flex items-center gap-2 bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 text-red-300 px-3 py-1.5 rounded-md text-xs font-sans font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+                {isFixing
+                    ? <><Loader2 className="w-3 h-3 animate-spin" /> Auto-Healing...</>
+                    : autoFixRetries.current >= MAX_RETRIES
+                        ? <><Zap className="w-3 h-3" /> Max Retries Hit</>
+                        : <><Zap className="w-3 h-3" /> Auto-Fix with AI</>}
+            </button>
         </div>
     );
+
     if (!Component) return (
         <div className='p-4 text-zinc-500 animate-pulse w-full h-full flex items-center justify-center bg-zinc-900/20 text-sm'>
             Compiling UI...
         </div>
     );
-    return <Component {...props} />;
+
+    // ── Runtime error UI (orange) — caught by ErrorBoundary ──────────────────
+    return (
+        <ComponentErrorBoundary
+            label='LiveComponent'
+            onFix={handleAutoFix}
+            autoTrigger={autoFixRetries.current < MAX_RETRIES}
+        >
+            <Component {...props} />
+        </ComponentErrorBoundary>
+    );
 };
-
-
 interface RenderNodeProps { elementId: string; isMobileMirror?: boolean; }
 
 export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirror = false }) => {
+    // ── Split context subscriptions ───────────────────────────────────────────
+    // useProject: re-renders when document data changes (elements, updateProject)
+    // useUI:      re-renders when UI state changes (selection, hover, tool, zoom)
+    // Keeping them separate means hovering an element doesn't re-render every
+    // RenderNode that only uses project data, and vice-versa.
+    const { elements, updateProject, instantiateTemplate, syncLayoutEngine } = useProject();
     const {
-        elements, selectedId, setSelectedId, hoveredId, setHoveredId,
-        previewMode, dragData, setDragData, updateProject,
+        selectedId, setSelectedId, hoveredId, setHoveredId,
+        previewMode, dragData, setDragData,
         interaction, setInteraction, zoom, activeTool, setActivePanel,
-        instantiateTemplate, componentRegistry
-    } = useEditor();
+    } = useUI();
+    // componentRegistry merges static COMPONENT_TYPES + dynamically-registered entries
+    const { componentRegistry } = useEditor();
+
+
 
     const element = elements[elementId];
     const nodeRef = useRef<HTMLDivElement>(null);
     const [isEditing, setIsEditing] = useState(false);
-
-    // --- HOVER STATE ---
     const [isVisualHover, setIsVisualHover] = useState(false);
-
-    // Animation State
     const [animKey, setAnimKey] = useState(0);
 
     const styleAny = element?.props?.style as Record<string, unknown> | undefined;
@@ -141,18 +323,16 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (previewMode) return;
         const currentAnim = element?.props?.animation;
         const currentTrigger = styleAny?.['--anim-trigger'];
-
         if (currentAnim !== prevAnim.current || currentTrigger !== prevTrigger.current) {
             prevAnim.current = currentAnim;
             prevTrigger.current = currentTrigger;
-            setAnimKey(prev => prev + 1); // Re-mount or re-trigger animation
+            setAnimKey(prev => prev + 1);
         }
     }, [element?.props?.animation, styleAny?.['--anim-trigger'], previewMode]);
 
     const dragStart = useRef({ x: 0, y: 0, left: 0, top: 0 });
 
     if (!element) return null;
-
     if (previewMode && element.type === 'canvas') return null;
     if (element.hidden && !previewMode) return <div className="hidden" />;
     if (element.hidden && previewMode) return null;
@@ -185,6 +365,9 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             const currentTop = parseFloat(String(style.top || 0));
             dragStart.current = { x: e.clientX, y: e.clientY, left: currentLeft, top: currentTop };
             setInteraction({ type: 'MOVE', itemId: elementId });
+            // 🚀 Phase 5: Push sibling rects into Wasm LayoutEngine once per drag-start.
+            // query_snapping() at 60fps then transfers only 5 scalars — zero serde cost.
+            syncLayoutEngine(elementId);
         }
     };
 
@@ -227,19 +410,12 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     };
 
     const handleDrop = (e: React.DragEvent) => {
-        // FIX: Safety Check - if element is somehow undefined, abort immediately
         if (!element) return;
-
-        // FIX 2: Do NOT stop propagation yet. Check if this is a valid target first.
         const isValidTarget = isArtboard || element.props.layoutMode;
-
-        // If this element cannot accept drops, let the event bubble to its parent
         if (!isValidTarget || element.locked || previewMode) return;
 
-        // If we are here, THIS element will handle the drop. Now we stop bubbling.
         e.stopPropagation();
         e.preventDefault();
-
         if (!dragData) return;
 
         const rect = nodeRef.current?.getBoundingClientRect();
@@ -249,12 +425,12 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         const dropY = (e.clientY - rect.top) / zoom;
 
         if (dragData.type === 'NEW') {
-            const conf = componentRegistry[dragData.payload]; // FIX 1: Use registry
+            const conf = componentRegistry[dragData.payload];
             if (conf) {
                 const newId = `el-${Date.now()}`;
                 const isFrame = dragData.payload === 'webpage' || dragData.payload === 'canvas';
-                const defaultW = isFrame ? 800 : 200;
-                const defaultH = isFrame ? 600 : 100;
+                const defaultW = isFrame ? 1440 : 200;
+                const defaultH = isFrame ? 1080 : 100;
 
                 const newNode = {
                     id: newId,
@@ -269,7 +445,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                             left: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropX - (defaultW / 2))}px`,
                             top: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropY - (defaultH / 2))}px`,
                             width: conf.defaultProps?.style?.width || `${defaultW}px`,
-                            height: conf.defaultProps?.style?.height || `${defaultH}px`
+                            height: dragData.payload === 'webpage' ? 'auto' : conf.defaultProps?.style?.height || `${defaultH}px`,
+                            ...(dragData.payload === 'webpage' ? { minHeight: `${defaultH}px` } : {}),
                         }
                     },
                     content: conf.defaultContent,
@@ -321,52 +498,38 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             const imgW = 256;
             const imgH = 192;
             const newNode = {
-                id: newId,
-                type: 'image',
-                name: 'Image',
-                children: [],
+                id: newId, type: 'image', name: 'Image', children: [],
                 props: {
                     className: 'object-cover rounded-lg shadow-sm',
                     style: {
                         position: (element.props.layoutMode === 'flex' ? 'relative' : 'absolute') as any,
                         left: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropX - imgW / 2)}px`,
                         top: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropY - imgH / 2)}px`,
-                        width: `${imgW}px`,
-                        height: `${imgH}px`
+                        width: `${imgW}px`, height: `${imgH}px`
                     }
                 },
                 src: dragData.payload,
             };
-
             const newElements = { ...elements, [newId]: newNode };
             newElements[elementId].children = [...(newElements[elementId].children || []), newId];
             updateProject(newElements);
             setSelectedId(newId);
         }
-        // Handle Icon drops from Icon Explorer
         else if (dragData.type === 'ICON') {
             const newId = `icon-${Date.now()}`;
             const iconSize = 48;
-
             const newNode = {
-                id: newId,
-                type: 'icon',
-                name: dragData.payload, // Stores Icon Name like 'Activity'
-                children: [],
+                id: newId, type: 'icon', name: dragData.payload, children: [],
                 props: {
-                    iconName: dragData.payload,
-                    className: 'text-slate-900',
+                    iconName: dragData.payload, className: 'text-slate-900',
                     style: {
                         position: (element.props.layoutMode === 'flex' ? 'relative' : 'absolute') as any,
                         left: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropX - iconSize / 2)}px`,
                         top: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropY - iconSize / 2)}px`,
-                        width: `${iconSize}px`,
-                        height: `${iconSize}px`,
-                        color: 'inherit'
+                        width: `${iconSize}px`, height: `${iconSize}px`, color: 'inherit'
                     }
                 }
             };
-
             const newElements = { ...elements, [newId]: newNode };
             newElements[elementId].children = [...(newElements[elementId].children || []), newId];
             updateProject(newElements);
@@ -375,25 +538,19 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         else if (dragData.type === 'DATA_BINDING') {
             const newId = `data-${Date.now()}`;
             const isFlex = element.props.layoutMode === 'flex';
-
             const newNode: VectraNode = {
-                id: newId,
-                type: 'text',
-                name: dragData.payload,
-                children: [],
+                id: newId, type: 'text', name: dragData.payload, children: [],
                 props: {
                     className: 'text-blue-600 font-mono bg-blue-50 px-2 py-1 rounded border border-blue-200 text-sm inline-block',
                     style: {
                         position: isFlex ? 'relative' : 'absolute',
                         left: isFlex ? 'auto' : `${Math.round(dropX)}px`,
                         top: isFlex ? 'auto' : `${Math.round(dropY)}px`,
-                        width: 'auto',
-                        height: 'auto'
+                        width: 'auto', height: 'auto'
                     }
                 },
                 content: `{{${dragData.payload}}}`
             };
-
             const newElements: VectraProject = { ...elements, [newId]: newNode };
             newElements[elementId].children = [...(newElements[elementId].children || []), newId];
             updateProject(newElements);
@@ -406,16 +563,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     let finalStyle: React.CSSProperties = { ...element.props.style };
     let finalClass = element.props.className || '';
 
-    // Part 3: Grid layout support
     if (element.props.layoutMode === 'grid') {
         finalStyle.display = 'grid';
     }
 
-    // Part 3: Transform handling - prioritize explicit transform string
     const hasExplicitTransform = finalStyle.transform && finalStyle.transform !== 'none';
 
     if (!hasExplicitTransform) {
-        // Legacy fallback for old rotate/scale props
         const transformParts: string[] = [];
         if (finalStyle.rotate) transformParts.push(`rotate(${finalStyle.rotate})`);
         let currentScale = parseFloat(String(finalStyle.scale || 1));
@@ -423,7 +577,6 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         const hoverEffect = element.props.hoverEffect;
         if (hoverEffect && hoverEffect !== 'none') {
             finalStyle.transition = 'all 0.3s cubic-bezier(0.25, 0.46, 0.45, 0.94)';
-
             if (isVisualHover && !interaction) {
                 if (hoverEffect === 'lift') transformParts.push('translateY(-8px)');
                 if (hoverEffect === 'scale') currentScale *= 1.05;
@@ -443,14 +596,19 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         finalStyle.transition = 'none';
     }
 
-
-
     if (isArtboard) {
         finalStyle.display = 'block';
-        finalStyle.overflow = 'hidden';
+        // Allow AI content to grow the artboard — never clip it
+        finalStyle.overflow = 'visible';
         const hasBg = finalStyle.backgroundColor || finalStyle.backgroundImage;
         if (!hasBg) finalStyle.backgroundColor = '#ffffff';
         finalClass = cn(finalClass, 'shadow-xl ring-1 ring-black/10');
+
+        if (element.type === 'webpage') {
+            // Grow with AI-generated content instead of clipping at a fixed height
+            finalStyle.height = 'auto';
+            finalStyle.minHeight = finalStyle.minHeight || '1080px';
+        }
 
         if (previewMode && element.type === 'webpage') {
             finalStyle.position = 'relative'; finalStyle.left = 'auto'; finalStyle.top = 'auto'; finalStyle.transform = 'none';
@@ -477,54 +635,36 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     else if (element.type === 'carousel') content = <SmartCarousel {...element.props} />;
     else if (element.type === 'table') content = <SmartTable {...element.props} />;
     // --- CUSTOM AI-GENERATED COMPONENT (Live Compiler) ---
-    else if (element.type === 'custom_component' && element.code) {
+    else if ((element.type === 'custom_component' || element.type === 'custom_code') && element.code) {
         content = (
             <Suspense fallback={<LoadingPlaceholder />}>
-                <LiveComponent code={element.code} {...(element.props as any)} />
+                <LiveComponent
+                    code={element.code}
+                    elementId={elementId}
+                    updateProject={updateProject}
+                    elements={elements}
+                    {...(element.props as any)}
+                />
             </Suspense>
         );
     }
-
-    // Geometric Shapes (new default export)
     else if (element.type === 'geometric_shapes') content = <Suspense fallback={<LoadingPlaceholder />}><GeometricShapes {...(element.props as any)} /></Suspense>;
     else if (element.type === 'geometric_bg') content = <Suspense fallback={<LoadingPlaceholder />}><GeometricShapesBackground {...(element.props as any)} /></Suspense>;
-
-    // Feature Cards (new default export with dynamic props)
     else if (element.type === 'feature_hover') content = <Suspense fallback={<LoadingPlaceholder />}><FeatureHover {...(element.props as any)} /></Suspense>;
     else if (element.type === 'features_section') content = <Suspense fallback={<LoadingPlaceholder />}><FeaturesSectionWithHoverEffects {...(element.props as any)} /></Suspense>;
-
-    // Hero Section (dynamic props: badge, title1, title2, subtitle)
     else if (element.type === 'hero_geometric') content = <Suspense fallback={<LoadingPlaceholder />}><HeroGeometric {...(element.props as any)} /></Suspense>;
-
     else if (element.type === 'hero_modern') {
         content = <>{element.children?.map(childId => <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />)}</>;
     }
-    // TEXT / BASIC TYPES
     else if (element.type === 'text' || element.type === 'button' || element.type === 'heading' || element.type === 'link') {
         content = element.content;
     }
-    // INPUTS
     else if (element.type === 'input') {
-        content = (
-            <input
-                type="text"
-                readOnly
-                className="w-full h-full bg-transparent outline-none border-none text-inherit px-2 cursor-text"
-                placeholder={element.props.placeholder || 'Input...'}
-            />
-        );
+        content = <input type="text" readOnly className="w-full h-full bg-transparent outline-none border-none text-inherit px-2 cursor-text" placeholder={element.props.placeholder || 'Input...'} />;
     }
     else if (element.type === 'checkbox') {
-        content = (
-            <input
-                type="checkbox"
-                readOnly
-                className="w-5 h-5 accent-blue-600 pointer-events-none"
-                checked={element.props.checked}
-            />
-        );
+        content = <input type="checkbox" readOnly className="w-5 h-5 accent-blue-600 pointer-events-none" checked={element.props.checked} />;
     }
-    // MEDIA
     else if (element.type === 'image') {
         content = <img className="w-full h-full object-cover pointer-events-none" src={element.src} alt="" />;
     }
@@ -536,12 +676,10 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             </div>
         );
     }
-    // ICONS (from Icon Explorer)
     else if (element.type === 'icon') {
         const IconComp = getIconComponent(element.props.iconName || element.name || 'HelpCircle');
         content = <IconComp className="w-full h-full" strokeWidth={1.5} />;
     }
-    // CONTAINERS / PAGES
     else {
         content = (
             <>
@@ -553,8 +691,6 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 {element.children?.map(childId => (
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
-
-                {/* Empty Container Placeholder */}
                 {isContainer && !isArtboard && !element.children?.length && !previewMode && !element.props['data-custom-code'] && (
                     <div
                         onClick={(e) => { e.stopPropagation(); setSelectedId(elementId); setActivePanel('add'); }}
@@ -587,10 +723,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (type === 'glow') motionProps.whileHover = { boxShadow: "0 10px 40px -10px rgba(0,122,204,0.5)" };
         if (type === 'border') motionProps.whileHover = { borderColor: "#007acc" };
         if (type === 'opacity') motionProps.whileHover = { opacity: 0.7 };
-
-        if (!motionProps.transition) {
-            motionProps.transition = { duration: 0.2 };
-        }
+        if (!motionProps.transition) motionProps.transition = { duration: 0.2 };
     }
 
     return (
@@ -608,7 +741,12 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             onMouseLeave={() => setIsVisualHover(false)}
             contentEditable={isEditing}
             suppressContentEditableWarning
-            onBlur={(e) => { if (isEditing) { setIsEditing(false); updateProject({ ...elements, [elementId]: { ...elements[elementId], content: e.currentTarget.innerText } }); } }}
+            onBlur={(e) => {
+                if (isEditing) {
+                    setIsEditing(false);
+                    updateProject({ ...elements, [elementId]: { ...elements[elementId], content: e.currentTarget.innerText } });
+                }
+            }}
             className={cn(
                 finalClass,
                 'box-border',

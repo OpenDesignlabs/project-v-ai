@@ -22,7 +22,14 @@ getrandom = { version = "0.3", features = ["wasm_js"] }
 # 4. Error Logging
 console_error_panic_hook = "0.1.7"
 
-# 5. SWC Compiler (The Engine)
+# 5. History Compression (Phase 8)
+# Pure-Rust gzip: no OS threads, no system libs — safe in wasm32-unknown-unknown.
+# A 2MB JSON snapshot typically compresses to ~80–120KB (95%+ reduction).
+# base64 NOT needed: compressed bytes stay entirely in Rust memory (Vec<Vec<u8>>),
+# they never cross the JS boundary.
+flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
+
+# 6. SWC Compiler (The Engine)
 # Strictly disabling default-features to avoid OS dependencies
 swc_core = { version = "0.86", default-features = false, features = [
     "common",

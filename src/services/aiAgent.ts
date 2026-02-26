@@ -2,17 +2,25 @@ import type { VectraNode, VectraProject } from '../types';
 import { repairJSON } from '../utils/aiHelpers';
 
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
-// Keys are read from .env at build time via Vite's import.meta.env.
-// VITE_* vars are visible in the client bundle — this is acceptable for a
-// local/self-hosted dev tool. For a public SaaS, move calls server-side.
+// Dual-key architecture: splits generation and debugging traffic across
+// two HF accounts to prevent one exhausting the other's rate limit.
 export const AI_CONFIG = {
     useLocalHeuristics: import.meta.env.VITE_AI_USE_LOCAL_HEURISTICS !== 'false',
-    endpoint: import.meta.env.VITE_AI_OPENAI_BASE_URL || 'https://router.huggingface.co/v1/chat/completions',
-    model: import.meta.env.VITE_AI_OPENAI_MODEL || 'zai-org/GLM-4.7-Flash:cheapest',
-    apiKey: import.meta.env.VITE_AI_HF_TOKEN || '',
+    // HF Router — required for :together and :cheapest model tags
+    endpoint: 'https://router.huggingface.co/v1/chat/completions',
+
+    // HYBRID MODELS
+    primaryModel: 'zai-org/GLM-4.7-Flash:zai-org',                      // GLM-5 via Zhipu (GLM-4.7 provider was offline)
+    debuggerModel: 'meta-llama/Llama-3.1-8B-Instruct:scaleway',       // DeepSeek-V3.2 via Fireworks AI
+
+    // DUAL API KEYS — split traffic, double the free quota
+    primaryApiKey: import.meta.env.VITE_AI_PRIMARY_KEY || import.meta.env.VITE_AI_HF_TOKEN || '',
+    debuggerApiKey: import.meta.env.VITE_AI_DEBUGGER_KEY || import.meta.env.VITE_AI_HF_TOKEN || '',
 };
 
-console.log('🤖 AI Agent ready. API key:', AI_CONFIG.apiKey ? '✅ loaded from .env' : '❌ not set (add VITE_AI_HF_TOKEN to .env)');
+console.log('🤖 AI Agent ready.');
+console.log(' - Primary Key (generation):', AI_CONFIG.primaryApiKey ? '✅ loaded' : '❌ not set (add VITE_AI_PRIMARY_KEY to .env)');
+console.log(' - Debugger Key (SRE agent):', AI_CONFIG.debuggerApiKey ? '✅ loaded' : '❌ not set (add VITE_AI_DEBUGGER_KEY to .env)');
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 interface AIResponse {
@@ -98,42 +106,84 @@ const processLocalIntent = (
     return null;
 };
 
-// ─── TIER 2: DIRECT API (API Key) ─────────────────────────────────────────────
-const callDirectAPI = async (systemPrompt: string, userPrompt: string): Promise<string> => {
-    if (!AI_CONFIG.apiKey) {
-        throw new Error('No API Key configured. Please add your key in Settings → AI Key.');
+// ─── API GATEWAY ─────────────────────────────────────────────────────────────
+// Hyper-resilient wrapper with HuggingFace Router retry loop.
+// The HF Router occasionally drops connections when upstream providers
+// (Together, cheapest) are heavily loaded, returning 503/504 which the
+// browser masks as a CORS error. This loop intercepts and retries silently.
+const callDirectAPI = async (
+    systemPrompt: string,
+    userPrompt: string,
+    model: string,
+    temperature: number,
+    apiKey: string
+): Promise<string> => {
+    if (!apiKey) {
+        throw new Error(`No API Key configured for model: ${model}. Check VITE_AI_PRIMARY_KEY / VITE_AI_DEBUGGER_KEY in .env`);
     }
 
-    console.log('🔑 Calling AI via API Key...');
+    console.log(`🔑 Calling AI (${model.split('/').pop()})...`);
 
-    const res = await fetch(AI_CONFIG.endpoint, {
-        method: 'POST',
-        headers: {
-            Authorization: `Bearer ${AI_CONFIG.apiKey}`,
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-            model: AI_CONFIG.model,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt },
-            ],
-            max_tokens: 16000,
-            temperature: 0.2,
-            stream: false,
-        }),
-    });
+    const MAX_RETRIES = 3;
+    let retries = MAX_RETRIES;
+    let lastError = '';
 
-    if (!res.ok) {
-        // Specific guidance for the most common errors
-        if (res.status === 401) throw new Error('Invalid API Key (401). Please check your key in Settings.');
-        if (res.status === 429) throw new Error('Rate limit exceeded (429). Please wait and try again.');
-        const errText = await res.text().catch(() => '');
-        throw new Error(`API Error ${res.status}: ${errText.slice(0, 120)}`);
+    while (retries > 0) {
+        try {
+            const res = await fetch(AI_CONFIG.endpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    max_tokens: 8000,
+                    temperature,
+                    stream: false,
+                }),
+            });
+
+            if (res.ok) {
+                const data = await res.json();
+                return data.choices[0]?.message?.content || '';
+            }
+
+            // HF Router / upstream provider timeout — wait and retry
+            if (res.status === 503 || res.status === 504) {
+                console.warn(`⏳ HF Router timeout (${res.status}) — retry ${MAX_RETRIES - retries + 1}/${MAX_RETRIES} in 5s...`);
+                await new Promise(r => setTimeout(r, 5000));
+                retries--;
+                continue;
+            }
+
+            if (res.status === 401) throw new Error('Invalid API Key (401). Check your HF token in .env.');
+            if (res.status === 429) throw new Error('Rate limit exceeded (429). Please wait and try again.');
+
+            const errText = await res.text().catch(() => '');
+            throw new Error(`API Error ${res.status}: ${errText.slice(0, 120)}`);
+
+        } catch (err: any) {
+            lastError = err.message;
+
+            // TypeError: Failed to fetch = browser CORS panic from a 504 crash
+            if (err.name === 'TypeError' || err.message.toLowerCase().includes('fetch')) {
+                console.warn(`⏳ Network/CORS block (HF Router wake-up) — retry ${MAX_RETRIES - retries + 1}/${MAX_RETRIES} in 5s...`);
+                await new Promise(r => setTimeout(r, 5000));
+                retries--;
+                continue;
+            }
+
+            // Hard errors (401, 429, parse errors) — fail immediately
+            throw err;
+        }
     }
 
-    const data = await res.json();
-    return data.choices[0]?.message?.content || '';
+    throw new Error(`AI failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
 };
 
 // ─── TIER 2: CLOUD LLM PROCESSOR ─────────────────────────────────────────────
@@ -142,10 +192,6 @@ const processCloudLLM = async (
     _currentElements: VectraProject
 ): Promise<AIResponse> => {
 
-    // ── PROMPT ────────────────────────────────────────────────────────────────
-    // Two-block strategy: AI writes JSX in a ```jsx block and a tiny JSON config
-    // in a ```json block. We extract them separately and inject the code string
-    // programmatically — no JSON escaping required, ever.
     const systemPrompt = `VECTRA UI ENGINE — You MUST return EXACTLY two code blocks. Nothing else.
 
 BLOCK 1 — Raw React code (no imports needed):
@@ -168,12 +214,20 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
 [REACT RULES — ALL REQUIRED]
 - Signature MUST be: export default function ComponentName(props) { ... }
 - NO import statements. React, motion, Lucide, cn are global.
-- Icons: const Icon = Lucide[name] || Lucide.HelpCircle; then <Icon /> — NEVER <Lucide[name] />
+- Icons — dot notation ONLY: <Lucide.Sparkles />
+  FATAL ERROR: NEVER write <Icon="Name" /> or <Icon name="Name" /> — invalid JSX, crashes compiler.
+  FATAL ERROR: NEVER write <Lucide[item.icon] /> — bracket notation in JSX is FORBIDDEN.
+  For dynamic icons in loops: const IC = Lucide[item.icon] || Lucide.HelpCircle; then <IC />
 - Tailwind: standard utilities or arbitrary values bg-[#0f172a]. NEVER custom tokens (bg-primary).
 - Framer: ONLY animate opacity/scale/x/y/rotate. NEVER animate Tailwind class strings (crashes).
   Colors → Tailwind hover: classes. Glow → whileHover={{ boxShadow: '0 0 20px #3b82f6' }}
 - Stagger lists: transition={{ delay: i * 0.1 }}
 - whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} on all cards & buttons.
+
+[LAYOUT RULES]
+- ALWAYS use relative block or flex flow for the outermost container: <main className="w-full min-h-screen flex flex-col">
+- NEVER use position:absolute or position:fixed on the root wrapper — the page will not scroll.
+- Sections stack vertically in normal document flow. Each section: w-full, no fixed height.
 
 [DESIGN]
 - Dark glassmorphism: bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl
@@ -185,8 +239,8 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
     let content = '';
 
     try {
-        console.log('🔑 Calling AI Code Generator...');
-        content = await callDirectAPI(systemPrompt, `Build: ${prompt}`);
+        console.log('🔑 Calling AI Code Generator (primary key)...');
+        content = await callDirectAPI(systemPrompt, `Build: ${prompt}`, AI_CONFIG.primaryModel, 0.6, AI_CONFIG.primaryApiKey);
     } catch (e) {
         console.error('❌ AI API call failed:', e);
         return { action: 'error', message: (e as Error).message };
@@ -196,16 +250,12 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
     try {
         console.log('🤖 AI Response received. Extracting blocks...');
 
-        // Step 1 — Extract the JSX/JS code block
-        // Regex handles: trailing spaces after language tag, all common language variants, case-insensitive
         const jsxMatch = content.match(/```(?:jsx?|tsx?|javascript|react)?\s*\n([\s\S]*?)\n```/i);
         const rawReactCode = jsxMatch?.[1]?.trim() ?? '';
 
-        // Step 2 — Extract the JSON config block
-        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/);
+        const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
         let rawJson = jsonMatch?.[1]?.trim() ?? '';
 
-        // Fallback: if the AI forgot the ```json fence, grab the first { ... }
         if (!rawJson) {
             const firstOpen = content.indexOf('{');
             const lastClose = content.lastIndexOf('}');
@@ -219,7 +269,6 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
 
         console.log(`✅ Extracted JSX (${rawReactCode.length} chars) + JSON config`);
 
-        // Step 3 — Parse the JSON config (no code string inside, so nothing to escape)
         let parsed: any;
         try {
             parsed = JSON.parse(rawJson);
@@ -232,14 +281,12 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
             throw new Error('Invalid JSON structure (missing elements or rootId)');
         }
 
-        // Step 4 — Inject the React code string programmatically (zero escaping needed)
         let injected = false;
         const rootEl = parsed.elements[parsed.rootId];
         if (rootEl?.type === 'custom_code') {
             rootEl.code = rawReactCode;
             injected = true;
         } else {
-            // Fallback: scan tree for any custom_code element
             for (const el of Object.values(parsed.elements) as any[]) {
                 if (el.type === 'custom_code') {
                     el.code = rawReactCode;
@@ -264,9 +311,7 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
         console.error('Raw AI output (first 600 chars):', content.substring(0, 600));
         return { action: 'error', message: 'Failed to parse AI response. Please try again.' };
     }
-
 };
-
 
 // ─── TIER 3: TEMPLATE FALLBACKS ───────────────────────────────────────────────
 const processTemplates = async (prompt: string): Promise<AIResponse> => {
@@ -345,10 +390,66 @@ const processTemplates = async (prompt: string): Promise<AIResponse> => {
 
     return {
         action: 'error',
-        message: AI_CONFIG.apiKey
+        message: AI_CONFIG.primaryApiKey
             ? "I couldn't process that. Try: 'hero', 'pricing', or 'landing page'."
-            : 'Add VITE_HF_TOKEN to your .env file to enable AI generation.',
+            : 'Add VITE_AI_PRIMARY_KEY to your .env file to enable AI generation.',
     };
+};
+
+// ─── DEBUGGER AGENT (CRITIC / AUTO-FIX) ──────────────────────────────────────
+// Autonomous SRE Agent — silently powers the self-healing loop.
+// Uses debuggerApiKey + DeepSeek-V3 (405B class) for surgical, precise fixes.
+// The SRE mindset (Root Cause Analysis, Surgical Precision, Safe Fallbacks) runs
+// internally — no explanatory text is emitted to save tokens/latency.
+export const fixComponentError = async (
+    brokenCode: string,
+    errorMessage: string,
+    passedApiKey?: string
+): Promise<string> => {
+    // Debugger key takes priority; fall back to primary or any passed key
+    const activeKey = AI_CONFIG.debuggerApiKey || passedApiKey || AI_CONFIG.primaryApiKey;
+
+    const SYSTEM_PROMPT = `You are an elite Senior Software Reliability Engineer and Expert Debugger powering the autonomous self-healing loop of the Vectra Visual Builder.
+Your sole purpose is to diagnose and resolve React render errors, Babel compilation failures, and runtime exceptions with surgical precision. You operate purely on evidence.
+
+[CORE DEBUGGING DIRECTIVES]
+1. Root Cause Analysis: Trace the data flow backwards from the crash point. Determine if the error is a data issue, undefined prop, syntax mismatch, or invalid React hook usage. Do not just patch symptoms; resolve the root cause.
+2. Surgical Precision: Make the minimal necessary changes to resolve the issue. Do not rewrite entire functions or change the architectural intent/design unless fundamentally broken.
+3. Safe Fallbacks: Check for undefined props, invalid loops, or unhandled null states. Add safe optional chaining (?.), nullish coalescing (??), or simple fallback UI guards where appropriate.
+
+[VECTRA SANDBOX CONSTRAINTS — CRITICAL]
+This code executes in a specialised CommonJS sandbox. You MUST obey:
+1. NO import statements. React, Lucide, motion, AnimatePresence, and cn are globally injected.
+2. Icon Syntax — dot notation only: <Lucide.Sparkles />
+   FATAL: NEVER <Icon="Name" /> or <Icon name="Name" />
+   FATAL: NEVER <Lucide[name] /> in JSX. Assign first: const Ic = Lucide[name] || Lucide.HelpCircle; then <Ic />
+3. The component MUST have a default export: export default function ComponentName(props) { ... }
+4. Hooks available globally: useState, useEffect, useRef, useCallback, useMemo, useReducer, useContext.
+5. Framer Motion globals: motion, AnimatePresence, useAnimation, useInView, useMotionValue, useTransform.
+
+[RESPONSE FORMAT — MANDATORY]
+You are an automated background service. Execute your diagnostic loop INTERNALLY.
+Return ONLY the raw fixed code inside a single \`\`\`jsx block.
+Provide ZERO conversational text, diagnoses, explanations, or apologies.`;
+
+    const USER_PROMPT = `ERROR MESSAGE:\n${errorMessage}\n\nBROKEN CODE:\n\`\`\`jsx\n${brokenCode}\n\`\`\``;
+
+    try {
+        console.log('🛠️ [SRE Agent] DeepSeek-V3.2 (Fireworks) autonomous diagnosis running...');
+        // temperature=0.1 → deterministic, no creative hallucination during a fix
+        const content = await callDirectAPI(SYSTEM_PROMPT, USER_PROMPT, AI_CONFIG.debuggerModel, 0.1, activeKey);
+
+        const match = content.match(/```(?:jsx?|tsx?|javascript|js|react)?\s*\n([\s\S]*?)\n```/i);
+        const fixed = match ? match[1].trim() : content.trim();
+
+        if (!fixed) throw new Error('SRE Agent returned an empty response.');
+        console.log('✅ [SRE Agent] Fix received — recompiling canvas...');
+        return fixed;
+
+    } catch (err: any) {
+        console.error('🔴 [SRE Agent] Failed to produce a fix:', err);
+        throw new Error('Debugger AI failed to process the fix.');
+    }
 };
 
 // ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
@@ -363,7 +464,7 @@ export const generateWithAI = async (
         if (local) return local;
     }
 
-    // Tier 2: API Key cloud generation
+    // Tier 2: Cloud LLM generation
     const cloudResult = await processCloudLLM(prompt, currentElements);
 
     // Tier 3: Template fallback if cloud fails

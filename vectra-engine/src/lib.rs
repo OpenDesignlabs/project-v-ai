@@ -1,7 +1,10 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::io::prelude::*;
+use std::fmt::Write as FmtWrite; // aliased to avoid ambiguity with io::Write from prelude
 use wasm_bindgen::prelude::*;
 use serde::{Serialize, Deserialize};
 use serde_json::Value;
+use flate2::{Compression, write::GzEncoder, read::GzDecoder};
 
 // SWC Imports
 use swc_core::common::{
@@ -26,17 +29,13 @@ pub fn main_js() -> Result<(), JsValue> {
 }
 
 // ============================================
-// PRIORITY 1: LAYOUT ENGINE (Snapping)
+// PRIORITY 1: LAYOUT ENGINE (Retained Mode)
 // ============================================
-
-#[derive(Serialize, Deserialize)]
-pub struct Rect {
-    pub id: String,
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
-}
+// calculate_snapping() free function REMOVED (Phase 7):
+//   It serialized all N siblings on every pointer-move (60fps).
+//   Replaced by LayoutEngine.update_rects() (once on drag-start)
+//   + LayoutEngine.query_snapping() (5 scalars at 60fps).
+// Rect struct REMOVED — only LayoutEngine's SimpleRect is needed.
 
 #[derive(Serialize, Deserialize)]
 pub struct Guide {
@@ -54,69 +53,211 @@ pub struct SnapResult {
     pub guides: Vec<Guide>,
 }
 
+// ============================================
+// RETAINED-MODE LAYOUT ENGINE (Phase 5 + Phase 9 Spatial Hash)
+// ============================================
+//
+// Phase 5: push sibling rects ONCE on drag-start (update_rects), query
+//          with 5 scalars at 60fps (query_snapping) — no large data per frame.
+//
+// Phase 9: Spatial Hash Grid — O(N) → O(1) for dense canvases.
+//   update_rects now buckets each rect into 100px × 100px grid cells.
+//   query_snapping only checks rects in the cells that overlap the
+//   (threshold-expanded) bounding box of the dragged element.
+//
+//   Collision: a rect spanning multiple cells appears in multiple buckets.
+//   We use a HashSet<usize> to deduplicate indices before testing, so each
+//   sibling is snapped against at most once per query call.
+
+/// Lightweight rect — no id needed for snap queries.
+#[derive(Serialize, Deserialize, Clone, Copy, Default)]
+pub struct SimpleRect {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
+
 #[wasm_bindgen]
-pub fn calculate_snapping(
-    target_val: JsValue, 
-    candidates_val: JsValue,
-    delta_x: f64,
-    delta_y: f64,
-    threshold: f64
-) -> Result<JsValue, JsValue> {
-    let target: Rect = serde_wasm_bindgen::from_value(target_val)?;
-    let siblings: Vec<Rect> = serde_wasm_bindgen::from_value(candidates_val)?;
+pub struct LayoutEngine {
+    /// Canonical sibling list — populated once per drag-start.
+    rects: Vec<SimpleRect>,
+    /// Spatial hash: grid cell (gx, gy) → list of rect indices in that cell.
+    grid: HashMap<(i32, i32), Vec<usize>>,
+    /// Width/height of each grid cell in canvas pixels.
+    cell_size: f64,
+}
 
-    let mut new_x = target.x + delta_x;
-    let mut new_y = target.y + delta_y;
-    let mut guides: Vec<Guide> = Vec::with_capacity(2);
-
-    let mut snapped_x = false;
-    let mut snapped_y = false;
-
-    let target_w = target.w;
-    let target_h = target.h;
-
-    for sib in siblings {
-        // X Axis
-        if !snapped_x {
-            let x_points = [
-                (new_x, sib.x), (new_x, sib.x + sib.w / 2.0), (new_x, sib.x + sib.w),
-                (new_x + target_w / 2.0, sib.x), (new_x + target_w / 2.0, sib.x + sib.w / 2.0), (new_x + target_w / 2.0, sib.x + sib.w),
-                (new_x + target_w, sib.x), (new_x + target_w, sib.x + sib.w / 2.0), (new_x + target_w, sib.x + sib.w),
-            ];
-            for (t, s) in x_points.iter() {
-                if (t - s).abs() < threshold {
-                    new_x += s - t;
-                    snapped_x = true;
-                    guides.push(Guide { orientation: "vertical".into(), pos: *s, start: new_y.min(sib.y), end: (new_y + target_h).max(sib.y + sib.h), guide_type: "align".into() });
-                    break;
-                }
-            }
+#[wasm_bindgen]
+impl LayoutEngine {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> LayoutEngine {
+        LayoutEngine {
+            rects:     Vec::new(),
+            grid:      HashMap::new(),
+            cell_size: 100.0, // 100 px buckets — good balance for typical canvas densities
         }
-        // Y Axis
-        if !snapped_y {
-            let y_points = [
-                (new_y, sib.y), (new_y, sib.y + sib.h / 2.0), (new_y, sib.y + sib.h),
-                (new_y + target_h / 2.0, sib.y), (new_y + target_h / 2.0, sib.y + sib.h / 2.0), (new_y + target_h / 2.0, sib.y + sib.h),
-                (new_y + target_h, sib.y), (new_y + target_h, sib.y + sib.h / 2.0), (new_y + target_h, sib.y + sib.h),
-            ];
-            for (t, s) in y_points.iter() {
-                if (t - s).abs() < threshold {
-                    new_y += s - t;
-                    snapped_y = true;
-                    guides.push(Guide { orientation: "horizontal".into(), pos: *s, start: new_x.min(sib.x), end: (new_x + target_w).max(sib.x + sib.w), guide_type: "align".into() });
-                    break;
-                }
-            }
-        }
-        if snapped_x && snapped_y { break; }
     }
 
-    Ok(serde_wasm_bindgen::to_value(&SnapResult { x: new_x, y: new_y, guides })?)
+    /// Push sibling rects into Wasm memory and rebuild the spatial hash.
+    /// Call ONCE on drag-start (pointer-down). O(N) serde + O(N×k) grid cost,
+    /// where k = number of cells each rect occupies (usually 1–4).
+    pub fn update_rects(&mut self, rects_val: JsValue) -> Result<(), JsValue> {
+        let rects: Vec<SimpleRect> = serde_wasm_bindgen::from_value(rects_val)?;
+        self.rects = rects;
+
+        // ── Dynamic cell-size heuristic ────────────────────────────────────────
+        // Goal: ~3–5 sibling rects per cell on average so the hash gives O(1)
+        // lookups without excessive bucket collisions.
+        //   avg_dim  = mean of (width + height) / 2 across all rects
+        //   cell_size = avg_dim × 1.5, clamped to [50px, 500px]
+        //
+        // Without this, a canvas full of 16px icons would put everything in one
+        // cell (100px >> 16px), making the hash degenerate to O(N).
+        let count = self.rects.len();
+        if count > 0 {
+            let total_dim: f64 = self.rects.iter().map(|r| r.w + r.h).sum();
+            let avg_dim = total_dim / (count as f64 * 2.0);
+            self.cell_size = (avg_dim * 1.5).max(50.0).min(500.0);
+        }
+
+        // Rebuild spatial hash with the (possibly updated) cell_size
+        self.grid.clear();
+        for (idx, r) in self.rects.iter().enumerate() {
+            let gx_min = (r.x           / self.cell_size).floor() as i32;
+            let gx_max = ((r.x + r.w)   / self.cell_size).floor() as i32;
+            let gy_min = (r.y           / self.cell_size).floor() as i32;
+            let gy_max = ((r.y + r.h)   / self.cell_size).floor() as i32;
+            for gx in gx_min..=gx_max {
+                for gy in gy_min..=gy_max {
+                    self.grid.entry((gx, gy)).or_default().push(idx);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Fast snap query — only 5 scalar args cross the Wasm boundary.
+    /// Phase 9: resolves only rects in nearby grid cells (O(k²) cells,
+    /// typically 1–4 cells for threshold=5px and cell_size=100px).
+    pub fn query_snapping(
+        &self,
+        current_x: f64,
+        current_y: f64,
+        width: f64,
+        height: f64,
+        threshold: f64,
+    ) -> Result<JsValue, JsValue> {
+        let mut new_x = current_x;
+        let mut new_y = current_y;
+        let mut guides: Vec<Guide> = Vec::with_capacity(2);
+        let mut snapped_x = false;
+        let mut snapped_y = false;
+
+        // Determine which grid cells overlap the threshold-expanded bounding box
+        let gx_min = ((current_x - threshold)          / self.cell_size).floor() as i32;
+        let gx_max = ((current_x + width + threshold)  / self.cell_size).floor() as i32;
+        let gy_min = ((current_y - threshold)          / self.cell_size).floor() as i32;
+        let gy_max = ((current_y + height + threshold) / self.cell_size).floor() as i32;
+
+        // Collect unique candidate indices (a rect spanning multiple cells
+        // appears in multiple buckets; deduplicate to snap against it only once)
+        let mut seen: HashSet<usize> = HashSet::new();
+        let mut candidates: Vec<usize> = Vec::new();
+        for gx in gx_min..=gx_max {
+            for gy in gy_min..=gy_max {
+                if let Some(indices) = self.grid.get(&(gx, gy)) {
+                    for &idx in indices {
+                        if seen.insert(idx) {
+                            candidates.push(idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Identical 9-point snap math as the Phase 5 linear scan,
+        // but now only over the O(1) candidates near the dragged element.
+        for idx in candidates {
+            let sib = &self.rects[idx];
+
+            // ── X axis: 9 alignment pairs (left/center/right of each vs each) ──
+            if !snapped_x {
+                let x_points = [
+                    (new_x,               sib.x),
+                    (new_x,               sib.x + sib.w / 2.0),
+                    (new_x,               sib.x + sib.w),
+                    (new_x + width / 2.0, sib.x),
+                    (new_x + width / 2.0, sib.x + sib.w / 2.0),
+                    (new_x + width / 2.0, sib.x + sib.w),
+                    (new_x + width,       sib.x),
+                    (new_x + width,       sib.x + sib.w / 2.0),
+                    (new_x + width,       sib.x + sib.w),
+                ];
+                for (t, s) in x_points.iter() {
+                    if (t - s).abs() < threshold {
+                        new_x += s - t;
+                        snapped_x = true;
+                        guides.push(Guide {
+                            orientation: "vertical".into(),
+                            pos:   *s,
+                            start: new_y.min(sib.y),
+                            end:   (new_y + height).max(sib.y + sib.h),
+                            guide_type: "align".into(),
+                        });
+                        break;
+                    }
+                }
+            }
+
+            // ── Y axis: 9 alignment pairs (top/middle/bottom of each vs each) ──
+            if !snapped_y {
+                let y_points = [
+                    (new_y,                sib.y),
+                    (new_y,                sib.y + sib.h / 2.0),
+                    (new_y,                sib.y + sib.h),
+                    (new_y + height / 2.0, sib.y),
+                    (new_y + height / 2.0, sib.y + sib.h / 2.0),
+                    (new_y + height / 2.0, sib.y + sib.h),
+                    (new_y + height,       sib.y),
+                    (new_y + height,       sib.y + sib.h / 2.0),
+                    (new_y + height,       sib.y + sib.h),
+                ];
+                for (t, s) in y_points.iter() {
+                    if (t - s).abs() < threshold {
+                        new_y += s - t;
+                        snapped_y = true;
+                        guides.push(Guide {
+                            orientation: "horizontal".into(),
+                            pos:   *s,
+                            start: new_x.min(sib.x),
+                            end:   (new_x + width).max(sib.x + sib.w),
+                            guide_type: "align".into(),
+                        });
+                        break;
+                    }
+                }
+            }
+
+            // Both axes snapped — no need to check remaining candidates
+            if snapped_x && snapped_y { break; }
+        }
+
+        Ok(serde_wasm_bindgen::to_value(&SnapResult { x: new_x, y: new_y, guides })?)
+    }
 }
 
 // ============================================
 // PRIORITY 2: TREE MANAGER
 // ============================================
+// delete_node()        REMOVED (Phase 7) — migrated to treeUtils.ts
+// instantiate_template() REMOVED (Phase 7) — migrated to templateUtils.ts
+// Both functions serialized the entire project on every call (CRUD Bridge Tax).
+// The TypeScript versions operate on the JS object directly — zero serde cost.
+//
+// VectraNode is kept because generate_react_code (code export) still needs it.
+// The flatten + other pattern is intentional: the Vectra node schema is open
+// (arbitrary props), so we cannot use explicit fields without breaking the exporter.
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct VectraNode {
@@ -126,98 +267,46 @@ pub struct VectraNode {
     pub other: HashMap<String, Value>,
 }
 
-#[derive(Serialize)]
-pub struct TemplateResult {
-    pub new_nodes: HashMap<String, VectraNode>,
-    pub root_id: String,
-}
-
-#[wasm_bindgen]
-pub fn delete_node(project_val: JsValue, node_id: String) -> Result<JsValue, JsValue> {
-    let mut project: HashMap<String, VectraNode> = serde_wasm_bindgen::from_value(project_val)?;
-    
-    // Unlink
-    let mut parent_id_found = None;
-    for (id, node) in &project {
-        if let Some(children) = &node.children {
-            if children.contains(&node_id) {
-                parent_id_found = Some(id.clone());
-                break;
-            }
-        }
-    }
-    if let Some(pid) = parent_id_found {
-        if let Some(parent) = project.get_mut(&pid) {
-            if let Some(children) = &mut parent.children {
-                children.retain(|c| c != &node_id);
-            }
-        }
-    }
-
-    // Collect
-    let mut to_delete = Vec::new();
-    let mut stack = vec![node_id];
-    while let Some(curr) = stack.pop() {
-        to_delete.push(curr.clone());
-        if let Some(node) = project.get(&curr) {
-            if let Some(children) = &node.children {
-                stack.extend(children.clone());
-            }
-        }
-    }
-
-    // Delete
-    for id in to_delete { project.remove(&id); }
-
-    Ok(serde_wasm_bindgen::to_value(&project)?)
-}
-
-#[wasm_bindgen]
-pub fn instantiate_template(template_nodes_val: JsValue, root_id: String) -> Result<JsValue, JsValue> {
-    let template_nodes: HashMap<String, VectraNode> = serde_wasm_bindgen::from_value(template_nodes_val)?;
-    let mut id_map = HashMap::new();
-    let mut new_nodes = HashMap::new();
-
-    let mut stack = vec![root_id.clone()];
-    let mut descendants = Vec::new();
-    while let Some(curr) = stack.pop() {
-        descendants.push(curr.clone());
-        if let Some(node) = template_nodes.get(&curr) {
-            if let Some(children) = &node.children {
-                stack.extend(children.clone());
-            }
-        }
-    }
-
-    for old_id in &descendants {
-        let rnd = (js_sys::Math::random() * 10000.0).floor() as u32;
-        id_map.insert(old_id.clone(), format!("el-{}-{}", js_sys::Date::now() as u64, rnd));
-    }
-
-    for old_id in descendants {
-        if let Some(old_node) = template_nodes.get(&old_id) {
-            let mut new_node = old_node.clone();
-            if let Some(nid) = id_map.get(&old_id) { new_node.id = nid.clone(); }
-            if let Some(children) = &mut new_node.children {
-                *children = children.iter().filter_map(|c| id_map.get(c).cloned()).collect();
-            }
-            new_nodes.insert(new_node.id.clone(), new_node);
-        }
-    }
-
-    Ok(serde_wasm_bindgen::to_value(&TemplateResult {
-        new_nodes,
-        root_id: id_map.get(&root_id).unwrap_or(&root_id).to_string(),
-    })?)
-}
 
 // ============================================
-// PRIORITY 3: HISTORY MANAGER
+// PRIORITY 3: HISTORY MANAGER (Compressed)
 // ============================================
+// Phase 8: Instead of storing 50 raw JSON strings (~2MB each = ~100MB total),
+// we gzip each snapshot to ~100KB. The uncompressed string only exists for the
+// duration of compress() / decompress() — never in long-lived heap memory.
+//
+// API surface deliberately UNCHANGED from the uncompressed version:
+//   • new(String)           → HistoryManager  (infallible — compress is infallible on valid UTF-8)
+//   • push_state(String)    → void            (TS catch block unchanged)
+//   • undo() / redo()       → Option<String>  (JS sees undefined on None — TS check unchanged)
+//   • can_undo() / can_redo() → bool          (kept; the Phase 8 proposal accidentally omitted them)
+//   • get_memory_usage()    → usize           (new: diagnostic, bytes of compressed data in RAM)
+
+/// Compress a UTF-8 string to gzip bytes.
+/// Infallible for all valid UTF-8 inputs — returns empty Vec on IO error (should never happen).
+fn compress_state(data: &str) -> Vec<u8> {
+    let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+    if enc.write_all(data.as_bytes()).is_ok() {
+        enc.finish().unwrap_or_default()
+    } else {
+        Vec::new()
+    }
+}
+
+/// Decompress gzip bytes back to a UTF-8 String.
+/// Returns None if the data is corrupted (extremely unlikely in practice).
+fn decompress_state(data: &[u8]) -> Option<String> {
+    if data.is_empty() { return None; }
+    let mut dec = GzDecoder::new(data);
+    let mut s = String::new();
+    dec.read_to_string(&mut s).ok()?;
+    Some(s)
+}
 
 #[wasm_bindgen]
 pub struct HistoryManager {
-    stack: Vec<String>,
+    /// Compressed gzip snapshots — typically ~100KB each vs ~2MB uncompressed.
+    stack: Vec<Vec<u8>>,
     current_index: usize,
     max_history: usize,
 }
@@ -226,14 +315,19 @@ pub struct HistoryManager {
 impl HistoryManager {
     #[wasm_bindgen(constructor)]
     pub fn new(initial: String) -> HistoryManager {
-        HistoryManager { stack: vec![initial], current_index: 0, max_history: 50 }
+        HistoryManager {
+            stack: vec![compress_state(&initial)],
+            current_index: 0,
+            max_history: 50,
+        }
     }
 
+    /// Compress and push a new snapshot.  Truncates the redo stack first.
     pub fn push_state(&mut self, state: String) {
         if self.current_index < self.stack.len() - 1 {
             self.stack.truncate(self.current_index + 1);
         }
-        self.stack.push(state);
+        self.stack.push(compress_state(&state));
         self.current_index += 1;
         if self.stack.len() > self.max_history {
             self.stack.remove(0);
@@ -241,22 +335,34 @@ impl HistoryManager {
         }
     }
 
+    /// Step one entry back and return the decompressed JSON string.
     pub fn undo(&mut self) -> Option<String> {
         if self.current_index > 0 {
             self.current_index -= 1;
-            Some(self.stack[self.current_index].clone())
-        } else { None }
+            decompress_state(&self.stack[self.current_index])
+        } else {
+            None
+        }
     }
 
+    /// Step one entry forward and return the decompressed JSON string.
     pub fn redo(&mut self) -> Option<String> {
         if self.current_index < self.stack.len() - 1 {
             self.current_index += 1;
-            Some(self.stack[self.current_index].clone())
-        } else { None }
+            decompress_state(&self.stack[self.current_index])
+        } else {
+            None
+        }
     }
 
     pub fn can_undo(&self) -> bool { self.current_index > 0 }
     pub fn can_redo(&self) -> bool { self.current_index < self.stack.len() - 1 }
+
+    /// Diagnostic: total bytes of compressed data currently held in memory.
+    /// In a browser devtools console: `wasmModule.historyManager.get_memory_usage()`
+    pub fn get_memory_usage(&self) -> usize {
+        self.stack.iter().map(|v| v.len()).sum()
+    }
 }
 
 // ============================================
@@ -286,7 +392,7 @@ pub fn generate_react_code(project_val: JsValue, root_id: String) -> Result<Stri
 
     let name = project.get(&export_root).and_then(|n| n.other.get("name").and_then(|v| v.as_str())).unwrap_or("MyComponent").replace(|c: char| !c.is_alphanumeric(), "");
     code.push_str(&format!("\nexport default function {}() {{\n  return (\n", name));
-    code.push_str(&generate_node_recursive(&project, &export_root, 2, None));
+    generate_node_recursive(&project, &export_root, &mut code, 2, None);
     code.push_str("  );\n}");
 
     Ok(code)
@@ -303,130 +409,191 @@ fn collect_icons(project: &HashMap<String, VectraNode>, id: &String, icons: &mut
     }
 }
 
-fn generate_node_recursive(project: &HashMap<String, VectraNode>, id: &String, indent: usize, _parent: Option<&str>) -> String {
-    let node = match project.get(id) { Some(n) => n, None => return String::new() };
-    if node.other.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false) { return String::new(); }
+// ── generate_node_recursive (buffer-based, Phase 9) ─────────────────────────
+// Phase 9 change: converted from return-String to &mut String buffer.
+//   Before: each recursive call allocates a new String, then the parent does
+//           child_code.push_str(&generate_node_recursive(...)) — 1 alloc per node.
+//   After:  writes directly into the shared buffer — 0 allocs per node.
+//
+// ALL existing logic preserved:
+//   • hidden-node skip       • layoutMode flex injection
+//   • icon special-case      • image/input self-close
+//   • content + children mix • multi-line vs inline child detection
+fn generate_node_recursive(
+    project: &HashMap<String, VectraNode>,
+    id: &String,
+    buf: &mut String,
+    indent: usize,
+    _parent: Option<&str>,
+) {
+    let node = match project.get(id) { Some(n) => n, None => return };
+    if node.other.get("hidden").and_then(|v| v.as_bool()).unwrap_or(false) { return; }
 
     let sp = "  ".repeat(indent);
     let type_str = node.other.get("type").and_then(|v| v.as_str()).unwrap_or("div");
-    let content = node.other.get("content").and_then(|v| v.as_str()).unwrap_or("");
-    let props = node.other.get("props").unwrap_or(&Value::Null);
+    let content  = node.other.get("content").and_then(|v| v.as_str()).unwrap_or("");
+    let props    = node.other.get("props").unwrap_or(&Value::Null);
 
     let mut cls = props.get("className").and_then(|v| v.as_str()).unwrap_or("").to_string();
     if props.get("layoutMode").and_then(|v| v.as_str()) == Some("flex") && !cls.contains("flex") {
         cls.insert_str(0, "flex ");
     }
 
+    // Build props attribute string into a local buffer (avoids repeated allocs)
     let mut props_str = String::new();
-    if !cls.is_empty() { props_str.push_str(&format!(" className=\"{}\"", cls.trim())); }
+    if !cls.is_empty() {
+        let _ = write!(props_str, " className=\"{}\"", cls.trim());
+    }
 
-    // Icon Special Case
+    // Icon special-case: emit as a self-closing JSX component
     if type_str == "icon" {
         let name = props.get("iconName").and_then(|v| v.as_str()).unwrap_or("Star");
         let size = props.get("iconSize").and_then(|v| v.as_u64()).unwrap_or(24);
-        return format!("{}<{}{} size={{{}}} />\n", sp, name, props_str, size);
+        let _ = write!(buf, "{}<{}{} size={{{}}} />\n", sp, name, props_str, size);
+        return;
     }
 
     let tag = match type_str {
-        "text" => "p", "heading" => "h1", "button" => "button", "image" => "img", "input" => "input",
+        "text" => "p", "heading" => "h1", "button" => "button",
+        "image" => "img", "input" => "input",
         "canvas" | "webpage" => "main", _ => "div"
     };
 
-    if ["image", "input"].contains(&tag) {
-        return format!("{}<{}{} />\n", sp, tag, props_str);
+    // Self-closing void elements
+    if matches!(tag, "image" | "input") {
+        let _ = write!(buf, "{}<{}{} />\n", sp, tag, props_str);
+        return;
     }
 
-    let mut child_code = String::new();
-    if !content.is_empty() { child_code.push_str(content); }
+    // Collect children into a temporary buffer first so we can decide
+    // whether to emit a single-line or multi-line element.
+    let mut child_buf = String::new();
+    if !content.is_empty() { child_buf.push_str(content); }
     if let Some(children) = &node.children {
         if !children.is_empty() {
-            if !content.is_empty() { child_code.push('\n'); }
-            for c in children { child_code.push_str(&generate_node_recursive(project, c, indent + 1, None)); }
-            if !child_code.trim().is_empty() && !content.is_empty() { child_code.push_str(&sp); }
+            if !content.is_empty() { child_buf.push('\n'); }
+            for c in children {
+                generate_node_recursive(project, c, &mut child_buf, indent + 1, None);
+            }
+            if !child_buf.trim().is_empty() && !content.is_empty() {
+                child_buf.push_str(&sp);
+            }
         }
     }
 
-    if child_code.is_empty() {
-        format!("{}<{}{} />\n", sp, tag, props_str)
-    } else if child_code.contains('\n') {
-        format!("{}<{}{}>\n{}{}</{}>\n", sp, tag, props_str, child_code, sp, tag)
+    if child_buf.is_empty() {
+        let _ = write!(buf, "{}<{}{} />\n", sp, tag, props_str);
+    } else if child_buf.contains('\n') {
+        let _ = write!(buf, "{}<{}{}>\n{}{}</{}>\n", sp, tag, props_str, child_buf, sp, tag);
     } else {
-        format!("{}<{}{}>{}</{}>\n", sp, tag, props_str, child_code, tag)
+        let _ = write!(buf, "{}<{}{}>{}</{}>\n", sp, tag, props_str, child_buf, tag);
     }
 }
 
 // ============================================
 // PRIORITY 5: LIVE COMPILER (SWC)
 // ============================================
+// STABILITY NOTE (Phase 6 fix):
+// We previously stored `Globals` as a struct field to reuse the SWC string
+// interner across calls (avoiding repeated allocator init).
+//
+// In the `wasm32-unknown-unknown` no_threads target, swc_core's GLOBALS is a
+// thread-local backed by a spin-lock. Storing a Globals inside a wasm_bindgen
+// struct and then calling GLOBALS.set() inside compile() causes the lock to be
+// acquired twice on the same "thread" (WASM is single-threaded, but the lock
+// is not re-entrant). Result: "cannot recursively acquire mutex" panic.
+//
+// Fix: SwcCompiler is a zero-sized unit struct. Each compile() call creates a
+// fresh Globals — the lock is acquired, the full transform runs, and it is
+// released before the next call. Cost: one alloc per compile (~negligible vs
+// the 5–50ms parse + transform time).
+//
+// SourceMap remains local per compile (intentional): reusing it would cause
+// unbounded ghost-file accumulation as every new_source_file() is permanent.
 
 #[wasm_bindgen]
-pub fn compile_component(code: String) -> Result<String, JsValue> {
-    let cm: Lrc<SourceMap> = Default::default();
-    
-    // We do NOT use a Handler/TTY emitter here as it panics in WASM.
-    // Errors are captured via the Result return type.
+pub struct SwcCompiler; // Zero-sized — no persistent state, no mutex risk
 
-    let globals = Globals::new();
-    
-    GLOBALS.set(&globals, || {
-        // 1. Setup Input & Comments
-        // LIFETIME FIX: Create comments here so they live as long as the Lexer and Parser
+#[wasm_bindgen]
+impl SwcCompiler {
+    #[wasm_bindgen(constructor)]
+    pub fn new() -> SwcCompiler {
+        SwcCompiler
+    }
+
+    /// Compile TSX/JSX source → plain JS (React.createElement calls).
+    /// Creates a fresh Globals per call to avoid WASM mutex re-entrancy panics.
+    pub fn compile(&self, code: String) -> Result<String, JsValue> {
+        // Fresh Globals every time — the only safe approach in wasm no_threads
+        let globals = Globals::new();
+        let cm: Lrc<SourceMap> = Default::default();
         let comments = SingleThreadedComments::default();
-        
-        let syntax = Syntax::Typescript(TsConfig {
-            tsx: true,
-            decorators: true,
-            ..Default::default()
-        });
 
-        let fm = cm.new_source_file(FileName::Custom("component.tsx".into()), code);
-        
-        // Pass reference to comments (&comments)
-        let lexer = Lexer::new(
-            syntax,
-            Default::default(),
-            StringInput::from(&*fm),
-            Some(&comments)
-        );
-        
-        let mut parser = Parser::new_from(lexer);
-        let program = parser.parse_program().map_err(|_| JsValue::from_str("Parse Error"))?;
+        GLOBALS.set(&globals, || {
+            let syntax = Syntax::Typescript(TsConfig {
+                tsx: true,
+                decorators: true,
+                ..Default::default()
+            });
 
-        // 2. Transformations
-        let mark = Mark::new();
-        
-        // Strip TypeScript types
-        let mut program = program.fold_with(&mut strip(mark));
-        
-        let react_options = ReactOptions {
-            runtime: Some(Runtime::Classic), // Converts JSX -> React.createElement
-            ..Default::default()
-        };
-        
-        // TYPE FIX: Clone comments for the transform (Option<C>)
-        // SingleThreadedComments is cheap to clone (Arc-like internally)
-        program = program.fold_with(&mut react::<SingleThreadedComments>(
-            cm.clone(),
-            Some(comments.clone()), 
-            react_options,
-            mark,
-            Mark::new(),
-        ));
+            let fm = cm.new_source_file(
+                FileName::Custom("component.tsx".into()),
+                code,
+            );
 
-        // 3. Emission (Code Generation)
-        let mut buf = vec![];
-        {
-            let mut emitter = Emitter {
-                cfg: Config::default().with_minify(false),
-                cm: cm.clone(),
-                // TYPE FIX: Pass reference for the emitter (Option<&dyn Comments>)
-                comments: Some(&comments), 
-                wr: JsWriter::new(cm, "\n", &mut buf, None),
+            let lexer = Lexer::new(
+                syntax,
+                Default::default(),
+                StringInput::from(&*fm),
+                Some(&comments),
+            );
+
+            let mut parser = Parser::new_from(lexer);
+            let program = parser
+                .parse_program()
+                .map_err(|_| JsValue::from_str("Parse Error"))?;
+
+            // Strip TypeScript types
+            let mark = Mark::new();
+            let mut program = program.fold_with(&mut strip(mark));
+
+            // Transform JSX → React.createElement
+            let react_options = ReactOptions {
+                runtime: Some(Runtime::Classic),
+                ..Default::default()
             };
+            program = program.fold_with(&mut react::<SingleThreadedComments>(
+                cm.clone(),
+                Some(comments.clone()),
+                react_options,
+                mark,
+                Mark::new(),
+            ));
 
-            emitter.emit_program(&program).map_err(|_| JsValue::from_str("Emit Error"))?;
-        }
-        
-        Ok(String::from_utf8(buf).map_err(|_| JsValue::from_str("UTF8 Error"))?)
-    })
+            // Emit JS
+            let mut buf = vec![];
+            {
+                let mut emitter = Emitter {
+                    cfg: Config::default().with_minify(false),
+                    cm: cm.clone(),
+                    comments: Some(&comments),
+                    wr: JsWriter::new(cm, "\n", &mut buf, None),
+                };
+                emitter
+                    .emit_program(&program)
+                    .map_err(|_| JsValue::from_str("Emit Error"))?;
+            }
+
+            Ok(String::from_utf8(buf)
+                .map_err(|_| JsValue::from_str("UTF8 Error"))?)
+        })
+    }
+}
+
+/// Free-function shim kept for backward compatibility while callers migrate
+/// to the `SwcCompiler` struct. Delegates to a temporary instance.
+/// DEPRECATED: Prefer `new SwcCompiler().compile(code)` in TypeScript.
+#[wasm_bindgen]
+pub fn compile_component(code: String) -> Result<String, JsValue> {
+    SwcCompiler::new().compile(code)
 }

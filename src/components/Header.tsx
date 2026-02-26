@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import JSZip from 'jszip';
+import { saveAs } from 'file-saver';
 import { useEditor } from '../context/EditorContext';
 import { useContainer } from '../context/ContainerContext';
 import { generateCode, copyToClipboard } from '../utils/codeGenerator';
@@ -6,7 +8,7 @@ import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 import {
     Play, Undo, Redo, Code,
     Check, X, Copy, Trash2,
-    Layers, Palette, RotateCcw, Home, Wand2, Download
+    Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck
 } from 'lucide-react';
 
 import { cn } from '../lib/utils';
@@ -18,10 +20,12 @@ export const Header = () => {
         deleteElement, exitProject, setMagicBarOpen,
     } = useEditor();
 
-    const { status } = useContainer();
+    const { instance, status } = useContainer();
     const [showCode, setShowCode] = useState(false);
     const [code, setCode] = useState('');
     const [copied, setCopied] = useState(false);
+    const [isExporting, setIsExporting] = useState(false);
+    const [exportDone, setExportDone] = useState(false);
 
     const handleGenerate = () => {
         // HYBRID GENERATION: Try Rust first, then fallback to TS
@@ -59,6 +63,68 @@ export const Header = () => {
             setElements(INITIAL_DATA);
             localStorage.removeItem(STORAGE_KEY);
             window.location.reload();
+        }
+    };
+
+    // ─── ZIP EXPORTER ──────────────────────────────────────────────────────────
+    // Recursively walks the WebContainer VFS, collects every file (excluding
+    // node_modules and .git), and bundles them into a downloadable .zip.
+    // Because useFileSync has already written real .tsx files there, the zip
+    // contains a 100% production-ready Vite + React project.
+    const handleExportZip = async () => {
+        if (!instance || status !== 'ready') {
+            alert('Virtual File System is still booting. Please wait a moment.');
+            return;
+        }
+
+        setIsExporting(true);
+        setExportDone(false);
+
+        try {
+            const zip = new JSZip();
+
+            // Recursively read VFS directory → populate zip
+            const addDir = async (dirPath: string, zipFolder: JSZip) => {
+                const entries = await instance.fs.readdir(dirPath, { withFileTypes: true });
+
+                for (const entry of entries) {
+                    // Skip heavy / irrelevant dirs
+                    if (['node_modules', '.git', '.vite', 'dist'].includes(entry.name)) continue;
+
+                    const fullPath = dirPath === '/'
+                        ? `/${entry.name}`
+                        : `${dirPath}/${entry.name}`;
+
+                    if (entry.isDirectory()) {
+                        await addDir(fullPath, zipFolder.folder(entry.name)!);
+                    } else {
+                        const content = await instance.fs.readFile(fullPath, 'utf-8');
+                        zipFolder.file(entry.name, content);
+                    }
+                }
+            };
+
+            console.log('[Vectra] 📦 Building production ZIP from VFS...');
+            await addDir('/', zip);
+
+            const blob = await zip.generateAsync({
+                type: 'blob',
+                compression: 'DEFLATE',
+                compressionOptions: { level: 6 },
+            });
+
+            saveAs(blob, 'vectra-project.zip');
+            console.log('[Vectra] ✅ vectra-project.zip downloaded successfully!');
+
+            // Show green checkmark briefly
+            setExportDone(true);
+            setTimeout(() => setExportDone(false), 3000);
+
+        } catch (err) {
+            console.error('[Vectra] ❌ Export failed:', err);
+            alert(`Export failed: ${(err as Error).message}\n\nCheck the browser console for details.`);
+        } finally {
+            setIsExporting(false);
         }
     };
 
@@ -177,9 +243,27 @@ export const Header = () => {
                         <Code size={16} />
                     </button>
 
-                    {/* Download Button */}
-                    <button className="p-2 text-[#858585] hover:text-white hover:bg-[#3e3e42] rounded transition-colors" title="Download Assets">
-                        <Download size={16} />
+                    {/* ── Download ZIP Button ────────────────────────────── */}
+                    <button
+                        onClick={handleExportZip}
+                        disabled={isExporting || status !== 'ready'}
+                        title={status !== 'ready' ? 'Waiting for VFS...' : 'Download production-ready ZIP'}
+                        className={cn(
+                            'flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-bold transition-all border',
+                            exportDone
+                                ? 'bg-green-500/20 border-green-500/50 text-green-400'
+                                : isExporting
+                                    ? 'bg-[#252526] border-[#3e3e42] text-blue-400 cursor-wait'
+                                    : 'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-white hover:border-[#007acc] disabled:opacity-40 disabled:cursor-not-allowed'
+                        )}
+                    >
+                        {isExporting ? (
+                            <><Loader2 size={12} className="animate-spin" /><span>Zipping...</span></>
+                        ) : exportDone ? (
+                            <><PackageCheck size={12} /><span>Downloaded!</span></>
+                        ) : (
+                            <><Download size={12} /><span>Export ZIP</span></>
+                        )}
                     </button>
 
                     <div className="h-4 w-px bg-[#3e3e42] mx-2" />
