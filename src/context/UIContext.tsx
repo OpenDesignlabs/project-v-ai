@@ -10,8 +10,15 @@
  * This is the "View State" in a loose MVC split with ProjectContext.
  */
 
-import React, { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
 import type { DragData, InteractionState, Guide, Asset, GlobalStyles, EditorTool, DeviceType, ActionType } from '../types';
+
+/** Per-page viewport snapshot — saved when switching away from a page. */
+interface PageViewport {
+    selectedId: string | null;
+    pan: { x: number; y: number };
+    zoom: number;
+}
 
 export type SidebarPanel = 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files' | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | 'backend' | null;
 export type AppView = 'dashboard' | 'editor';
@@ -71,6 +78,19 @@ interface UIContextType {
     currentView: AppView;
     setCurrentView: (v: AppView) => void;
 
+    /**
+     * savePageViewport: snapshot current selectedId/pan/zoom under pageId.
+     * Call BEFORE switching activePageId so the departing page's state is captured.
+     */
+    savePageViewport: (pageId: string) => void;
+
+    /**
+     * restorePageViewport: apply the cached viewport for pageId.
+     * If no cache entry exists (page never visited), resets to clean slate:
+     *   selectedId = null, pan = {x:0, y:0}, zoom = 1
+     */
+    restorePageViewport: (pageId: string) => void;
+
     // ── Action runner (links, scroll) ─────────────────────────────────────────
     runAction: (action: ActionType) => void;
 
@@ -107,6 +127,37 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [globalStyles, setGlobalStyles] = useState<GlobalStyles>({ colors: { primary: '#3b82f6', secondary: '#10b981', accent: '#f59e0b', dark: '#1e293b' }, fonts: {} });
     const [componentRegistry, setComponentRegistry] = useState<Record<string, any>>({});
     const [recentComponents, setRecentComponents] = useState<string[]>([]);
+
+    // ── Per-page viewport cache (Direction 3) ──────────────────────────────────
+    // useRef — not useState — because restoring viewport must not trigger an
+    // additional render cycle. The setSelectedId/setPan/setZoom calls already
+    // schedule their own renders; the cache read itself should be free.
+    const pageViewportCache = useRef<Map<string, PageViewport>>(new Map());
+
+    const savePageViewport = useCallback((pageId: string) => {
+        // We read the CURRENT values directly from the state closures.
+        // This callback is called synchronously before the page switch so
+        // the values are still the departing page's values.
+        pageViewportCache.current.set(pageId, {
+            selectedId: selectedId,
+            pan: pan,
+            zoom: zoom,
+        });
+    }, [selectedId, pan, zoom]);
+
+    const restorePageViewport = useCallback((pageId: string) => {
+        const cached = pageViewportCache.current.get(pageId);
+        if (cached) {
+            setSelectedId(cached.selectedId);
+            setPan(cached.pan);
+            setZoom(cached.zoom);
+        } else {
+            // Page never visited — reset to clean slate
+            setSelectedId(null);
+            setPan({ x: 0, y: 0 });
+            setZoom(1);
+        }
+    }, [setSelectedId, setPan, setZoom]);
 
     // App view — persisted to localStorage
     const [currentView, setCurrentViewState] = useState<AppView>(() =>
@@ -186,6 +237,8 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             registerComponent: (id, cfg) => setComponentRegistry(p => ({ ...p, [id]: cfg })),
             recentComponents,
             addRecentComponent: (id) => setRecentComponents(p => [id, ...p.filter(i => i !== id)].slice(0, 8)),
+            savePageViewport,
+            restorePageViewport,
         }}>
             {children}
         </UIContext.Provider>

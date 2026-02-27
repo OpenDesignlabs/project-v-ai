@@ -654,7 +654,17 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (activePageId === id) setActivePageId(pages[0].id);
     };
 
-    const switchPage = (pageId: string) => setActivePageId(pageId);
+    const switchPage = useCallback((pageId: string) => {
+        // Dispatch BEFORE the state update so listeners receive the old activePageId
+        // as `from` and the new pageId as `to` in the same synchronous tick.
+        // Canvas.tsx listens for this event to save/restore viewport state.
+        window.dispatchEvent(
+            new CustomEvent('vectra:page-switching', {
+                detail: { from: activePageId, to: pageId },
+            })
+        );
+        setActivePageId(pageId);
+    }, [activePageId]);
 
     // ── Phase H: Project lifecycle ────────────────────────────────────────────
     const createNewProject = useCallback((templateId: string) => {

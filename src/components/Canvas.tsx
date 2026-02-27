@@ -39,6 +39,8 @@ export const Canvas = () => {
         selectedId: _sid, setSelectedId,
         interaction, setInteraction: _si,
         isInsertDrawerOpen, toggleInsertDrawer,
+        savePageViewport,
+        restorePageViewport,
     } = useUI();
 
     // ── Assembled bridge values (componentRegistry merges static + dynamic) ───
@@ -64,6 +66,37 @@ export const Canvas = () => {
         if (el) el.addEventListener('wheel', onWheel, { passive: false });
         return () => el?.removeEventListener('wheel', onWheel);
     }, [zoom, previewMode, setZoom, setPan]);
+
+    // ── Direction 3: Per-page viewport save/restore ───────────────────────────
+    // Listens for the 'vectra:page-switching' CustomEvent dispatched by
+    // ProjectContext.switchPage() just BEFORE activePageId changes.
+    //
+    // TIMING GUARANTEE
+    // ────────────────
+    // The event fires synchronously in switchPage() before setActivePageId().
+    // React batches the setActivePageId() state update for the next render.
+    // This means when our handler runs, selectedId/pan/zoom still hold the
+    // DEPARTING page's values — exactly what we want to save.
+    //
+    // After saving, we immediately restore the incoming page's viewport so
+    // that when React re-renders (after setActivePageId flushes), the canvas
+    // starts at the correct position/zoom for the new page.
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const { from, to } = (e as CustomEvent<{ from: string; to: string }>).detail;
+            if (from === to) return; // guard: switching to same page is a no-op
+
+            // Save departing page viewport
+            savePageViewport(from);
+
+            // Restore arriving page viewport (or clean slate if first visit)
+            restorePageViewport(to);
+        };
+
+        window.addEventListener('vectra:page-switching', handler);
+        return () => window.removeEventListener('vectra:page-switching', handler);
+    }, [savePageViewport, restorePageViewport]);
+    // ── End Direction 3 ───────────────────────────────────────────────────────
 
     // ── 2. KEYBOARD — spacebar panning ────────────────────────────────────────
     useEffect(() => {

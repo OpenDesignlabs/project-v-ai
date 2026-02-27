@@ -416,6 +416,81 @@ const buildFrTemplateStrings = (
   return { templateColumns, templateRows };
 };
 
+/**
+ * deepPatchProjectForGrid
+ * ───────────────────────
+ * Recursively patches every node in the subtree rooted at `rootId` that has
+ * a CSS Grid placement entry. Returns a new VectraProject copy — the
+ * original project is NEVER mutated.
+ *
+ * WHAT IT FIXES (A2)
+ * ──────────────────
+ * The previous implementation patched only the direct canvas child:
+ *   patchedProject = { ...project, [childId]: { ...patchedStyle } }
+ *
+ * generateNodeCode() recurses into grandchildren reading from patchedProject.
+ * But grandchildren still had their original absolute style because the
+ * shallow clone only replaced the root child entry.
+ *
+ * This function walks the FULL subtree and patches every node whose id
+ * appears in the placementMap. Nodes not in the placementMap are inserted
+ * into the patched map unchanged — same object reference, zero allocation.
+ *
+ * CYCLE SAFETY
+ * ────────────
+ * A visited Set prevents infinite loops on malformed trees where a
+ * child’s children[] includes an ancestor ID. In practice Vectra’s tree
+ * is always a DAG, but the guard costs O(N) memory and prevents a hang.
+ */
+const deepPatchProjectForGrid = (
+  project: VectraProject,
+  rootId: string,
+  placementMap: Map<string, { colStart: number; colEnd: number; rowStart: number; rowEnd: number }>
+): VectraProject => {
+  // Shallow-clone the whole project so untouched nodes outside this subtree
+  // are zero-cost identity references. We only overwrite entries we visit.
+  const patched: VectraProject = { ...project };
+  const visited = new Set<string>();
+
+  const walk = (id: string): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+
+    const node = project[id];
+    if (!node) return;
+
+    const placement = placementMap.get(id);
+    if (placement) {
+      // Strip absolute-positioning props; inject grid placement.
+      // All other style props (bg, border, shadow …) are preserved.
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      const { position: _p, left: _l, top: _t, ...restStyle } = (node.props?.style || {}) as any;
+      patched[id] = {
+        ...node,
+        props: {
+          ...node.props,
+          style: {
+            ...restStyle,
+            gridColumn: `${placement.colStart} / ${placement.colEnd}`,
+            gridRow: `${placement.rowStart} / ${placement.rowEnd}`,
+          },
+        },
+      };
+    } else {
+      // No placement — clone reference unchanged (zero allocation).
+      patched[id] = node;
+    }
+
+    // Recurse into children
+    for (const childId of (node.children ?? [])) {
+      walk(childId);
+    }
+  };
+
+  walk(rootId);
+  return patched;
+};
+
 export const generateGridPage = (
   page: Page,
   project: VectraProject,
@@ -453,40 +528,19 @@ export const generateGridPage = (
   const colCount = gridLayout.colWidthsPx.length;
   const rowCount = gridLayout.rowHeightsPx.length;
 
-  // ── Generate JSX for each canvas child ──────────────────────────────────
+  // ── Direction 1 (A2 fix): Deep-patch each canvas child subtree ───────────
+  // deepPatchProjectForGrid() walks the FULL subtree so that grandchildren
+  // (nested containers, text nodes, images …) are also correctly patched.
+  // Previously we only patched the direct canvas child, leaving grandchildren
+  // with their original position:absolute style — now fixed.
   const childJsx = childIds.map(childId => {
-    const node = project[childId];
-    if (!node) return '';
+    if (!project[childId]) return '';
 
-    const placement = placementMap.get(childId);
+    // Build one coherent patched copy for this subtree.
+    // All descendants with placement entries get gridColumn/gridRow.
+    // All other descendants are identity-cloned (no allocation).
+    const patchedProject = deepPatchProjectForGrid(project, childId, placementMap);
 
-    // Build the style object for this node:
-    //   • If grid placement exists: strip absolute props, inject gridColumn/gridRow
-    //   • If no placement: preserve original style unchanged (safe fallback)
-    const originalStyle: Record<string, unknown> = { ...(node.props?.style || {}) };
-    let nodeStyle: Record<string, unknown>;
-
-    if (placement) {
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { position: _pos, left: _left, top: _top, ...rest } = originalStyle as any;
-      nodeStyle = {
-        ...rest,
-        gridColumn: `${placement.colStart} / ${placement.colEnd}`,
-        gridRow: `${placement.rowStart} / ${placement.rowEnd}`,
-      };
-    } else {
-      nodeStyle = originalStyle;
-    }
-
-    // Generate JSX via existing generateNodeCode() with a patched style clone.
-    // This is non-mutating — patchedProject is a shallow copy discarded after use.
-    const patchedProject = {
-      ...project,
-      [childId]: {
-        ...node,
-        props: { ...node.props, style: nodeStyle },
-      },
-    };
     return generateNodeCode(childId, patchedProject, imports, 3);
   }).join('');
 
