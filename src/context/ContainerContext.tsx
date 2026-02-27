@@ -23,6 +23,12 @@ interface ContainerContextType {
     // On-demand: triggers pnpm install + vite dev server when the user explicitly asks
     installPackage: (packageName: string) => Promise<void>;
     startDevServer: () => Promise<void>;
+    /**
+     * killDevServer: terminates the running dev server process if one exists.
+     * Called automatically on ContainerProvider unmount (project switch).
+     * Exposed for components that need an explicit "Stop Server" control.
+     */
+    killDevServer: () => void;
 }
 
 const ContainerContext = createContext<ContainerContextType | undefined>(undefined);
@@ -30,6 +36,52 @@ const ContainerContext = createContext<ContainerContextType | undefined>(undefin
 // ─── SINGLETON BOOT GUARD ─────────────────────────────────────────────────────
 // Prevents double-boot in React Strict Mode double-invoke and across re-renders.
 let bootPromise: Promise<WebContainer> | null = null;
+
+// ADD as a module-scope helper (before the ContainerProvider function):
+
+/**
+ * cleanVfsForFramework
+ * ────────────────────
+ * Removes framework-specific directories from the WebContainer VFS before
+ * mounting a new project template. This prevents stale files from a previous
+ * project bleeding into the new one.
+ *
+ * WHY THIS IS NECESSARY
+ * ──────────────────────
+ * wc.mount() overlays new files onto the existing VFS — it does NOT clear it.
+ * If Project A (Next.js) had app/about/page.tsx and Project B (Next.js) does
+ * not, that file persists in the VFS after mount. useFileSync only writes files
+ * it knows about — it never removes files it didn't create.
+ *
+ * DIRECTORIES CLEANED
+ * ────────────────────
+ * Next.js: app/, components/, public/assets/
+ * Vite:    src/, public/assets/
+ *
+ * We intentionally do NOT remove: node_modules/, .pnpm-store/, package.json,
+ * tailwind.config.js — these are expensive to reinstall and the template
+ * will overwrite them with the correct content on mount anyway.
+ *
+ * All removals use { recursive: true, force: true } — ENOENT is swallowed
+ * silently (directories simply don't exist on a fresh WebContainer boot).
+ */
+const cleanVfsForFramework = async (
+    instance: WebContainer,
+    framework: 'nextjs' | 'vite'
+): Promise<void> => {
+    const dirs = framework === 'nextjs'
+        ? ['app', 'components', 'public/assets']
+        : ['src', 'public/assets'];
+
+    await Promise.all(
+        dirs.map(dir =>
+            instance.fs.rm(dir, { recursive: true, force: true }).catch(() => {
+                // ENOENT on fresh boot — not an error
+            })
+        )
+    );
+    console.log(`[VFS] Cleaned framework dirs for ${framework}:`, dirs.join(', '));
+};
 
 // ─── PROVIDER ─────────────────────────────────────────────────────────────────
 
@@ -48,6 +100,8 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
 
     // Tracks whether the dev server has ever been launched this session
     const devServerStarted = useRef(false);
+    // Stores the SpawnResult from startDevServer() so we can .kill() it on unmount.
+    const devServerProcessRef = useRef<any>(null);
     const isInitialized = useRef(false);
 
     // ── Logging ──────────────────────────────────────────────────────────────
@@ -71,6 +125,11 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
                 setStatus('mounting');
                 const template = framework === 'vite' ? VITE_REACT_TEMPLATE : NEXTJS_APP_ROUTER_TEMPLATE;
                 const frameworkLabel = framework === 'vite' ? 'Vite + React' : 'Next.js App Router';
+
+                // Item 4: clean stale dirs before mounting new project template.
+                // Prevents old project files from bleeding into the new VFS.
+                await cleanVfsForFramework(wc, framework);
+
                 log(`📂 Mounting ${frameworkLabel} project files...`);
                 await wc.mount(template);
 
@@ -168,6 +227,8 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
             : ['next', 'dev', '--hostname', '0.0.0.0'];
         log(`🚀 Starting ${framework === 'vite' ? 'Vite' : 'Next.js'} dev server...`);
         const dev = await instance.spawn('npx', devArgs);
+        // Item 4: store process ref so we can kill it on unmount.
+        devServerProcessRef.current = dev;
         dev.output.pipeTo(new WritableStream({ write: d => log(d) }));
 
         instance.on('server-ready', (_, serverUrl) => {
@@ -175,6 +236,35 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
             log(`✅ Dev server ready: ${serverUrl}`);
         });
     }, [instance, log]);
+
+    // ── killDevServer (Item 4) ────────────────────────────────────────────────────
+    // Terminates the dev server process. Called on unmount and exposed on context
+    // for components that need an explicit stop control.
+    const killDevServer = useCallback(() => {
+        if (devServerProcessRef.current) {
+            try {
+                devServerProcessRef.current.kill();
+                console.log('[VFS] Dev server process killed.');
+            } catch (e) {
+                // Process may already have exited — safe to ignore.
+                console.warn('[VFS] killDevServer: process already dead or not killable.', e);
+            }
+            devServerProcessRef.current = null;
+            devServerStarted.current = false;
+            setUrl(null);
+        }
+    }, []);
+
+    // ── Cleanup on unmount (Item 4) ───────────────────────────────────────────────
+    // ContainerProvider unmounts when the user exits to the Dashboard.
+    // Kill the dev server process so it doesn't continue consuming WebContainer
+    // resources. The WebContainer iframe itself persists (singleton boot) but the
+    // spawned npx process is cleaned up.
+    useEffect(() => {
+        return () => {
+            killDevServer();
+        };
+    }, [killDevServer]);
 
     // ── installPackage (NPM panel in LeftSidebar) ─────────────────────────────
     // Ensures the dev server is running before adding a package, then installs it.
@@ -209,6 +299,7 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
             fileTree,
             installPackage,
             startDevServer,
+            killDevServer,
         }}>
             {children}
         </ContainerContext.Provider>

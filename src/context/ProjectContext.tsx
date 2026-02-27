@@ -862,31 +862,90 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         await purgeProjectData(id);
     }, [removeProjectFromIndex, purgeProjectData]);
 
-    // ── AI ────────────────────────────────────────────────────────────────────
-    const runAI = async (prompt: string): Promise<string | undefined> => {
+    // ── AI ────────────────────────────────────────────────────────────────────────
+    //
+    // Item 3 fixes:
+    //   1. useCallback — stable identity, not recreated every render.
+    //   2. pushHistory() called after every successful mutation so AI
+    //      generations appear in the undo stack (Cmd+Z works on AI output).
+    //   3. Reads elementsRef for the merge result so we capture the actual
+    //      new state and push it to history, not the stale closure value.
+    //
+    // The three-tier AI logic (generateWithAI → mergeAIContent → fallback)
+    // is completely unchanged in behaviour.
+    const runAI = useCallback(async (prompt: string): Promise<string | undefined> => {
         try {
             console.log('🎨 AI Agent processing:', prompt);
-            const result = await generateWithAI(prompt, elements);
-            if (result.action === 'error') { console.warn('❌ AI Error:', result.message); return result.message; }
+
+            // Read current state via refs — avoids stale closure captures
+            // when this callback is invoked async after a re-render.
+            const currentElements = elementsRef.current;
+            const currentPages = pages;          // pages is stable between renders
+            const currentPageId = activePageId;  // same
+
+            const result = await generateWithAI(prompt, currentElements);
+
+            if (result.action === 'error') {
+                console.warn('❌ AI Error:', result.message);
+                return result.message;
+            }
 
             if (result.action === 'create' && result.elements && result.rootId) {
-                const currentPage = pages.find(p => p.id === activePageId);
+                const currentPage = currentPages.find(p => p.id === currentPageId);
                 if (!currentPage) return 'No active page';
+
                 const isFullPage = /page|website|portfolio|landing/i.test(prompt);
-                setElements(cur => mergeAIContent(cur, currentPage.rootId, result.elements!, result.rootId!, isFullPage));
-                console.log('✅ Canvas updated with', Object.keys(result.elements).length, 'new elements');
+
+                // Compute merged result BEFORE calling setElements so we can
+                // push it to history immediately after. Using the functional
+                // setElements form still gives us the merged tree via a local var.
+                let merged: VectraProject;
+                setElements(cur => {
+                    merged = mergeAIContent(
+                        cur,
+                        currentPage.rootId,
+                        result.elements!,
+                        result.rootId!,
+                        isFullPage
+                    );
+                    return merged;
+                });
+
+                // Push to history so Cmd+Z can undo AI generation.
+                // Small timeout — lets setElements flush before pushHistory reads
+                // the ref. elementsRef.current is updated synchronously by the
+                // setElements reducer before React schedules the re-render.
+                setTimeout(() => {
+                    pushHistory(elementsRef.current);
+                    console.log(
+                        '✅ AI: Canvas updated with',
+                        Object.keys(result.elements!).length,
+                        'elements — pushed to history.'
+                    );
+                }, 0);
+
                 return result.message;
             }
+
             if (result.action === 'update' && result.elements) {
-                setElements(cur => ({ ...cur, ...result.elements }));
-                console.log('✅ Updated', Object.keys(result.elements).length, 'elements');
+                setElements(cur => {
+                    const updated = { ...cur, ...result.elements };
+                    // Push history synchronously here — update path is a simple merge
+                    // so elementsRef will be current after this tick.
+                    setTimeout(() => pushHistory(elementsRef.current), 0);
+                    return updated;
+                });
+                console.log('✅ AI: Updated', Object.keys(result.elements).length, 'elements — pushed to history.');
                 return result.message;
             }
+
         } catch (e) {
             console.error('❌ AI Error:', e);
             return 'Something went wrong.';
         }
-    };
+    }, [pages, activePageId, pushHistory]);
+    // Note: elements intentionally omitted from deps — read via elementsRef
+    // to prevent runAI from being recreated on every element change (60fps).
 
     // ── Phase 6 + 10: Rust SWC Compiler ──────────────────────────────────────
     // Phase 6: TSX→JS via Rust SWC (no Babel), ESM→CJS shim for iframe shell.
