@@ -895,6 +895,63 @@ export default function RootLayout({
 };
 
 /**
+ * deduplicatePageSlugs
+ * ────────────────────
+ * Guards against slug collisions in the page list before generating
+ * Next.js App Router file paths.
+ *
+ * WHY THIS IS NEEDED (A3)
+ * ────────────────────────
+ * Every new project starts with page-home at slug '/'. If the user adds
+ * a second page and leaves its slug as '/', generateNextProjectCode() would
+ * call slugToNextPath('/') twice, writing 'app/page.tsx' twice. The second
+ * write silently overwrites the first — the first page's content is lost in
+ * the ZIP with no warning.
+ *
+ * ALGORITHM
+ * ──────────
+ * 1. Walk the pages array in order (home page at index 0 is always safe).
+ * 2. Maintain a Set of slugs already assigned.
+ * 3. If a slug collides, append a numeric suffix and increment until the
+ *    slug is unique: '/about' → '/about-2' → '/about-3' etc.
+ * 4. Return a new Page[] with safe slugs. The original array is not mutated.
+ *
+ * A console.warn is emitted per collision so developers can see and fix the
+ * source data in the Vectra pages panel.
+ *
+ * @param pages   Original page list — not mutated
+ * @returns       New page list with all slugs guaranteed unique
+ */
+const deduplicatePageSlugs = (pages: Page[]): Page[] => {
+  const seen = new Set<string>();
+  return pages.map(page => {
+    let slug = page.slug || '/';
+
+    if (!seen.has(slug)) {
+      seen.add(slug);
+      return page;
+    }
+
+    // Collision — find a safe suffix
+    let counter = 2;
+    let candidate = `${slug}-${counter}`;
+    while (seen.has(candidate)) {
+      counter++;
+      candidate = `${slug}-${counter}`;
+    }
+
+    console.warn(
+      `[Vectra] Slug collision detected: page "${page.name}" has slug "${slug}" ` +
+      `which is already used. Auto-renamed to "${candidate}" in export. ` +
+      `Fix this in the Pages panel to avoid surprises.`
+    );
+
+    seen.add(candidate);
+    return { ...page, slug: candidate };
+  });
+};
+
+/**
  * generateNextProjectCode — full GeneratedFileMap for a Next.js project.
  * Next.js equivalent of the existing generateProjectCode() (Vite).
  */
@@ -910,15 +967,19 @@ export const generateNextProjectCode = (
     'clsx', 'tailwind-merge',
   ]);
 
-  pages.forEach(page => {
+  // Item 1: Deduplicate slugs before generating paths.
+  // Prevents silent file overwrites in the ZIP when two pages share a slug.
+  const safePages = deduplicatePageSlugs(pages);
+
+  safePages.forEach(page => {
     const filePath = slugToNextPath(page.slug);
     files[filePath] = generateNextPage(page, project);
   });
 
-  files['app/layout.tsx'] = generateRootLayout(pages);
+  files['app/layout.tsx'] = generateRootLayout(safePages);
 
-  if (pages.length > 1) {
-    files['components/Navbar.tsx'] = generateNextNavbar(pages);
+  if (safePages.length > 1) {
+    files['components/Navbar.tsx'] = generateNextNavbar(safePages);
   }
 
   return { files, dependencies: allDependencies };

@@ -5,6 +5,7 @@ import { useEditor } from '../context/EditorContext'; // for handleInteractionMo
 import { RenderNode } from './RenderNode';
 import { ContainerPreview } from './ContainerPreview';
 import { TEMPLATES } from '../data/templates';
+import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 
 /**
  * ─── CANVAS ────────────────────────────────────────────────────────────────────
@@ -23,7 +24,7 @@ import { TEMPLATES } from '../data/templates';
 export const Canvas = () => {
     // ── Slow-changing project data ─────────────────────────────────────────────
     const {
-        elements, updateProject, activePageId, instantiateTemplate,
+        elements, updateProject, activePageId, instantiateTemplate, history,
     } = useProject();
 
     // ── High-frequency viewport + UI state ────────────────────────────────────
@@ -95,7 +96,10 @@ export const Canvas = () => {
 
         window.addEventListener('vectra:page-switching', handler);
         return () => window.removeEventListener('vectra:page-switching', handler);
-    }, [savePageViewport, restorePageViewport]);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    // savePageViewport and restorePageViewport are stable ([] dep in UIContext).
+    // This effect attaches exactly once on mount and detaches on unmount.
+    // Zero listener churn during 60fps pan/zoom. (Item 0 fix)
     // ── End Direction 3 ───────────────────────────────────────────────────────
 
     // ── 2. KEYBOARD — spacebar panning ────────────────────────────────────────
@@ -274,9 +278,11 @@ export const Canvas = () => {
                     }}
                 >
                     {/* Artboard — grows with content */}
-                    <div style={{ width: '100%', maxWidth: '1440px', minHeight: '100vh', height: 'auto', display: 'flex', flexDirection: 'column' }}>
-                        <RenderNode elementId={activePageId} key={`editor-${activePageId}`} />
-                    </div>
+                    <CanvasErrorBoundary onUndo={history.undo}>
+                        <div style={{ width: '100%', maxWidth: '1440px', minHeight: '100vh', height: 'auto', display: 'flex', flexDirection: 'column' }}>
+                            <RenderNode elementId={activePageId} key={`editor-${activePageId}`} />
+                        </div>
+                    </CanvasErrorBoundary>
 
                     {/* Smart snap guides */}
                     {guides.map((g, i) => (

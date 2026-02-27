@@ -128,23 +128,46 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [componentRegistry, setComponentRegistry] = useState<Record<string, any>>({});
     const [recentComponents, setRecentComponents] = useState<string[]>([]);
 
-    // ── Per-page viewport cache (Direction 3) ──────────────────────────────────
-    // useRef — not useState — because restoring viewport must not trigger an
-    // additional render cycle. The setSelectedId/setPan/setZoom calls already
-    // schedule their own renders; the cache read itself should be free.
+    // ── Per-page viewport cache (Direction 3 — Item 0 perf fix) ──────────────────
+    //
+    // THE PROBLEM THIS FIXES:
+    // savePageViewport previously closed over selectedId, pan, and zoom directly.
+    // Those values change at 60fps during pan/zoom gestures. useCallback([selectedId,
+    // pan, zoom]) recreated savePageViewport on every frame. Canvas.tsx's useEffect
+    // depended on it, so the event listener tore down and re-attached 60 times/sec.
+    // window.removeEventListener + addEventListener at 60fps is not free.
+    //
+    // THE FIX:
+    // viewportStateRef is a ref that mirrors the three values synchronously.
+    // A single useEffect (dep: [selectedId, pan, zoom]) writes to the ref on
+    // every change — this is the ONLY thing that depends on those values.
+    // savePageViewport reads from the ref with dep array []. It is created ONCE,
+    // never recreated, and Canvas.tsx's useEffect dep array is also [].
+    // The event listener attaches exactly once on mount and detaches on unmount.
     const pageViewportCache = useRef<Map<string, PageViewport>>(new Map());
 
-    const savePageViewport = useCallback((pageId: string) => {
-        // We read the CURRENT values directly from the state closures.
-        // This callback is called synchronously before the page switch so
-        // the values are still the departing page's values.
-        pageViewportCache.current.set(pageId, {
-            selectedId: selectedId,
-            pan: pan,
-            zoom: zoom,
-        });
+    // Stable ref — always holds the latest selectedId/pan/zoom without causing
+    // savePageViewport to be recreated when those values change.
+    const viewportStateRef = useRef<PageViewport>({
+        selectedId: null,
+        pan: { x: 0, y: 0 },
+        zoom: 0.5,
+    });
+
+    // Keep the ref in sync. This effect runs whenever the viewport state changes,
+    // but it does NOT cause any callbacks that depend on it to be recreated.
+    useEffect(() => {
+        viewportStateRef.current = { selectedId, pan, zoom };
     }, [selectedId, pan, zoom]);
 
+    // Stable identity — [] dep array. Reads from viewportStateRef, never from
+    // the closed-over state variables. Zero listener churn during 60fps pan.
+    const savePageViewport = useCallback((pageId: string) => {
+        pageViewportCache.current.set(pageId, { ...viewportStateRef.current });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Stable identity — setter functions from useState are guaranteed stable
+    // by React, so this is safe with [].
     const restorePageViewport = useCallback((pageId: string) => {
         const cached = pageViewportCache.current.get(pageId);
         if (cached) {
@@ -152,12 +175,11 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             setPan(cached.pan);
             setZoom(cached.zoom);
         } else {
-            // Page never visited — reset to clean slate
             setSelectedId(null);
             setPan({ x: 0, y: 0 });
             setZoom(1);
         }
-    }, [setSelectedId, setPan, setZoom]);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // App view — persisted to localStorage
     const [currentView, setCurrentViewState] = useState<AppView>(() =>
