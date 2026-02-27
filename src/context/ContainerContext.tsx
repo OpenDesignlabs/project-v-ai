@@ -1,6 +1,10 @@
 import React, { createContext, useContext, useEffect, useState, useCallback, useRef } from 'react';
 import { WebContainer } from '@webcontainer/api';
-import { VITE_REACT_TEMPLATE } from '../data/fileSystemTemplates';
+import {
+    NEXTJS_APP_ROUTER_TEMPLATE,
+    VITE_REACT_TEMPLATE,
+} from '../data/fileSystemTemplates';
+import type { Framework } from '../types';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -29,7 +33,13 @@ let bootPromise: Promise<WebContainer> | null = null;
 
 // ─── PROVIDER ─────────────────────────────────────────────────────────────────
 
-export const ContainerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface ContainerProviderProps {
+    children: React.ReactNode;
+    /** Framework chosen at project creation — determines which VFS template to mount. */
+    framework: Framework;
+}
+
+export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, framework }) => {
     const [instance, setInstance] = useState<WebContainer | null>(null);
     const [status, setStatus] = useState<ContainerStatus>('booting');
     const [terminalOutput, setTerminalOutput] = useState<string[]>([]);
@@ -59,8 +69,10 @@ export const ContainerProvider: React.FC<{ children: React.ReactNode }> = ({ chi
                 setInstance(wc);
 
                 setStatus('mounting');
-                log('📂 Mounting project files...');
-                await wc.mount(VITE_REACT_TEMPLATE);
+                const template = framework === 'vite' ? VITE_REACT_TEMPLATE : NEXTJS_APP_ROUTER_TEMPLATE;
+                const frameworkLabel = framework === 'vite' ? 'Vite + React' : 'Next.js App Router';
+                log(`📂 Mounting ${frameworkLabel} project files...`);
+                await wc.mount(template);
 
                 // ─── DONE. No npm install. No vite. ──────────────────────────
                 // The WebContainer is now a lightning-fast virtual hard drive.
@@ -151,8 +163,11 @@ export const ContainerProvider: React.FC<{ children: React.ReactNode }> = ({ chi
             log('⚠️ pnpm install failed — some packages may be missing.');
         }
 
-        log('🚀 Starting Vite dev server...');
-        const dev = await instance.spawn('pnpm', ['run', 'dev']);
+        const devArgs = framework === 'vite'
+            ? ['vite', '--host', '0.0.0.0']
+            : ['next', 'dev', '--hostname', '0.0.0.0'];
+        log(`🚀 Starting ${framework === 'vite' ? 'Vite' : 'Next.js'} dev server...`);
+        const dev = await instance.spawn('npx', devArgs);
         dev.output.pipeTo(new WritableStream({ write: d => log(d) }));
 
         instance.on('server-ready', (_, serverUrl) => {

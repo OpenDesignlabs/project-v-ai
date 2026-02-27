@@ -56,6 +56,30 @@ export class SwcCompiler {
 }
 
 /**
+ * Convert a set of absolutely-positioned canvas nodes into a CSS Grid layout.
+ *
+ * # Arguments
+ * * `nodes_json`    — JSON-encoded `Vec<GridInputNode>`. All coordinates must
+ *                     be plain numbers (no "px" suffix). The TypeScript caller
+ *                     is responsible for stripping units before serializing.
+ * * `canvas_width`  — Pixel width of the parent canvas frame. Currently unused
+ *                     in track-size computation (tracks use px, not fr), but
+ *                     passed for future fr-unit conversion support.
+ *
+ * # Returns
+ * JSON-encoded `GridLayout` on success, or a `JsValue` error string on failure.
+ *
+ * # CSS Line Numbering
+ * CSS Grid is 1-based. Array index 0 in `x_breaks` = CSS line 1.
+ * `col_start = find_coord_idx(x_breaks, node.x) + 1`
+ * `col_end   = find_coord_idx(x_breaks, node.x + node.w) + 1`
+ * The end index is already the exclusive boundary because `node.x + node.w`
+ * maps to the line AFTER the last occupied track — adding another +1 would
+ * be wrong and produce a one-track-too-wide result.
+ */
+export function absolute_to_grid(nodes_json: string, _canvas_width: number): string;
+
+/**
  * Free-function shim kept for backward compatibility while callers migrate
  * to the `SwcCompiler` struct. Delegates to a temporary instance.
  * DEPRECATED: Prefer `new SwcCompiler().compile(code)` in TypeScript.
@@ -73,6 +97,7 @@ export interface InitOutput {
     readonly __wbg_historymanager_free: (a: number, b: number) => void;
     readonly __wbg_layoutengine_free: (a: number, b: number) => void;
     readonly __wbg_swccompiler_free: (a: number, b: number) => void;
+    readonly absolute_to_grid: (a: number, b: number, c: number) => [number, number, number, number];
     readonly compile_component: (a: number, b: number) => [number, number, number, number];
     readonly generate_react_code: (a: any, b: number, c: number) => [number, number, number, number];
     readonly historymanager_can_redo: (a: number) => number;

@@ -180,6 +180,52 @@ export class SwcCompiler {
 if (Symbol.dispose) SwcCompiler.prototype[Symbol.dispose] = SwcCompiler.prototype.free;
 
 /**
+ * Convert a set of absolutely-positioned canvas nodes into a CSS Grid layout.
+ *
+ * # Arguments
+ * * `nodes_json`    — JSON-encoded `Vec<GridInputNode>`. All coordinates must
+ *                     be plain numbers (no "px" suffix). The TypeScript caller
+ *                     is responsible for stripping units before serializing.
+ * * `canvas_width`  — Pixel width of the parent canvas frame. Currently unused
+ *                     in track-size computation (tracks use px, not fr), but
+ *                     passed for future fr-unit conversion support.
+ *
+ * # Returns
+ * JSON-encoded `GridLayout` on success, or a `JsValue` error string on failure.
+ *
+ * # CSS Line Numbering
+ * CSS Grid is 1-based. Array index 0 in `x_breaks` = CSS line 1.
+ * `col_start = find_coord_idx(x_breaks, node.x) + 1`
+ * `col_end   = find_coord_idx(x_breaks, node.x + node.w) + 1`
+ * The end index is already the exclusive boundary because `node.x + node.w`
+ * maps to the line AFTER the last occupied track — adding another +1 would
+ * be wrong and produce a one-track-too-wide result.
+ * @param {string} nodes_json
+ * @param {number} _canvas_width
+ * @returns {string}
+ */
+export function absolute_to_grid(nodes_json, _canvas_width) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(nodes_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.absolute_to_grid(ptr0, len0, _canvas_width);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Free-function shim kept for backward compatibility while callers migrate
  * to the `SwcCompiler` struct. Delegates to a temporary instance.
  * DEPRECATED: Prefer `new SwcCompiler().compile(code)` in TypeScript.

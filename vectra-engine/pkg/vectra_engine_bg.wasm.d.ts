@@ -4,6 +4,7 @@ export const memory: WebAssembly.Memory;
 export const __wbg_historymanager_free: (a: number, b: number) => void;
 export const __wbg_layoutengine_free: (a: number, b: number) => void;
 export const __wbg_swccompiler_free: (a: number, b: number) => void;
+export const absolute_to_grid: (a: number, b: number, c: number) => [number, number, number, number];
 export const compile_component: (a: number, b: number) => [number, number, number, number];
 export const generate_react_code: (a: any, b: number, c: number) => [number, number, number, number];
 export const historymanager_can_redo: (a: number) => number;

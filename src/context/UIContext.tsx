@@ -13,9 +13,9 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react';
 import type { DragData, InteractionState, Guide, Asset, GlobalStyles, EditorTool, DeviceType, ActionType } from '../types';
 
-export type SidebarPanel = 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files' | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | null;
+export type SidebarPanel = 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files' | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | 'backend' | null;
 export type AppView = 'dashboard' | 'editor';
-export type ViewMode = 'visual' | 'code';
+export type ViewMode = 'visual' | 'skeleton';
 
 interface UIContextType {
     // ── Selection ─────────────────────────────────────────────────────────────
@@ -122,6 +122,13 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         const handler = () => setCurrentView('dashboard');
         window.addEventListener('vectra:exit-project', handler);
         return () => window.removeEventListener('vectra:exit-project', handler);
+    }, [setCurrentView]);
+
+    // Listen for project open event dispatched by Dashboard
+    useEffect(() => {
+        const handler = () => setCurrentView('editor');
+        window.addEventListener('vectra:open-project', handler);
+        return () => window.removeEventListener('vectra:open-project', handler);
     }, [setCurrentView]);
 
     // Clear guides when interaction ends

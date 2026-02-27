@@ -59,6 +59,25 @@ export interface Page {
     rootId: string;     // Pointer to the page's root element in VectraProject
 }
 
+/**
+ * Lightweight project metadata — stored in the project index (not the element tree).
+ * Kept small so the Dashboard renders the full list from a single IDB read.
+ */
+export interface ProjectMeta {
+    /** UUID generated once at project creation. Never changes. */
+    id: string;
+    /** Human-readable project name. User-editable from the Dashboard. */
+    name: string;
+    /** Framework chosen at project creation. */
+    framework: Framework;
+    /** Unix timestamp (ms) — set once at creation. */
+    createdAt: number;
+    /** Unix timestamp (ms) — updated every autosave tick. */
+    lastEditedAt: number;
+    /** Number of pages in the project — updated on autosave. Quick display info. */
+    pageCount: number;
+}
+
 export interface Guide {
     orientation: 'horizontal' | 'vertical';
     pos: number;
@@ -173,3 +192,37 @@ export interface EditorContextType {
     isMagicBarOpen: boolean;
     setMagicBarOpen: React.Dispatch<React.SetStateAction<boolean>>;
 }
+
+// ─── PHASE A: Framework type ──────────────────────────────────────────────────
+// Stored in project metadata (ProjectContext) to determine VFS template,
+// code generator, and export format. Default: 'nextjs'.
+export type Framework = 'nextjs' | 'vite';
+
+// ─── PHASE D FOUNDATION: API Route type ──────────────────────────────────────
+// Represents a single backend API route in the project.
+// Will be stored in ProjectContext as apiRoutes: ApiRoute[].
+// useFileSync Phase D will write these to app/api/[path]/route.ts.
+
+export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+
+export interface ApiRoute {
+    /** Unique identifier (nanoid) */
+    id: string;
+    /** Display name shown in the Backend panel, e.g. "Get Users" */
+    name: string;
+    /**
+     * URL path relative to /api/, e.g. "users" → /api/users
+     * Supports dynamic segments: "users/[id]" → /api/users/[id]
+     */
+    path: string;
+    /** HTTP methods this route handles */
+    methods: HttpMethod[];
+    /**
+     * Raw TypeScript handler code authored in the inline editor.
+     * Written verbatim into app/api/[path]/route.ts.
+     */
+    handlerCode: string;
+    /** ISO timestamp of last edit — used for dirty-check in useFileSync Phase D */
+    updatedAt: string;
+}
+

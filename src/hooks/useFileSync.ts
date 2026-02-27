@@ -2,41 +2,58 @@
  * ─── useFileSync ──────────────────────────────────────────────────────────────
  * Syncs the Vectra element tree to the WebContainer VFS.
  *
- * PHASE 4 OPTIMISATIONS: Reference-Equality Dirty Checking
- * ─────────────────────────────────────────────────────────
- * React's immutable state updates mean that if a node reference hasn't changed
- * (currentNode === prevNode), the node's content hasn't changed either.
+ * PHASE E: Framework Switcher
+ * ────────────────────────────
+ * All VFS paths and code generators now branch on `framework` from useProject().
+ * The two supported frameworks produce entirely different file structures:
  *
- * Previous approach: JSON.stringify(entire project) → compare → write all files.
- *   Cost: O(N) always. On a 5 000-node project → ~8ms per 500ms tick.
+ *   NEXT.JS (framework === 'nextjs')
+ *   ─────────────────────────────────────────────────────────────────────────
+ *   components/[Name].tsx        custom_code component files
+ *   app/page.tsx                 Home page
+ *   app/[slug]/page.tsx          Additional pages
+ *   app/layout.tsx               Root layout (with Navbar if 2+ pages)
+ *   components/Navbar.tsx        Multi-page navigation
+ *   app/api/[path]/route.ts      API routes (Phase D, framework-agnostic)
+ *   data/project.json            Serialized project for ZIP
+ *   tailwind-gen.js              JIT ghost file (root)
+ *   tailwind.config.js           Next.js content paths
  *
- * New approach:
- *  1. Object-level ref check on `elements` itself: if the same reference,
- *     skip the tick entirely — accounts for drag-induced re-renders.
- *  2. Per-node ref check: walk only children of the active page.
- *     Only nodes whose reference changed are re-generated and written.
- *  3. Structure string (rootIds JSON) compared for App.tsx regeneration.
- *   Cost: O(D) where D = dirty nodes. Typically 0–1 per edit.
+ *   VITE (framework === 'vite')
+ *   ─────────────────────────────────────────────────────────────────────────
+ *   src/components/[Name].tsx    custom_code component files
+ *   src/App.tsx                  BrowserRouter + Routes (all pages)
+ *   src/data/project.json        Serialized project for ZIP
+ *   src/tailwind-gen.js          JIT ghost file (src/)
+ *   tailwind.config.js           Vite content paths
  *
- * Subscriptions
- * ─────────────
- * • useProject()  — elements, pages (project data only)
- * • useUI()       — interaction (to suppress sync during 60fps drag)
- * NOT useEditor() — avoids the heavy combined subscription that would
- *                   re-run this effect on every UI state change.
+ * PRESERVED FROM PRIOR PHASES:
+ *   • Phase 4: All dirty-check guards (ref equality, drag suppression,
+ *              concurrency, debounce, per-file content guard)
+ *   • Phase C: buildTailwindConfig(), toPascalCase(), wrapWithImports()
+ *   • Phase D: Section F (API routes), prevApiRoutesRef
  */
 
 import { useEffect, useRef } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
 import { useContainer } from '../context/ContainerContext';
+import {
+  generateNextPage,
+  generateRootLayout,
+  generateNextNavbar,
+  slugToNextPath,
+  generateApiRouteFile,
+  apiRouteToVfsPath,
+  generateProjectCode,
+} from '../utils/codeGenerator';
 import type { VectraProject } from '../types';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 /**
- * Converts any raw string into a valid PascalCase React component name.
- * e.g. "hero section!" → "HeroSection"  |  "" → "Component"
+ * PascalCase converter — mirrors generateNextPage() exactly.
+ * MUST NOT diverge — component file names must match import paths.
  */
 const toPascalCase = (raw: string): string => {
   const cleaned = raw
@@ -50,11 +67,26 @@ const toPascalCase = (raw: string): string => {
 };
 
 /**
- * Wraps raw AI JSX code with production-ready ES module imports.
- * The AI generates code without imports (React/Lucide/motion are globals in the
- * sandbox). We reattach them here for the real .tsx file on disk.
+ * wrapWithImports — Next.js variant
+ * 'use client' is the first line (required for App Router).
  */
-const wrapWithImports = (rawCode: string): string =>
+const wrapWithImportsNext = (rawCode: string): string =>
+  `'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
+import * as Lucide from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
+import { cn } from '@/lib/utils';
+
+/* ─── Auto-generated by Vectra AI ─────────────────────────────────────────── */
+${rawCode}
+`;
+
+/**
+ * wrapWithImports — Vite variant
+ * No 'use client'. Path is '../lib/utils' (src/components/ is 2 levels deep).
+ */
+const wrapWithImportsVite = (rawCode: string): string =>
   `import React, { useState, useEffect, useRef } from 'react';
 import * as Lucide from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -65,64 +97,95 @@ ${rawCode}
 `;
 
 /**
- * Generates the App.tsx content from the current set of custom-code elements.
+ * buildViteAppTsx
+ * ────────────────
+ * Generates src/App.tsx content for the Vite/React Router output.
  */
-const buildAppTsx = (elements: VectraProject): string => {
+const buildViteAppTsx = (
+  elements: VectraProject,
+  pages: Array<{ id: string; name: string; slug: string; rootId: string }>
+): string => {
   const customEls = Object.values(elements).filter(
     el => el.type === 'custom_code' && typeof el.code === 'string' && el.code.trim().length > 0
   );
 
-  let imports = `import React from 'react';\n`;
-  let jsx = '';
+  const componentImports = customEls.map(el => {
+    const name = toPascalCase(el.name?.trim() || el.id);
+    return `import ${name} from './components/${name}';`;
+  }).join('\n');
 
-  if (customEls.length > 0) {
-    for (const el of customEls) {
-      const name = toPascalCase(el.name?.trim() || el.id);
-      imports += `import ${name} from './components/${name}';\n`;
-      jsx += `      <${name} />\n`;
-    }
-  } else {
-    jsx = `      <div className="flex items-center justify-center min-h-screen text-zinc-500 font-mono text-sm">
-        No components generated yet — open the AI bar and build something!
-      </div>\n`;
-  }
+  const pageImports = pages.map(p => {
+    const name = p.name.replace(/[^a-zA-Z0-9]/g, '') || 'Home';
+    return `import ${name}Page from './pages/${name}Page';`;
+  }).join('\n');
 
-  return `${imports}
+  const routes = pages.map(p => {
+    const name = p.name.replace(/[^a-zA-Z0-9]/g, '') || 'Home';
+    return `        <Route path="${p.slug}" element={<${name}Page />} />`;
+  }).join('\n');
+
+  return `import React from 'react';
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+${pageImports}
+${componentImports}
+
 export default function App() {
   return (
-    <div className="min-h-screen bg-black text-white w-full overflow-x-hidden">
-${jsx}    </div>
+    <BrowserRouter>
+      <Routes>
+${routes}
+      </Routes>
+    </BrowserRouter>
   );
 }
 `;
 };
 
 /**
- * Builds the tailwind.config.js content from the current theme.
+ * buildNextTailwindConfig — Next.js version
  */
-const buildTailwindConfig = (theme: { primary: string; secondary: string; accent: string; radius: string; font: string }): string =>
+const buildNextTailwindConfig = (theme: {
+  primary: string; secondary: string; accent: string; radius: string; font: string;
+}): string =>
+  `/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: 'class',
+  content: [
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+    './tailwind-gen.js',
+    './data/project.json',
+  ],
+  theme: {
+    extend: {
+      colors: { primary: '${theme.primary}', secondary: '${theme.secondary}', accent: '${theme.accent}' },
+      borderRadius: { DEFAULT: '${theme.radius}' },
+      fontFamily: { sans: ['${theme.font}', 'sans-serif'] },
+    },
+  },
+  plugins: [],
+}`;
+
+/**
+ * buildViteTailwindConfig — Vite version
+ */
+const buildViteTailwindConfig = (theme: {
+  primary: string; secondary: string; accent: string; radius: string; font: string;
+}): string =>
   `/** @type {import('tailwindcss').Config} */
 export default {
   darkMode: 'class',
   content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-    "./src/data/project.json",
-    "./src/tailwind-gen.js"
+    './index.html',
+    './src/**/*.{js,ts,jsx,tsx}',
+    './src/tailwind-gen.js',
+    './src/data/project.json',
   ],
   theme: {
     extend: {
-      colors: {
-        primary:   '${theme.primary}',
-        secondary: '${theme.secondary}',
-        accent:    '${theme.accent}',
-      },
-      borderRadius: {
-        DEFAULT: '${theme.radius}',
-      },
-      fontFamily: {
-        sans: ['${theme.font}', 'sans-serif'],
-      },
+      colors: { primary: '${theme.primary}', secondary: '${theme.secondary}', accent: '${theme.accent}' },
+      borderRadius: { DEFAULT: '${theme.radius}' },
+      fontFamily: { sans: ['${theme.font}', 'sans-serif'] },
     },
   },
   plugins: [],
@@ -131,137 +194,265 @@ export default {
 // ─── HOOK ─────────────────────────────────────────────────────────────────────
 
 export const useFileSync = () => {
-  // Narrow subscriptions: only re-run when project data or drag state changes.
-  // useUI() instead of useEditor() avoids the heavy combined subscription.
-  const { elements, pages, theme } = useProject();
+  const { elements, pages, theme, apiRoutes, framework } = useProject();
   const { interaction } = useUI();
-  const { writeFile, status, instance } = useContainer();
+  const { writeFile, removeFile, status, instance } = useContainer();
 
   // ── Dirty-check refs ──────────────────────────────────────────────────────
-  // prevElementsRef stores the previous elements object reference.
-  // If elements === prevElementsRef.current, the entire tick is skipped.
   const prevElementsRef = useRef<VectraProject>({});
-  const prevStructureRef = useRef<string>('');
+  const prevPageStructuresRef = useRef<Record<string, string>>({});
   const prevThemeKeyRef = useRef<string>('');
   const prevClassesRef = useRef<string>('');
+  const prevPageCountRef = useRef<number>(0);
+  // Phase D: API route dirty-check. Value format: "updatedAt::vfsPath"
+  const prevApiRoutesRef = useRef<Record<string, string>>({});
 
-  // Per-file content guard: only write files whose content string changed.
   const syncedFiles = useRef<Map<string, string>>(new Map());
-
-  // Concurrency guard: if a sync is in progress, skip the overlapping tick.
   const isSyncing = useRef<boolean>(false);
 
   useEffect(() => {
-    // ── Guard 1: VFS not ready ──────────────────────────────────────────
+    // ── Guard 1: VFS not ready ────────────────────────────────────────────
     if (status !== 'ready' || !instance) return;
 
-    // ── Guard 2: Suppress during active drag/resize (runs at 60fps) ────
-    // Drag state is handled by handleInteractionMove which calls
-    // updateProject(els, skipHistory=true) — elements reference changes
-    // every frame during drag. We must not serialize the tree here.
+    // ── Guard 2: Suppress during 60fps drag/resize ────────────────────────
     if (interaction?.type === 'MOVE' || interaction?.type === 'RESIZE') return;
 
-    // ── Guard 3: Early-exit if nothing changed (object ref equality) ───
-    // After a drag ends, elements ref is the same as before the drag
-    // (only the dragged node changes). Per-node ref check below handles that.
-    // This guard catches pure UI changes (panel open, zoom) that leave
-    // elements completely untouched.
-    if (elements === prevElementsRef.current) return;
+    // ── Guard 3: Early-exit if nothing changed ────────────────────────────
+    if (elements === prevElementsRef.current && pages.length === prevPageCountRef.current) return;
 
     const sync = async () => {
       if (isSyncing.current) return;
       isSyncing.current = true;
 
+      // ── Resolve framework-specific path constants ─────────────────────
+      const isNext = framework === 'nextjs';
+      const componentDir = isNext ? 'components' : 'src/components';
+      const projectJsonPath = isNext ? 'data/project.json' : 'src/data/project.json';
+      const tailwindGenPath = isNext ? 'tailwind-gen.js' : 'src/tailwind-gen.js';
+
       try {
-        const rootIds = elements['page-home']?.children || [];
         const prevElements = prevElementsRef.current;
 
-        // ── A. PER-NODE DIRTY CHECK: component files ──────────────────
-        // Walk only the direct children of the active page.
-        // For each, compare the node reference to its previous value.
-        // O(D) where D = number of dirty nodes (usually 0 or 1).
-        for (const rootId of rootIds) {
-          const currentNode = elements[rootId];
-          const prevNode = prevElements[rootId];
-
-          // 🚀 Reference equality: if same object, skip entirely.
-          if (currentNode === prevNode) continue;
-
-          // Node is dirty — only write custom_code elements to disk.
-          if (
-            currentNode &&
-            currentNode.type === 'custom_code' &&
-            typeof currentNode.code === 'string' &&
-            currentNode.code.trim().length > 0
-          ) {
-            const componentName = toPascalCase(currentNode.name?.trim() || currentNode.id);
-            const filePath = `src/components/${componentName}.tsx`;
-            const content = wrapWithImports(currentNode.code);
-
-            // Per-file content guard: only write if content changed
-            if (syncedFiles.current.get(filePath) !== content) {
-              await writeFile(filePath, content);
-              syncedFiles.current.set(filePath, content);
-              console.log(`📦 [Vectra] Synthesized → ${filePath}`);
+        // ════════════════════════════════════════════════════════════════
+        // SECTION A — COMPONENT FILES
+        // custom_code nodes → [componentDir]/[ComponentName].tsx
+        // ════════════════════════════════════════════════════════════════
+        const allChildIds = new Set<string>();
+        for (const page of pages) {
+          const pageRoot = elements[page.rootId];
+          if (!pageRoot?.children) continue;
+          for (const childId of pageRoot.children) {
+            allChildIds.add(childId);
+            const child = elements[childId];
+            if (child?.type === 'webpage' && child.children) {
+              for (const fc of child.children) allChildIds.add(fc);
             }
           }
         }
 
-        // ── B. APP STRUCTURE (App.tsx) ─────────────────────────────────
-        // Only regenerate if the list of root children changed.
-        // JSON.stringify on an array of IDs is cheap (strings only).
-        const currentStructure = JSON.stringify(rootIds);
-        if (currentStructure !== prevStructureRef.current) {
-          const appContent = buildAppTsx(elements);
-          const prevApp = syncedFiles.current.get('src/App.tsx');
-          if (prevApp !== appContent) {
-            await writeFile('src/App.tsx', appContent);
-            syncedFiles.current.set('src/App.tsx', appContent);
-            console.log('[Sync] Updated App.tsx structure');
+        for (const nodeId of allChildIds) {
+          const currentNode = elements[nodeId];
+          const prevNode = prevElements[nodeId];
+          if (currentNode === prevNode) continue;
+
+          if (
+            currentNode?.type === 'custom_code' &&
+            typeof currentNode.code === 'string' &&
+            currentNode.code.trim().length > 0
+          ) {
+            const componentName = toPascalCase(currentNode.name?.trim() || currentNode.id);
+            const filePath = `${componentDir}/${componentName}.tsx`;
+            const content = isNext
+              ? wrapWithImportsNext(currentNode.code)
+              : wrapWithImportsVite(currentNode.code);
+
+            if (syncedFiles.current.get(filePath) !== content) {
+              await writeFile(filePath, content);
+              syncedFiles.current.set(filePath, content);
+              console.log(`📦 [Vectra] Component → ${filePath}`);
+            }
           }
-          prevStructureRef.current = currentStructure;
         }
 
-        // ── C. PROJECT JSON (for download) ─────────────────────────────
-        // Only write when elements actually changed (already guaranteed
-        // by Guard 3 above, but keep for explicitness).
-        const projectData = { pages, elements };
+        // ════════════════════════════════════════════════════════════════
+        // SECTION B — PAGE / APP FILES
+        //
+        // NEXT.JS: Per-page app/[slug]/page.tsx + app/layout.tsx
+        // VITE:    Single src/App.tsx with BrowserRouter + Routes
+        // ════════════════════════════════════════════════════════════════
+        let anyPageChanged = false;
+
+        if (isNext) {
+          // ── B-NEXT: Per-page generation ───────────────────────────
+          for (const page of pages) {
+            const pageRoot = elements[page.rootId];
+            const children = pageRoot?.children || [];
+            const structureKey = JSON.stringify(
+              children.map(cid => ({
+                id: cid,
+                ref: elements[cid] ? Object.keys(elements[cid].props || {}).length : 0,
+              }))
+            );
+
+            if (structureKey === prevPageStructuresRef.current[page.id]) continue;
+
+            anyPageChanged = true;
+            const filePath = slugToNextPath(page.slug);
+            let pageContent: string;
+            try {
+              pageContent = generateNextPage(page, elements);
+            } catch {
+              pageContent = `export default function ${page.name.replace(/\s/g, '')}Page() { return <main className="p-8">Page Error</main>; }`;
+            }
+
+            if (syncedFiles.current.get(filePath) !== pageContent) {
+              await writeFile(filePath, pageContent);
+              syncedFiles.current.set(filePath, pageContent);
+              console.log(`📄 [Vectra] Page → ${filePath}`);
+            }
+            prevPageStructuresRef.current[page.id] = structureKey;
+          }
+
+          // ── B-NEXT: layout.tsx + Navbar ───────────────────────────
+          const pageCountChanged = pages.length !== prevPageCountRef.current;
+          if (pageCountChanged || anyPageChanged) {
+            const layoutContent = generateRootLayout(pages, theme);
+            if (syncedFiles.current.get('app/layout.tsx') !== layoutContent) {
+              await writeFile('app/layout.tsx', layoutContent);
+              syncedFiles.current.set('app/layout.tsx', layoutContent);
+              console.log('[Vectra] Layout → app/layout.tsx');
+            }
+            if (pages.length > 1) {
+              const navContent = generateNextNavbar(pages);
+              if (syncedFiles.current.get('components/Navbar.tsx') !== navContent) {
+                await writeFile('components/Navbar.tsx', navContent);
+                syncedFiles.current.set('components/Navbar.tsx', navContent);
+                console.log('[Vectra] Navbar → components/Navbar.tsx');
+              }
+            }
+          }
+
+        } else {
+          // ── B-VITE: Single App.tsx with BrowserRouter ──────────────
+          const pagesKey = JSON.stringify(pages.map(p => p.id));
+          const structureChanged = pagesKey !== (prevPageStructuresRef.current['__vite_pages__'] || '');
+
+          if (structureChanged || pages.length !== prevPageCountRef.current) {
+            anyPageChanged = true;
+
+            // Generate page component files via Vite generator
+            const { files: viteFiles } = generateProjectCode(elements, pages, []);
+            for (const [filePath, content] of Object.entries(viteFiles)) {
+              if (syncedFiles.current.get(filePath) !== content) {
+                await writeFile(filePath, content);
+                syncedFiles.current.set(filePath, content);
+                console.log(`📄 [Vectra] Vite page → ${filePath}`);
+              }
+            }
+
+            // Write the top-level App.tsx
+            const appContent = buildViteAppTsx(elements, pages);
+            if (syncedFiles.current.get('src/App.tsx') !== appContent) {
+              await writeFile('src/App.tsx', appContent);
+              syncedFiles.current.set('src/App.tsx', appContent);
+              console.log('[Vectra] App → src/App.tsx');
+            }
+
+            prevPageStructuresRef.current['__vite_pages__'] = pagesKey;
+          }
+        }
+
+        prevPageCountRef.current = pages.length;
+
+        // ════════════════════════════════════════════════════════════════
+        // SECTION C — PROJECT JSON
+        // ════════════════════════════════════════════════════════════════
+        const projectData = { pages, elements, framework };
         const jsonString = JSON.stringify(projectData, null, 2);
-        if (syncedFiles.current.get('src/data/project.json') !== jsonString) {
-          await writeFile('src/data/project.json', jsonString);
-          syncedFiles.current.set('src/data/project.json', jsonString);
+        if (syncedFiles.current.get(projectJsonPath) !== jsonString) {
+          await writeFile(projectJsonPath, jsonString);
+          syncedFiles.current.set(projectJsonPath, jsonString);
         }
 
-        // ── D. TAILWIND GHOST CLASSES (className scanner) ──────────────
-        // Tailwind JIT scans this file for all className strings.
+        // ════════════════════════════════════════════════════════════════
+        // SECTION D — TAILWIND GHOST CLASSES (JIT scanner)
+        // ════════════════════════════════════════════════════════════════
         const canvasClasses = Object.values(elements)
-          .map(el => (el.props as any)?.className || '')
-          .join(' ');
+          .map(el => (el.props as any)?.className || '').join(' ');
         const codeClasses = Object.values(elements)
           .filter(el => el.type === 'custom_code' && el.code)
-          .map(el => el.code!)
-          .join(' ');
+          .map(el => el.code!).join(' ');
         const allClasses = `${canvasClasses} ${codeClasses}`.trim();
 
         if (allClasses !== prevClassesRef.current) {
-          const ghostContent = `// Auto-generated for Tailwind JIT — do not edit\nexport const classes = "${allClasses.replace(/"/g, "'")}";`;
-          const ghostPath = 'src/tailwind-gen.js';
-          if (syncedFiles.current.get(ghostPath) !== ghostContent) {
-            await writeFile(ghostPath, ghostContent);
-            syncedFiles.current.set(ghostPath, ghostContent);
+          const ghostContent = `// Auto-generated for Tailwind JIT\nexport const classes = "${allClasses.replace(/"/g, "'")}";`;
+          if (syncedFiles.current.get(tailwindGenPath) !== ghostContent) {
+            await writeFile(tailwindGenPath, ghostContent);
+            syncedFiles.current.set(tailwindGenPath, ghostContent);
           }
           prevClassesRef.current = allClasses;
         }
 
-        // ── E. TAILWIND CONFIG (theme changes only) ────────────────────
+        // ════════════════════════════════════════════════════════════════
+        // SECTION E — TAILWIND CONFIG + LAYOUT (theme changes)
+        // ════════════════════════════════════════════════════════════════
         const themeKey = JSON.stringify(theme);
         if (themeKey !== prevThemeKeyRef.current) {
-          const twContent = buildTailwindConfig(theme);
+          const twContent = isNext
+            ? buildNextTailwindConfig(theme)
+            : buildViteTailwindConfig(theme);
           await writeFile('tailwind.config.js', twContent);
+
+          if (isNext) {
+            const layoutContent = generateRootLayout(pages, theme);
+            await writeFile('app/layout.tsx', layoutContent);
+            syncedFiles.current.set('app/layout.tsx', layoutContent);
+          }
+
           prevThemeKeyRef.current = themeKey;
+          console.log('[Vectra] Theme synced → tailwind.config.js');
         }
 
-        // ── Advance the prev-ref checkpoint ───────────────────────────
+        // ════════════════════════════════════════════════════════════════
+        // SECTION F — API ROUTE FILES (Phase D — framework-agnostic)
+        // ════════════════════════════════════════════════════════════════
+        {
+          const currentRouteIds = new Set(apiRoutes.map(r => r.id));
+
+          // Detect + remove deleted routes
+          for (const [prevId, prevEntry] of Object.entries(prevApiRoutesRef.current)) {
+            if (!currentRouteIds.has(prevId)) {
+              const vfsPath = prevEntry.split('::')[1];
+              if (vfsPath) {
+                try {
+                  await removeFile(vfsPath);
+                  console.log(`🗑️ [Vectra] Deleted route → ${vfsPath}`);
+                } catch {
+                  // File may not exist yet — safe to ignore
+                }
+              }
+              delete prevApiRoutesRef.current[prevId];
+            }
+          }
+
+          // Write/update dirty routes
+          for (const route of apiRoutes) {
+            const prevEntry = prevApiRoutesRef.current[route.id];
+            const prevUpdatedAt = prevEntry?.split('::')[0];
+            if (prevUpdatedAt === route.updatedAt) continue;
+
+            const vfsPath = apiRouteToVfsPath(route.path);
+            const fileContent = generateApiRouteFile(route);
+            if (syncedFiles.current.get(vfsPath) !== fileContent) {
+              await writeFile(vfsPath, fileContent);
+              syncedFiles.current.set(vfsPath, fileContent);
+              console.log(`🛣️ [Vectra] API route → ${vfsPath}`);
+            }
+            prevApiRoutesRef.current[route.id] = `${route.updatedAt}::${vfsPath}`;
+          }
+        }
+
+        // Advance the prev-ref checkpoint
         prevElementsRef.current = elements;
 
       } catch (e) {
@@ -271,12 +462,8 @@ export const useFileSync = () => {
       }
     };
 
-    // Debounce 600ms — let the user finish typing/dragging before we write.
-    // Reduced from 800ms since the dirty check makes each pass much cheaper.
     const timer = setTimeout(sync, 600);
     return () => clearTimeout(timer);
 
-    // NOTE: `theme` is intentionally included; it changes rarely but when it
-    // does (tailwind config) we must not skip the tick.
-  }, [elements, pages, interaction, status, instance, writeFile, theme]);
+  }, [elements, pages, apiRoutes, framework, interaction, status, instance, writeFile, removeFile, theme]);
 };

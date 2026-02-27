@@ -9,7 +9,8 @@ import {
     Type, ArrowRight, ArrowDown, Image as ImageIcon, PaintBucket, RotateCw, MousePointer2,
     Hand, Settings, Layout, Hash, Type as TypeIcon,
     MoveHorizontal, MoveVertical, Droplets, Sun, Move,
-    CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, Layers
+    CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, Layers,
+    Smartphone,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -358,6 +359,58 @@ export const RightSidebar = () => {
                                     onChange={handleBoxModelChange}
                                 />
                             </div>
+
+                            {/* Phase F: Stack on Mobile toggle */}
+                            {(element.props.style?.position === 'absolute' || element.props.layoutMode) && (
+                                <div className="mt-3 pt-3 border-t border-[#2a2a2c]">
+                                    <Row label="Stack on Mobile">
+                                        <button
+                                            onClick={() => updateProp('stackOnMobile', !props.stackOnMobile)}
+                                            title={
+                                                props.stackOnMobile
+                                                    ? 'On mobile: this element becomes full-width and stacks vertically. Click to disable.'
+                                                    : 'On mobile: this element keeps its absolute position (may require scrolling). Click to enable stack.'
+                                            }
+                                            className={cn(
+                                                'w-full flex items-center justify-between px-3 py-1.5 rounded border text-[11px] font-medium transition-all',
+                                                props.stackOnMobile
+                                                    ? 'bg-blue-500/15 border-blue-500/40 text-blue-400 hover:bg-blue-500/20'
+                                                    : 'bg-[#2d2d2d] border-[#3e3e42] text-[#555] hover:text-[#999] hover:border-[#4e4e52]'
+                                            )}
+                                        >
+                                            <div className="flex items-center gap-2">
+                                                <Smartphone size={11} className={props.stackOnMobile ? 'text-blue-400' : 'text-[#555]'} />
+                                                <span>{props.stackOnMobile ? 'Stack on mobile — ON' : 'Stack on mobile — OFF'}</span>
+                                            </div>
+                                            {/* Toggle pill */}
+                                            <div className={cn(
+                                                'w-7 h-3.5 rounded-full transition-colors flex items-center px-0.5',
+                                                props.stackOnMobile ? 'bg-blue-500' : 'bg-[#3e3e42]'
+                                            )}>
+                                                <div className={cn(
+                                                    'w-2.5 h-2.5 rounded-full bg-white transition-transform shadow-sm',
+                                                    props.stackOnMobile ? 'translate-x-3.5' : 'translate-x-0'
+                                                )} />
+                                            </div>
+                                        </button>
+                                    </Row>
+
+                                    {/* Contextual hint — only shown when toggle is ON */}
+                                    {props.stackOnMobile && (
+                                        <div className="mt-1.5 flex items-start gap-2 px-1">
+                                            <Smartphone size={10} className="text-blue-400 mt-0.5 shrink-0" />
+                                            <p className="text-[9px] text-[#555] leading-relaxed">
+                                                On screens ≤ 768px, this element will be{' '}
+                                                <span className="text-[#777]">position: relative</span>,{' '}
+                                                <span className="text-[#777]">width: 100%</span>, and flow with the
+                                                document. Exported via{' '}
+                                                <span className="text-blue-500 font-mono">.vectra-stack-mobile</span>{' '}
+                                                CSS class.
+                                            </p>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </Section>
 
                         {/* TYPOGRAPHY */}

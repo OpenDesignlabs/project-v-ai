@@ -5,7 +5,10 @@ import {
     Plus, Layers, File, Image as ImageIcon,
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
-    Trash2, Hexagon, Palette, Wand2, Database, Globe, Braces
+    Trash2, Hexagon, Palette, Wand2, Database, Globe, Braces,
+    Server, Zap, CheckCircle2,
+    Send, TerminalSquare, ChevronUp,
+    Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { processImportedCode, generateComponentId } from '../utils/importHelpers';
@@ -13,6 +16,7 @@ import { TEMPLATES, type TemplateConfig } from '../data/templates';
 import { ICON_NAMES, getIconComponent } from '../data/iconRegistry';
 import { Store, ShoppingBag as ShoppingBagIcon } from 'lucide-react';
 import { InsertDrawer } from './InsertDrawer';
+import type { ApiRoute, HttpMethod } from '../types';
 
 const MARKETPLACE_ITEMS = [
     {
@@ -144,6 +148,382 @@ const ColorField = ({ label, value, onChange }: { label: string, value: string, 
     </div>
 );
 
+// ─── ROUTE TEST PANEL ─────────────────────────────────────────────────────────────────────
+// Phase G: Inline API route testing UI — request builder + response viewer.
+//   Data flow:
+//     1. User clicks "Test" tab → handleBootAndTest() → startDevServer() if needed
+//     2. containerUrl becomes non-null when WebContainer emits 'server-ready'
+//     3. User fills request, clicks Send → fetch(containerUrl + /api/route.path)
+//     4. Response displayed with status badge, latency, formatted body
+
+interface RouteTestPanelProps {
+    route: ApiRoute;
+    containerUrl: string | null;
+    isServerBooting: boolean;
+    terminalLines: string[];
+    testMethod: HttpMethod;
+    setTestMethod: (m: HttpMethod) => void;
+    testBody: string;
+    setTestBody: (b: string) => void;
+    testHeaders: Array<{ id: string; key: string; value: string; enabled: boolean }>;
+    setTestHeaders: React.Dispatch<React.SetStateAction<Array<{ id: string; key: string; value: string; enabled: boolean }>>>;
+    testResponse: {
+        status: number; statusText: string; body: string;
+        formattedBody: string; latency: number; ok: boolean;
+        responseHeaders: Record<string, string>;
+    } | null;
+    isSending: boolean;
+    testError: string | null;
+    showResponseHeaders: boolean;
+    setShowResponseHeaders: (v: boolean) => void;
+    onSend: () => void;
+}
+
+const HTTP_METHOD_COLORS: Record<HttpMethod, { active: string; idle: string }> = {
+    GET: { active: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400', idle: 'bg-transparent border-[#333] text-[#444] hover:text-[#666]' },
+    POST: { active: 'bg-blue-500/20 border-blue-500/50 text-blue-400', idle: 'bg-transparent border-[#333] text-[#444] hover:text-[#666]' },
+    PUT: { active: 'bg-amber-500/20 border-amber-500/50 text-amber-400', idle: 'bg-transparent border-[#333] text-[#444] hover:text-[#666]' },
+    PATCH: { active: 'bg-orange-500/20 border-orange-500/50 text-orange-400', idle: 'bg-transparent border-[#333] text-[#444] hover:text-[#666]' },
+    DELETE: { active: 'bg-red-500/20 border-red-500/50 text-red-400', idle: 'bg-transparent border-[#333] text-[#444] hover:text-[#666]' },
+};
+
+const getStatusColor = (status: number): string => {
+    if (status >= 200 && status < 300) return 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+    if (status >= 300 && status < 400) return 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+    if (status >= 400 && status < 500) return 'bg-amber-500/20 text-amber-400 border-amber-500/30';
+    if (status >= 500) return 'bg-red-500/20 text-red-400 border-red-500/30';
+    return 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30';
+};
+
+const RouteTestPanel: React.FC<RouteTestPanelProps> = ({
+    route, containerUrl, isServerBooting, terminalLines,
+    testMethod, setTestMethod, testBody, setTestBody,
+    testHeaders, setTestHeaders, testResponse, isSending,
+    testError, showResponseHeaders, setShowResponseHeaders, onSend,
+}) => {
+    const hasBody = ['POST', 'PUT', 'PATCH'].includes(testMethod);
+    const fullUrl = containerUrl ? `${containerUrl}/api/${route.path}` : `/api/${route.path}`;
+
+    const copyUrl = () => navigator.clipboard.writeText(fullUrl).catch(() => { });
+    const addHeader = () =>
+        setTestHeaders(prev => [...prev, { id: `h-${Date.now()}`, key: '', value: '', enabled: true }]);
+    const removeHeader = (id: string) =>
+        setTestHeaders(prev => prev.filter(h => h.id !== id));
+    const updateHeader = (id: string, field: 'key' | 'value' | 'enabled', val: string | boolean) =>
+        setTestHeaders(prev => prev.map(h => h.id === id ? { ...h, [field]: val } : h));
+
+    // ── SERVER BOOT STATE ────────────────────────────────────────────────────
+    if (!containerUrl) {
+        const recentLines = terminalLines.slice(-10);
+        return (
+            <div className="mt-1 mb-2 mx-2 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg overflow-hidden">
+                <div className="px-3 py-2 bg-[#252526] border-b border-[#3e3e42] flex items-center gap-2">
+                    <TerminalSquare size={12} className="text-emerald-400" />
+                    <span className="text-[10px] font-mono text-[#888]">
+                        {isServerBooting ? 'Starting dev server...' : 'Dev server not running'}
+                    </span>
+                    {isServerBooting && (
+                        <div className="ml-auto flex gap-1">
+                            {[0, 1, 2].map(i => (
+                                <div key={i} className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-bounce"
+                                    style={{ animationDelay: `${i * 0.15}s` }} />
+                            ))}
+                        </div>
+                    )}
+                </div>
+                {isServerBooting && recentLines.length > 0 && (
+                    <div className="p-3 bg-[#111] font-mono text-[9px] text-[#556] space-y-0.5 max-h-[120px] overflow-y-auto">
+                        {recentLines.map((line, i) => (
+                            <div key={i} className="text-[#66ee88] leading-relaxed break-all whitespace-pre-wrap">{line}</div>
+                        ))}
+                    </div>
+                )}
+                {!isServerBooting && (
+                    <div className="p-4 text-center">
+                        <FlaskConical size={20} className="mx-auto mb-2 text-[#444]" />
+                        <p className="text-[10px] text-[#555] mb-3 leading-relaxed">
+                            The dev server needs to start before you can test routes.
+                            This runs <span className="text-[#666] font-mono">pnpm install</span> +{' '}
+                            <span className="text-[#666] font-mono">next dev</span> and may take up to 90s on first boot.
+                        </p>
+                        <p className="text-[9px] text-[#444]">The server stays running for the rest of this session.</p>
+                    </div>
+                )}
+                {isServerBooting && (
+                    <div className="px-3 py-2 border-t border-[#2a2a2a] bg-[#1a1a1a]">
+                        <p className="text-[9px] text-[#444] text-center">Installing packages → starting server → ready to test</p>
+                    </div>
+                )}
+            </div>
+        );
+    }
+
+    // ── FULL REQUEST BUILDER ─────────────────────────────────────────────────
+    return (
+        <div className="mt-1 mb-2 mx-2 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg overflow-hidden">
+            {/* URL bar */}
+            <div className="flex items-center gap-2 px-3 py-2 bg-[#252526] border-b border-[#3e3e42]">
+                <div className="flex items-center gap-1 flex-1 min-w-0 bg-[#1a1a1a] border border-[#333] rounded px-2 py-1">
+                    <span className={cn('text-[9px] font-bold font-mono shrink-0 px-1 py-0.5 rounded', HTTP_METHOD_COLORS[testMethod].active)}>
+                        {testMethod}
+                    </span>
+                    <span className="text-[9px] font-mono text-[#555] truncate">{fullUrl}</span>
+                </div>
+                <button onClick={copyUrl} className="p-1.5 hover:bg-[#333] rounded text-[#555] hover:text-[#aaa] transition-colors shrink-0" title="Copy URL">
+                    <CopyIcon size={10} />
+                </button>
+            </div>
+
+            {/* Method selector */}
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#2a2a2a] bg-[#1a1a1a]">
+                <span className="text-[9px] text-[#555] mr-1 shrink-0">Method:</span>
+                <div className="flex gap-1 flex-wrap">
+                    {route.methods.map(method => (
+                        <button key={method} onClick={() => setTestMethod(method)}
+                            className={cn('px-2 py-0.5 rounded text-[8px] font-bold border transition-all',
+                                testMethod === method ? HTTP_METHOD_COLORS[method].active : HTTP_METHOD_COLORS[method].idle
+                            )}>
+                            {method}
+                        </button>
+                    ))}
+                </div>
+            </div>
+
+            <div className="max-h-[400px] overflow-y-auto scrollbar-thin scrollbar-thumb-[#3e3e42] scrollbar-track-transparent">
+                {/* Headers */}
+                <div className="border-b border-[#222]">
+                    <div className="flex items-center justify-between px-3 py-1.5 bg-[#1a1a1a]">
+                        <span className="text-[9px] text-[#555] font-bold uppercase tracking-wide">Headers</span>
+                        <button onClick={addHeader} className="text-[9px] text-[#444] hover:text-[#888] flex items-center gap-1 transition-colors">
+                            <Plus size={9} /> Add
+                        </button>
+                    </div>
+                    <div className="px-2 pb-2 space-y-1">
+                        {testHeaders.map(header => (
+                            <div key={header.id} className="flex items-center gap-1.5">
+                                <input type="checkbox" checked={header.enabled}
+                                    onChange={e => updateHeader(header.id, 'enabled', e.target.checked)}
+                                    className="w-3 h-3 rounded accent-blue-500 shrink-0" />
+                                <input value={header.key} onChange={e => updateHeader(header.id, 'key', e.target.value)}
+                                    placeholder="Key" className="flex-1 min-w-0 bg-[#2a2a2a] border border-[#333] rounded px-2 py-0.5 text-[9px] font-mono text-[#ccc] placeholder-[#444] outline-none focus:border-[#555]" />
+                                <input value={header.value} onChange={e => updateHeader(header.id, 'value', e.target.value)}
+                                    placeholder="Value" className="flex-1 min-w-0 bg-[#2a2a2a] border border-[#333] rounded px-2 py-0.5 text-[9px] font-mono text-[#ccc] placeholder-[#444] outline-none focus:border-[#555]" />
+                                <button onClick={() => removeHeader(header.id)} className="p-0.5 hover:text-red-400 text-[#444] transition-colors shrink-0">
+                                    <X size={9} />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Request body — only for POST / PUT / PATCH */}
+                {hasBody && (
+                    <div className="border-b border-[#222]">
+                        <div className="px-3 py-1.5 bg-[#1a1a1a] flex items-center justify-between">
+                            <span className="text-[9px] text-[#555] font-bold uppercase tracking-wide">Body (JSON)</span>
+                            <button onClick={() => setTestBody('{\n  \n}')} className="text-[9px] text-[#444] hover:text-[#888] transition-colors" title="Reset body">
+                                <RefreshCw size={9} />
+                            </button>
+                        </div>
+                        <textarea value={testBody} onChange={e => setTestBody(e.target.value)} spellCheck={false}
+                            className="w-full bg-[#1e1e1e] text-[#d4d4d4] font-mono text-[10px] p-3 resize-none outline-none leading-relaxed selection:bg-[#264f78]"
+                            style={{ minHeight: '80px', maxHeight: '160px', caretColor: '#007acc' }}
+                            placeholder='{ "key": "value" }' />
+                    </div>
+                )}
+
+                {/* Send button */}
+                <div className="px-3 py-2 bg-[#1a1a1a]">
+                    <button onClick={onSend} disabled={isSending}
+                        className={cn('w-full flex items-center justify-center gap-2 px-4 py-2 rounded text-xs font-bold transition-all border',
+                            isSending
+                                ? 'bg-[#252526] border-[#3e3e42] text-[#555] cursor-wait'
+                                : 'bg-emerald-600/20 border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/30 hover:border-emerald-500/60'
+                        )}>
+                        {isSending ? (
+                            <><div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin" />Sending...</>
+                        ) : (
+                            <><Send size={11} />Send Request</>
+                        )}
+                    </button>
+                </div>
+
+                {/* Response */}
+                {(testResponse || testError) && (
+                    <div className="border-t border-[#222]">
+                        {testResponse && (
+                            <div className="flex items-center gap-3 px-3 py-2 bg-[#161616] border-b border-[#222]">
+                                <span className={cn('px-2 py-0.5 rounded text-[10px] font-bold border font-mono', getStatusColor(testResponse.status))}>
+                                    {testResponse.status || 'ERR'} {testResponse.statusText}
+                                </span>
+                                <span className="text-[9px] text-[#555] font-mono">{testResponse.latency}ms</span>
+                                <button onClick={() => setShowResponseHeaders(!showResponseHeaders)}
+                                    className="ml-auto flex items-center gap-1 text-[9px] text-[#444] hover:text-[#777] transition-colors">
+                                    Headers {showResponseHeaders ? <ChevronUp size={9} /> : <ChevronDown size={9} />}
+                                </button>
+                            </div>
+                        )}
+                        {testResponse && showResponseHeaders && (
+                            <div className="px-3 py-2 bg-[#111] border-b border-[#222] space-y-0.5 max-h-[100px] overflow-y-auto">
+                                {Object.entries(testResponse.responseHeaders).map(([k, v]) => (
+                                    <div key={k} className="flex gap-2 text-[9px] font-mono">
+                                        <span className="text-[#555] shrink-0 min-w-[100px]">{k}:</span>
+                                        <span className="text-[#777] break-all">{v}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                        {testResponse && testResponse.formattedBody && (
+                            <div className="relative">
+                                <div className="absolute top-2 right-2 z-10">
+                                    <button onClick={() => navigator.clipboard.writeText(testResponse.formattedBody)}
+                                        className="p-1 bg-[#252526] hover:bg-[#333] border border-[#3e3e42] rounded text-[#555] hover:text-[#aaa] transition-colors" title="Copy response body">
+                                        <CopyIcon size={9} />
+                                    </button>
+                                </div>
+                                <pre className="p-3 bg-[#111] text-[9px] font-mono text-[#9cdcfe] leading-relaxed overflow-x-auto whitespace-pre-wrap break-words max-h-[200px] overflow-y-auto">
+                                    {testResponse.formattedBody}
+                                </pre>
+                            </div>
+                        )}
+                        {testError && (
+                            <div className="p-3 bg-red-500/5 border-t border-red-500/20">
+                                <p className="text-[9px] font-mono text-red-400 leading-relaxed">{testError}</p>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// ─── API ROUTE EDITOR ─────────────────────────────────────────────────────────
+// Inline code editor for a single API route handler.
+// Uses a styled <textarea> — zero-dependency, works in WebContainer context.
+// Tab key inserts 2 spaces. Cmd/Ctrl+S triggers blur (debounced save via useFileSync).
+
+interface ApiRouteEditorProps {
+    route: ApiRoute;
+    onUpdate: (patch: Partial<Omit<ApiRoute, 'id'>>) => void;
+}
+
+const METHOD_COLORS_EDITOR: Record<HttpMethod, string> = {
+    GET: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400',
+    POST: 'bg-blue-500/20 border-blue-500/50 text-blue-400',
+    PUT: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
+    PATCH: 'bg-orange-500/20 border-orange-500/50 text-orange-400',
+    DELETE: 'bg-red-500/20 border-red-500/50 text-red-400',
+};
+
+const ALL_METHODS: HttpMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'];
+
+const ApiRouteEditor: React.FC<ApiRouteEditorProps> = ({ route, onUpdate }) => {
+    const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+    const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+        if (e.key === 'Tab') {
+            e.preventDefault();
+            const el = e.currentTarget;
+            const start = el.selectionStart;
+            const end = el.selectionEnd;
+            const newCode =
+                route.handlerCode.substring(0, start) +
+                '  ' +
+                route.handlerCode.substring(end);
+            onUpdate({ handlerCode: newCode });
+            requestAnimationFrame(() => {
+                el.selectionStart = el.selectionEnd = start + 2;
+            });
+        }
+        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+            e.preventDefault();
+            textareaRef.current?.blur();
+        }
+    }, [route.handlerCode, onUpdate]);
+
+    const vfsPath = `app/api/${route.path}/route.ts`;
+
+    return (
+        <div className="mt-1 mb-2 mx-2 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg overflow-hidden">
+            {/* Editor header */}
+            <div className="flex items-center justify-between px-3 py-2 bg-[#252526] border-b border-[#3e3e42]">
+                <div className="flex items-center gap-2">
+                    <div className="flex gap-1">
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#ff5f57]" />
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#febc2e]" />
+                        <div className="w-2.5 h-2.5 rounded-full bg-[#28c840]" />
+                    </div>
+                    <span className="text-[9px] font-mono text-[#555]">{vfsPath}</span>
+                </div>
+                <div className="text-[9px] text-[#444]">TypeScript</div>
+            </div>
+
+            {/* Method toggles */}
+            <div className="flex items-center gap-1.5 px-3 py-2 border-b border-[#2a2a2a] bg-[#1a1a1a]">
+                <span className="text-[9px] text-[#555] mr-1">Methods:</span>
+                {ALL_METHODS.map(method => {
+                    const isActive = route.methods.includes(method);
+                    return (
+                        <button
+                            key={method}
+                            onClick={() => {
+                                const next = isActive
+                                    ? route.methods.filter(m => m !== method)
+                                    : [...route.methods, method];
+                                if (next.length === 0) return;
+                                onUpdate({ methods: next });
+                            }}
+                            className={cn(
+                                'px-1.5 py-0.5 rounded text-[8px] font-bold border transition-all',
+                                isActive
+                                    ? METHOD_COLORS_EDITOR[method]
+                                    : 'bg-transparent border-[#333] text-[#444] hover:text-[#666]'
+                            )}
+                            title={isActive ? `Remove ${method}` : `Add ${method} handler`}
+                        >
+                            {method}
+                        </button>
+                    );
+                })}
+            </div>
+
+            {/* Code editor textarea */}
+            <textarea
+                ref={textareaRef}
+                value={route.handlerCode}
+                onChange={(e) => onUpdate({ handlerCode: e.target.value })}
+                onKeyDown={handleKeyDown}
+                spellCheck={false}
+                className={cn(
+                    'w-full bg-[#1e1e1e] text-[#d4d4d4] font-mono resize-none outline-none',
+                    'text-[11px] leading-[1.6] p-3',
+                    'selection:bg-[#264f78]'
+                )}
+                style={{
+                    minHeight: '280px',
+                    maxHeight: '480px',
+                    caretColor: '#007acc',
+                    tabSize: 2,
+                }}
+                placeholder="// Your Next.js route handler code..."
+            />
+
+            {/* Footer: path display + last saved */}
+            <div className="px-3 py-1.5 border-t border-[#2a2a2a] bg-[#1a1a1a] flex items-center justify-between">
+                <span className="text-[9px] font-mono text-[#444]">
+                    /api/{route.path}
+                </span>
+                <span className="text-[9px] text-[#3a3a3a]">
+                    Saved {new Date(route.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+            </div>
+        </div>
+    );
+};
+
+// ─── LEFT SIDEBAR ─────────────────────────────────────────────────────────────
+
 export const LeftSidebar = () => {
     const {
         activePanel, setActivePanel, setDragData, previewMode,
@@ -151,10 +531,16 @@ export const LeftSidebar = () => {
         pages, addPage, switchPage, deletePage, realPageId,
         theme, updateTheme, selectedId, elements, setElements,
         dataSources, addDataSource, removeDataSource,
-        isInsertDrawerOpen, toggleInsertDrawer
+        apiRoutes, addApiRoute, updateApiRoute, deleteApiRoute,
+        isInsertDrawerOpen, toggleInsertDrawer,
+        framework,
     } = useEditor();
 
-    const { fileTree, installPackage, terminalOutput, status } = useContainer();
+    const {
+        fileTree, installPackage, terminalOutput, status,
+        url: containerUrl,
+        startDevServer,
+    } = useContainer();
 
     const [activeCat, setActiveCat] = useState<DrawerTab>('basic');
     const [search, setSearch] = useState('');
@@ -167,6 +553,107 @@ export const LeftSidebar = () => {
     const [newApiUrl, setNewApiUrl] = useState('');
     const [isFetchingApi, setIsFetchingApi] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    // Phase D: Backend panel local state
+    const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
+    const [isAddingRoute, setIsAddingRoute] = useState(false);
+    const [newRouteName, setNewRouteName] = useState('');
+    const [newRoutePath, setNewRoutePath] = useState('');
+    const [newRouteMethods, setNewRouteMethods] = useState<HttpMethod[]>(['GET']);
+    const [routeAddError, setRouteAddError] = useState('');
+
+    // ── Phase G: Route Tester state ───────────────────────────────────────────
+    const [activeRouteTab, setActiveRouteTab] = useState<'code' | 'test'>('code');
+    const [isServerBooting, setIsServerBooting] = useState(false);
+    const [testMethod, setTestMethod] = useState<HttpMethod>('GET');
+    const [testBody, setTestBody] = useState('{\n  \n}');
+    const [testHeaders, setTestHeaders] = useState<
+        Array<{ id: string; key: string; value: string; enabled: boolean }>
+    >([
+        { id: 'h-default', key: 'Content-Type', value: 'application/json', enabled: true },
+    ]);
+    const [testResponse, setTestResponse] = useState<{
+        status: number; statusText: string; body: string;
+        formattedBody: string; latency: number; ok: boolean;
+        responseHeaders: Record<string, string>;
+    } | null>(null);
+    const [isSending, setIsSending] = useState(false);
+    const [testError, setTestError] = useState<string | null>(null);
+    const [showResponseHeaders, setShowResponseHeaders] = useState(false);
+
+    // Reset tester state when selected route changes
+    useEffect(() => {
+        setTestResponse(null);
+        setTestError(null);
+        setIsSending(false);
+        setActiveRouteTab('code');
+    }, [selectedRouteId]);
+
+    // When containerUrl becomes available (server-ready), clear booting flag
+    useEffect(() => {
+        if (containerUrl) setIsServerBooting(false);
+    }, [containerUrl]);
+
+    // Triggers dev server boot, then switches to test tab.
+    const handleBootAndTest = useCallback(async () => {
+        if (containerUrl) {
+            setActiveRouteTab('test');
+            return;
+        }
+        setActiveRouteTab('test');
+        setIsServerBooting(true);
+        try {
+            await startDevServer();
+        } catch (err) {
+            console.error('[RouteTest] startDevServer error:', err);
+            setIsServerBooting(false);
+        }
+    }, [containerUrl, startDevServer]);
+
+    // Sends the HTTP request to the running WebContainer server
+    const sendRequest = useCallback(async (route: ApiRoute) => {
+        if (!containerUrl || isSending) return;
+        setIsSending(true);
+        setTestResponse(null);
+        setTestError(null);
+
+        const targetUrl = `${containerUrl}/api/${route.path}`;
+        const enabledHeaders = testHeaders
+            .filter(h => h.enabled && h.key.trim())
+            .reduce((acc, h) => ({ ...acc, [h.key.trim()]: h.value }), {} as Record<string, string>);
+        const hasBody = ['POST', 'PUT', 'PATCH'].includes(testMethod);
+
+        if (hasBody && testBody.trim()) {
+            try { JSON.parse(testBody); }
+            catch {
+                setTestError(`Invalid JSON body: ${testBody.slice(0, 80)}...`);
+                setIsSending(false);
+                return;
+            }
+        }
+
+        const start = performance.now();
+        try {
+            const res = await fetch(targetUrl, {
+                method: testMethod,
+                headers: enabledHeaders,
+                body: hasBody && testBody.trim() ? testBody : undefined,
+            });
+            const latency = Math.round(performance.now() - start);
+            const rawText = await res.text();
+            let formattedBody = rawText;
+            try { formattedBody = JSON.stringify(JSON.parse(rawText), null, 2); } catch { /* not JSON */ }
+            const responseHeaders: Record<string, string> = {};
+            res.headers.forEach((value, key) => { responseHeaders[key] = value; });
+            setTestResponse({ status: res.status, statusText: res.statusText, body: rawText, formattedBody, latency, ok: res.ok, responseHeaders });
+        } catch (err) {
+            const latency = Math.round(performance.now() - start);
+            const msg = err instanceof Error ? err.message : String(err);
+            setTestError(`Network error \u2014 could not reach ${targetUrl}.\n\nThis usually means the dev server hasn't finished starting yet.\n\nRaw error: ${msg}`);
+            setTestResponse({ status: 0, statusText: 'Network Error', body: '', formattedBody: '', latency, ok: false, responseHeaders: {} });
+        } finally {
+            setIsSending(false);
+        }
+    }, [containerUrl, testMethod, testBody, testHeaders, isSending]);
 
     const searchUnsplash = useCallback(async (query: string) => {
         setLoadingAssets(true);
@@ -276,6 +763,9 @@ export const LeftSidebar = () => {
                 <NavButton icon={Hexagon} active={activePanel === 'icons'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('icons'); }} tooltip="Icons" />
                 <NavButton icon={Palette} active={activePanel === 'theme'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('theme'); }} tooltip="Global Theme" />
                 <NavButton icon={Database} active={activePanel === 'data'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('data'); }} tooltip="Data Sources" />
+                {framework === 'nextjs' && (
+                    <NavButton icon={Server} active={activePanel === 'backend'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('backend'); }} tooltip="Backend (API Routes)" />
+                )}
                 <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
                 <NavButton icon={Store} active={activePanel === 'marketplace'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('marketplace'); }} tooltip="Marketplace" />
                 <NavButton icon={Layers} active={activePanel === 'layers'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('layers'); }} tooltip="Layers" />
@@ -738,6 +1228,338 @@ export const LeftSidebar = () => {
                             ))}
                         </div>
                     </div>
+                </div>
+            )}
+
+            {/* ── BACKEND (API Routes) PANEL ─────────────────────────────────── */}
+            {activePanel === 'backend' && (
+                <div className="absolute left-[60px] top-0 bottom-0 w-[380px] bg-[#252526] border-r border-[#3f3f46] shadow-xl z-40 flex flex-col">
+
+                    {/* HEADER */}
+                    <div className="p-4 border-b border-[#3f3f46] flex items-center justify-between bg-[#2d2d2d] shrink-0">
+                        <h2 className="font-bold text-[#cccccc] text-xs uppercase tracking-wide flex items-center gap-2">
+                            <Server size={14} className="text-emerald-400" />
+                            Backend — API Routes
+                        </h2>
+                        <button onClick={() => setActivePanel(null)} className="text-[#999] hover:text-white transition-colors">
+                            <X size={16} />
+                        </button>
+                    </div>
+
+                    {/* FRAMEWORK BADGE */}
+                    <div className="px-4 py-2 border-b border-[#3f3f46] bg-[#1e1e1e] shrink-0">
+                        <div className="flex items-center gap-2 text-[10px] text-[#666]">
+                            <Zap size={10} className="text-emerald-400" />
+                            <span>Next.js 14 App Router</span>
+                            <span className="mx-1">·</span>
+                            <span className="font-mono text-[#555]">app/api/</span>
+                            <span className="ml-auto text-emerald-400 flex items-center gap-1">
+                                <CheckCircle2 size={10} /> Routes sync to VFS live
+                            </span>
+                        </div>
+                    </div>
+
+                    {/* ADD ROUTE FORM / BUTTON */}
+                    {isAddingRoute ? (
+                        <div className="p-4 border-b border-[#3f3f46] bg-[#1a1a1a] shrink-0">
+                            <div className="text-[10px] text-[#888] uppercase tracking-wide mb-3 font-bold flex items-center gap-2">
+                                <Plus size={10} /> New API Route
+                            </div>
+
+                            <div className="mb-2">
+                                <label className="text-[10px] text-[#666] block mb-1">Display Name</label>
+                                <input
+                                    value={newRouteName}
+                                    onChange={(e) => setNewRouteName(e.target.value)}
+                                    placeholder="e.g. Get Users"
+                                    className="w-full bg-[#2d2d2d] border border-[#3e3e42] rounded px-3 py-1.5 text-xs text-white outline-none focus:border-[#007acc] transition-colors"
+                                />
+                            </div>
+
+                            <div className="mb-3">
+                                <label className="text-[10px] text-[#666] block mb-1">
+                                    Path <span className="text-[#444]">(relative to /api/)</span>
+                                </label>
+                                <div className="flex items-center gap-1">
+                                    <span className="text-[10px] text-[#555] font-mono shrink-0">/api/</span>
+                                    <input
+                                        value={newRoutePath}
+                                        onChange={(e) => {
+                                            setNewRoutePath(e.target.value.replace(/^\/+/, ''));
+                                            setRouteAddError('');
+                                        }}
+                                        placeholder="users  or  users/[id]  or  auth/login"
+                                        className="flex-1 bg-[#2d2d2d] border border-[#3e3e42] rounded px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-[#007acc] transition-colors"
+                                    />
+                                </div>
+                                <div className="text-[9px] text-[#555] mt-1 font-mono">
+                                    → app/api/{newRoutePath || 'path'}/route.ts
+                                </div>
+                            </div>
+
+                            <div className="mb-3">
+                                <label className="text-[10px] text-[#666] block mb-2">HTTP Methods</label>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {(['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as HttpMethod[]).map(method => {
+                                        const isSelected = newRouteMethods.includes(method);
+                                        const mc: Record<string, string> = {
+                                            GET: 'bg-emerald-500/20 border-emerald-500/50 text-emerald-400',
+                                            POST: 'bg-blue-500/20 border-blue-500/50 text-blue-400',
+                                            PUT: 'bg-amber-500/20 border-amber-500/50 text-amber-400',
+                                            PATCH: 'bg-orange-500/20 border-orange-500/50 text-orange-400',
+                                            DELETE: 'bg-red-500/20 border-red-500/50 text-red-400',
+                                        };
+                                        return (
+                                            <button
+                                                key={method}
+                                                onClick={() => {
+                                                    setNewRouteMethods(prev =>
+                                                        isSelected
+                                                            ? prev.filter(m => m !== method)
+                                                            : [...prev, method]
+                                                    );
+                                                }}
+                                                className={cn(
+                                                    'px-2.5 py-1 rounded text-[10px] font-bold border transition-all',
+                                                    isSelected
+                                                        ? mc[method]
+                                                        : 'bg-[#2d2d2d] border-[#3e3e42] text-[#555] hover:text-[#888]'
+                                                )}
+                                            >
+                                                {method}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+
+                            {routeAddError && (
+                                <div className="text-[10px] text-red-400 flex items-center gap-1.5 mb-2">
+                                    <X size={10} /> {routeAddError}
+                                </div>
+                            )}
+
+                            <div className="flex gap-2 mt-3">
+                                <button
+                                    onClick={() => {
+                                        if (!newRoutePath.trim()) {
+                                            setRouteAddError('Path is required.');
+                                            return;
+                                        }
+                                        if (newRouteMethods.length === 0) {
+                                            setRouteAddError('Select at least one HTTP method.');
+                                            return;
+                                        }
+                                        const duplicate = apiRoutes.find(r => r.path === newRoutePath.trim());
+                                        if (duplicate) {
+                                            setRouteAddError(`Path "${newRoutePath}" already exists.`);
+                                            return;
+                                        }
+                                        addApiRoute(
+                                            newRouteName || newRoutePath,
+                                            newRoutePath.trim(),
+                                            newRouteMethods
+                                        );
+                                        setNewRouteName('');
+                                        setNewRoutePath('');
+                                        setNewRouteMethods(['GET']);
+                                        setRouteAddError('');
+                                        setIsAddingRoute(false);
+                                    }}
+                                    className="flex-1 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded transition-colors"
+                                >
+                                    Create Route
+                                </button>
+                                <button
+                                    onClick={() => {
+                                        setIsAddingRoute(false);
+                                        setNewRouteName('');
+                                        setNewRoutePath('');
+                                        setNewRouteMethods(['GET']);
+                                        setRouteAddError('');
+                                    }}
+                                    className="px-3 py-1.5 bg-[#2d2d2d] hover:bg-[#333] border border-[#3e3e42] text-[#888] hover:text-white text-xs rounded transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="p-3 border-b border-[#3f3f46] shrink-0">
+                            <button
+                                onClick={() => setIsAddingRoute(true)}
+                                className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-[#2d2d2d] hover:bg-emerald-600/20 border border-dashed border-[#3e3e42] hover:border-emerald-500/50 text-[#666] hover:text-emerald-400 text-xs rounded transition-all"
+                            >
+                                <Plus size={12} /> Add API Route
+                            </button>
+                        </div>
+                    )}
+
+                    {/* ROUTE LIST */}
+                    <div className="flex-1 overflow-y-auto custom-scrollbar">
+                        {apiRoutes.length === 0 ? (
+                            <div className="p-8 text-center text-[#555] flex flex-col items-center gap-3">
+                                <Server size={28} className="opacity-20" />
+                                <div className="text-xs font-medium text-[#666]">No API routes yet</div>
+                                <div className="text-[10px] text-[#444] max-w-[220px] leading-relaxed">
+                                    Create routes to add backend functionality. Each route becomes a
+                                    <span className="font-mono text-[#555]"> route.ts</span> file
+                                    in your downloaded project.
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="p-2 flex flex-col gap-1">
+                                {apiRoutes.map((route) => {
+                                    const isSelected = selectedRouteId === route.id;
+                                    const mc2: Record<string, string> = {
+                                        GET: 'bg-emerald-500/20 text-emerald-400',
+                                        POST: 'bg-blue-500/20 text-blue-400',
+                                        PUT: 'bg-amber-500/20 text-amber-400',
+                                        PATCH: 'bg-orange-500/20 text-orange-400',
+                                        DELETE: 'bg-red-500/20 text-red-400',
+                                    };
+
+                                    return (
+                                        <div key={route.id} className="flex flex-col">
+                                            <div
+                                                onClick={() => setSelectedRouteId(isSelected ? null : route.id)}
+                                                className={cn(
+                                                    'group flex items-center justify-between p-2.5 rounded cursor-pointer transition-colors',
+                                                    isSelected
+                                                        ? 'bg-[#2a2d2e] border border-[#3e3e42]'
+                                                        : 'hover:bg-[#2a2d2e] border border-transparent'
+                                                )}
+                                            >
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="flex items-center gap-2 mb-1">
+                                                        <span className="text-xs font-medium text-[#ccc] truncate">
+                                                            {route.name}
+                                                        </span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1.5">
+                                                        <span className="text-[9px] font-mono text-[#555]">/api/</span>
+                                                        <span className="text-[9px] font-mono text-[#888]">{route.path}</span>
+                                                    </div>
+                                                    <div className="flex items-center gap-1 mt-1.5 flex-wrap">
+                                                        {route.methods.map(m => (
+                                                            <span
+                                                                key={m}
+                                                                className={cn(
+                                                                    'px-1.5 py-0.5 rounded text-[8px] font-bold',
+                                                                    mc2[m] || 'bg-zinc-700 text-zinc-400'
+                                                                )}
+                                                            >
+                                                                {m}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
+                                                    <button
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (confirm(`Delete route "${route.name}"?\nThis will remove app/api/${route.path}/route.ts from the VFS.`)) {
+                                                                if (selectedRouteId === route.id) setSelectedRouteId(null);
+                                                                deleteApiRoute(route.id);
+                                                            }
+                                                        }}
+                                                        className="p-1 hover:text-red-400 text-[#666] rounded transition-colors"
+                                                        title="Delete route"
+                                                    >
+                                                        <Trash2 size={12} />
+                                                    </button>
+                                                </div>
+                                            </div>
+
+                                            {isSelected && (
+                                                <div>
+                                                    {/* ── Code | Test tab bar ────────────────────────── */}
+                                                    <div className="flex mx-2 mt-1 bg-[#1a1a1a] border border-[#3e3e42] rounded-t-lg overflow-hidden border-b-0">
+                                                        <button
+                                                            onClick={() => setActiveRouteTab('code')}
+                                                            className={cn(
+                                                                'flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wide transition-colors',
+                                                                activeRouteTab === 'code' ? 'bg-[#252526] text-[#ccc]' : 'text-[#555] hover:text-[#888]'
+                                                            )}>
+                                                            <TerminalSquare size={10} /> Code
+                                                        </button>
+                                                        <div className="w-px bg-[#3e3e42]" />
+                                                        <button
+                                                            onClick={() => { setActiveRouteTab('test'); handleBootAndTest(); }}
+                                                            className={cn(
+                                                                'flex-1 flex items-center justify-center gap-1.5 py-1.5 text-[9px] font-bold uppercase tracking-wide transition-colors',
+                                                                activeRouteTab === 'test' ? 'bg-[#252526] text-emerald-400' : 'text-[#555] hover:text-[#888]'
+                                                            )}>
+                                                            <FlaskConical size={10} /> Test
+                                                            {containerUrl && <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 ml-0.5" />}
+                                                        </button>
+                                                    </div>
+
+                                                    {/* Tab content */}
+                                                    {activeRouteTab === 'code' && (
+                                                        <ApiRouteEditor
+                                                            route={route}
+                                                            onUpdate={(patch) => updateApiRoute(route.id, patch)}
+                                                        />
+                                                    )}
+                                                    {activeRouteTab === 'test' && (
+                                                        <RouteTestPanel
+                                                            route={route}
+                                                            containerUrl={containerUrl}
+                                                            isServerBooting={isServerBooting}
+                                                            terminalLines={terminalOutput}
+                                                            testMethod={testMethod}
+                                                            setTestMethod={setTestMethod}
+                                                            testBody={testBody}
+                                                            setTestBody={setTestBody}
+                                                            testHeaders={testHeaders}
+                                                            setTestHeaders={setTestHeaders}
+                                                            testResponse={testResponse}
+                                                            isSending={isSending}
+                                                            testError={testError}
+                                                            showResponseHeaders={showResponseHeaders}
+                                                            setShowResponseHeaders={setShowResponseHeaders}
+                                                            onSend={() => sendRequest(route)}
+                                                        />
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* FOOTER: VFS path hint */}
+                    {apiRoutes.length > 0 && (
+                        <div className="p-3 border-t border-[#3f3f46] bg-[#1e1e1e] shrink-0">
+                            <div className="flex items-center justify-between">
+                                <div className="text-[9px] text-[#444] font-mono flex items-center gap-2">
+                                    <CheckCircle2 size={9} className="text-emerald-500" />
+                                    {apiRoutes.length} route{apiRoutes.length !== 1 ? 's' : ''} · app/api/
+                                </div>
+                                <div className={cn(
+                                    'flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-bold',
+                                    containerUrl
+                                        ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'
+                                        : isServerBooting
+                                            ? 'bg-amber-500/10 border-amber-500/20 text-amber-400'
+                                            : 'bg-zinc-800 border-zinc-700 text-zinc-600'
+                                )}>
+                                    <span className={cn(
+                                        'w-1.5 h-1.5 rounded-full',
+                                        containerUrl ? 'bg-emerald-500'
+                                            : isServerBooting ? 'bg-amber-500 animate-pulse'
+                                                : 'bg-zinc-600'
+                                    )} />
+                                    {containerUrl ? 'Server ready'
+                                        : isServerBooting ? 'Starting...'
+                                            : 'Server off'}
+                                </div>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

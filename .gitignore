@@ -32,3 +32,6 @@ vectra-engine/*.log
 target/
 pkg/
 wasm-pack.log
+
+# Private Notes
+inplem-clude.md

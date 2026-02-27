@@ -38,13 +38,29 @@ import React, {
     createContext, useContext, useState, useEffect,
     useCallback, useRef, type ReactNode,
 } from 'react';
-import type { VectraProject, Page } from '../types';
+import type { VectraProject, Page, ApiRoute, HttpMethod, Framework, ProjectMeta } from '../types';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
+export const FRAMEWORK_KEY = 'vectra_framework';
 import { mergeAIContent } from '../utils/aiHelpers';
 import { deleteNodeRecursive, canDeleteNode } from '../utils/treeUtils';
 import { instantiateTemplate as instantiateTemplateTS } from '../utils/templateUtils';
 import { generateWithAI } from '../services/aiAgent';
-import { saveProjectToDB, loadProjectFromDB, deleteProjectFromDB } from '../utils/db';
+import {
+    saveProjectIndexToDB, loadProjectIndexFromDB,
+    saveProjectDataToDB2, loadProjectDataFromDB2, deleteProjectDataFromDB2,
+    migrateFromLegacyStorage,
+    type FullProjectSave,
+} from '../utils/db';
+
+/** localStorage key that remembers which project was last open. */
+const ACTIVE_PROJECT_ID_KEY = 'vectra_active_id';
+
+/** Generate a collision-resistant project UUID. */
+const generateProjectId = (): string =>
+    `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+/** Per-project localStorage snap key (fast-boot cache). */
+const snapKey = (id: string) => `vectra_snap_${id}`;
 
 export type { VectraProject, Page };
 
@@ -128,6 +144,18 @@ interface ProjectContextType {
     addDataSource: (ds: DataSource) => void;
     removeDataSource: (id: string) => void;
 
+    // ── API Routes (Phase D) ──────────────────────────────────────────────────
+    apiRoutes: ApiRoute[];
+    addApiRoute: (name: string, path: string, methods: HttpMethod[]) => void;
+    updateApiRoute: (id: string, patch: Partial<Omit<ApiRoute, 'id'>>) => void;
+    deleteApiRoute: (id: string) => void;
+
+    // ── Framework (Phase E) ───────────────────────────────────────────────────
+    /** The active framework for this project. Determines VFS template + code gen. */
+    framework: Framework;
+    /** Exposed for the Header badge display. Read-only after project creation. */
+    setFramework: React.Dispatch<React.SetStateAction<Framework>>;
+
     // ── Project lifecycle ─────────────────────────────────────────────────────
     createNewProject: (templateId: string) => void;
     exitProject: () => void;
@@ -142,11 +170,47 @@ interface ProjectContextType {
      * Returns an error string (console.error inside) on failure, never throws.
      */
     compileComponent: (code: string) => Promise<string>;
+
+    // ── Multi-project (Phase H) ───────────────────────────────────────────────
+    /** UUID of the currently open project. */
+    projectId: string;
+    /** Human-readable name of the currently open project. */
+    projectName: string;
+    /** Full list of saved project metadata — used to render the Dashboard. */
+    projectIndex: ProjectMeta[];
+    /** Open an existing project by its metadata record. */
+    loadProject: (meta: ProjectMeta) => Promise<void>;
+    /** Rename a project. Updates index in IDB. */
+    renameProject: (id: string, name: string) => Promise<void>;
+    /** Duplicate a project. Creates a new UUID + copies element data. */
+    duplicateProject: (meta: ProjectMeta) => Promise<void>;
+    /** Permanently delete a project and its data. */
+    deleteProject: (id: string) => Promise<void>;
+    // ── Sprint 2: Soft-delete 3-stage API ─────────────────────────────────────
+    /** Stage 1: remove from visible index only. IDB data is NOT deleted. */
+    removeProjectFromIndex: (id: string) => Promise<void>;
+    /** Stage 3: permanently delete IDB data + localStorage snap. */
+    purgeProjectData: (id: string) => Promise<void>;
+    /** Undo path: re-insert meta into the index. */
+    restoreProjectToIndex: (meta: ProjectMeta) => Promise<void>;
 }
 
 // ─── CONTEXT ─────────────────────────────────────────────────────────────────
 
 const ProjectContext = createContext<ProjectContextType | null>(null);
+
+// ─── HELPER: Default API handler stub (Phase D) ──────────────────────────────
+// Module-scope so no circular dep with codeGenerator.ts.
+const buildDefaultHandlerStub = (methods: HttpMethod[], routePath: string): string => {
+    const handlers = methods.map(method => {
+        const bodyLine = ['POST', 'PUT', 'PATCH'].includes(method)
+            ? '\n  const body = await request.json();\n  console.log(body);'
+            : '';
+        return `export async function ${method}(request: Request) {${bodyLine}\n  try {\n    // TODO: implement ${method} handler\n    return Response.json(\n      { success: true, message: 'OK', data: null },\n      { status: ${method === 'POST' ? '201' : '200'} }\n    );\n  } catch (error) {\n    return Response.json(\n      { success: false, message: 'Internal Server Error' },\n      { status: 500 }\n    );\n  }\n}`;
+    });
+
+    return `// Next.js App Router — Route Handler\n// Path: /api/${routePath}\n// Docs: https://nextjs.org/docs/app/building-your-application/routing/route-handlers\nimport { NextRequest } from 'next/server';\n\n${handlers.join('\n\n')}\n`;
+};
 
 // ─── PROVIDER ────────────────────────────────────────────────────────────────
 
@@ -194,23 +258,122 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         { id: 'ds-1', name: 'JSONPlaceholder', url: 'https://jsonplaceholder.typicode.com/users', method: 'GET', data: { name: 'Demo User' } }
     ]);
 
+    // ── API Routes (Phase D) ──────────────────────────────────────────────────
+    const [apiRoutes, setApiRoutes] = useState<ApiRoute[]>([]);
+
+    // ── Framework (Phase E) ───────────────────────────────────────────────────
+    const [framework, setFramework] = useState<Framework>(() =>
+        (localStorage.getItem(FRAMEWORK_KEY) as Framework) || 'nextjs'
+    );
+    // Persist framework to localStorage whenever it changes.
+    // ContainerContext reads it synchronously at boot.
+    useEffect(() => {
+        localStorage.setItem(FRAMEWORK_KEY, framework);
+    }, [framework]);
+
+    // ── Phase H: Multi-project state ─────────────────────────────────────────
+    const [projectId, setProjectId] = useState<string>(() =>
+        localStorage.getItem(ACTIVE_PROJECT_ID_KEY) || ''
+    );
+    const [projectName, setProjectName] = useState<string>('My Project');
+    const [projectIndex, setProjectIndex] = useState<ProjectMeta[]>([]);
+
+    const addApiRoute = useCallback((name: string, path: string, methods: HttpMethod[]) => {
+        const cleanPath = path.replace(/^\/+/, '').trim() || 'unnamed';
+        const newRoute: ApiRoute = {
+            id: `route-${Date.now()}`,
+            name: name.trim() || cleanPath,
+            path: cleanPath,
+            methods,
+            handlerCode: buildDefaultHandlerStub(methods, cleanPath),
+            updatedAt: new Date().toISOString(),
+        };
+        setApiRoutes(prev => [...prev, newRoute]);
+    }, []);
+
+    const updateApiRoute = useCallback((id: string, patch: Partial<Omit<ApiRoute, 'id'>>) => {
+        setApiRoutes(prev =>
+            prev.map(r =>
+                r.id === id
+                    ? { ...r, ...patch, updatedAt: new Date().toISOString() }
+                    : r
+            )
+        );
+    }, []);
+
+    const deleteApiRoute = useCallback((id: string) => {
+        setApiRoutes(prev => prev.filter(r => r.id !== id));
+    }, []);
+
     // Keep elementsRef in sync so worker READY handler gets the latest state
     // (covers the race where IDB hydration fires before the worker finishes booting).
     useEffect(() => { elementsRef.current = elements; }, [elements]);
 
-    // ── IDB hydration (async upgrade after synchronous localStorage bootstrap) ───
-    // If IndexedDB has a saved project (from a previous async save), it may be
-    // newer than what localStorage cached. We silently upgrade to it.
-    // This effect runs ONCE on mount and never blocks the first render.
+    // ── Phase H: Multi-project boot sequence ─────────────────────────────────
+    //
+    // Step 1: Run one-shot migration for users upgrading from pre-Phase H.
+    //         Idempotent — no-op if already migrated or fresh install.
+    // Step 2: Load the project index so the Dashboard renders the real list.
+    // Step 3: Determine which project to open:
+    //           a) localStorage['vectra_active_id'] — last open project
+    //           b) First project in index (fallback)
+    //           c) Nothing saved → INITIAL_DATA (fresh install)
+    // Step 4: Read the project's localStorage snap for instant paint, then
+    //         upgrade from IDB if IDB is newer.
     useEffect(() => {
-        loadProjectFromDB<VectraProject>(STORAGE_KEY)
-            .then(saved => {
-                if (saved && typeof saved === 'object' && Object.keys(saved).length > 0) {
-                    setElements(saved);
-                    setHistoryStack([saved]);
+        const boot = async () => {
+            try {
+                // Step 1 — Migration
+                const migrated = await migrateFromLegacyStorage(STORAGE_KEY, FRAMEWORK_KEY);
+                if (migrated) {
+                    setProjectId(migrated.id);
+                    setFramework(migrated.framework as Framework);
+                    localStorage.setItem(ACTIVE_PROJECT_ID_KEY, migrated.id);
                 }
-            })
-            .catch(e => console.warn('[ProjectContext] IDB hydration failed (non-fatal):', e));
+
+                // Step 2 — Load index
+                const index = await loadProjectIndexFromDB();
+                setProjectIndex(index);
+
+                // Step 3 — Determine active project
+                const activeId = localStorage.getItem(ACTIVE_PROJECT_ID_KEY) || index[0]?.id || '';
+                if (!activeId) {
+                    // Fresh install — INITIAL_DATA already loaded from useState initialiser
+                    console.log('[Vectra] Fresh install — no saved projects.');
+                    return;
+                }
+
+                setProjectId(activeId);
+                const meta = index.find(m => m.id === activeId);
+                if (meta) setProjectName(meta.name);
+
+                // Step 4a — localStorage snap (instant, sync)
+                const snap = localStorage.getItem(snapKey(activeId));
+                if (snap) {
+                    try {
+                        const parsed: FullProjectSave = JSON.parse(snap);
+                        if (parsed.elements && Object.keys(parsed.elements).length > 0) {
+                            setElements(parsed.elements as VectraProject);
+                            if (parsed.pages?.length) setPages(parsed.pages as Page[]);
+                            if (parsed.apiRoutes) setApiRoutes(parsed.apiRoutes as ApiRoute[]);
+                            if (parsed.framework) setFramework(parsed.framework as Framework);
+                        }
+                    } catch { /* malformed snap — fall through to IDB */ }
+                }
+
+                // Step 4b — IDB upgrade (async, non-blocking)
+                const idbData = await loadProjectDataFromDB2(activeId);
+                if (idbData?.elements && Object.keys(idbData.elements).length > 0) {
+                    setElements(idbData.elements as VectraProject);
+                    if (idbData.pages?.length) setPages(idbData.pages as Page[]);
+                    if (idbData.apiRoutes) setApiRoutes(idbData.apiRoutes as ApiRoute[]);
+                    if (idbData.framework) setFramework(idbData.framework as Framework);
+                }
+            } catch (e) {
+                console.warn('[ProjectContext] Multi-project boot error (non-fatal):', e);
+            }
+        };
+        boot();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── Wasm init: SwcCompiler + LayoutEngine only ─────────────────────────────
@@ -221,6 +384,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 const wasm = await import('../../vectra-engine/pkg/vectra_engine.js');
                 await wasm.default();
                 wasmModule = wasm; // eslint-disable-line
+                (window as any).vectraWasm = wasm; // expose to Header + CodeRenderer
 
                 // Phase 3: Persistent SWC Globals (interner created once)
                 compilerRef.current = new wasm.SwcCompiler();
@@ -303,23 +467,50 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Async autosave (Phase 5: non-blocking) ────────────────────────────────
+    // ── Phase H: Async autosave (per-project, non-blocking) ──────────────────
     // Writes to BOTH storages:
-    //   • IndexedDB — async, off-thread, no jank, is the primary store
-    //   • localStorage — sync but fast (just a cache for instant next-load hydration)
-    //     We write localStorage with a short string-size guard to avoid quota errors.
+    //   • IndexedDB — primary store, async, off-thread, no jank
+    //   • localStorage — per-project snap cache for instant boot on next open
+    // Also updates lastEditedAt + pageCount in the project index.
     useEffect(() => {
-        const timer = setTimeout(() => {
-            // IDB: primary async save (never blocks)
-            saveProjectToDB(STORAGE_KEY, elements).catch(e =>
-                console.warn('[ProjectContext] IDB auto-save failed:', e)
+        // Skip autosave before a project ID is assigned (fresh install before
+        // first createNewProject call)
+        if (!projectId) return;
+
+        const timer = setTimeout(async () => {
+            const payload: FullProjectSave = {
+                id: projectId,
+                framework,
+                elements,
+                pages,
+                apiRoutes,
+                theme,
+            };
+
+            // IDB: primary async save
+            saveProjectDataToDB2(projectId, payload).catch(e =>
+                console.warn('[ProjectContext] IDB autosave failed:', e)
             );
-            // localStorage: cheap bootstrap cache (sync but small window)
-            try { localStorage.setItem(STORAGE_KEY, JSON.stringify(elements)); }
-            catch { /* localStorage quota exceeded — IDB is the real store */ }
+
+            // localStorage: per-project snap cache
+            try {
+                localStorage.setItem(snapKey(projectId), JSON.stringify(payload));
+            } catch { /* quota exceeded — IDB is the real store */ }
+
+            // Update lastEditedAt + pageCount in the index
+            const now = Date.now();
+            setProjectIndex(prev => {
+                const updated = prev.map(m =>
+                    m.id === projectId
+                        ? { ...m, lastEditedAt: now, pageCount: pages.length }
+                        : m
+                );
+                saveProjectIndexToDB(updated).catch(() => { });
+                return updated;
+            });
         }, 1000);
         return () => clearTimeout(timer);
-    }, [elements]);
+    }, [elements, pages, apiRoutes, theme, framework, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── pushHistory ────────────────────────────────────────────────────────────
     // Phase 9: fire-and-forget to the history worker. JSON.stringify + Gzip happen
@@ -465,24 +656,201 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const switchPage = (pageId: string) => setActivePageId(pageId);
 
-    // ── Project lifecycle ─────────────────────────────────────────────────────
+    // ── Phase H: Project lifecycle ────────────────────────────────────────────
     const createNewProject = useCallback((templateId: string) => {
-        console.log(`[Vectra] Initializing project with template: ${templateId}...`);
+        const resolvedFramework: Framework =
+            templateId === 'vite-react' ? 'vite' : 'nextjs';
+        const newId = generateProjectId();
+        const now = Date.now();
+        const defaultName = `New ${resolvedFramework === 'nextjs' ? 'Next.js' : 'Vite'} Project`;
+
+        console.log(`[Vectra] Creating project — id: ${newId}, framework: ${resolvedFramework}`);
+
+        // Write to localStorage BEFORE switching view — ContainerContext reads
+        // these synchronously during its boot sequence.
+        localStorage.setItem(FRAMEWORK_KEY, resolvedFramework);
+        localStorage.setItem(ACTIVE_PROJECT_ID_KEY, newId);
+
+        // Update all project state
+        setProjectId(newId);
+        setProjectName(defaultName);
+        setFramework(resolvedFramework);
         setElements(INITIAL_DATA);
         setHistoryStack([INITIAL_DATA]);
         setHistoryIndex(0);
         setPages([{ id: 'page-home', name: 'Home', slug: '/', rootId: 'page-home' }]);
         setActivePageId('page-home');
-        // Clear both stores so next load doesn't restore old data
-        localStorage.removeItem(STORAGE_KEY);
-        deleteProjectFromDB(STORAGE_KEY).catch(() => { });
-    }, []);
+        setApiRoutes([]);
+
+        // Insert into the in-memory index immediately (autosave keeps it current)
+        const meta: ProjectMeta = {
+            id: newId,
+            name: defaultName,
+            framework: resolvedFramework,
+            createdAt: now,
+            lastEditedAt: now,
+            pageCount: 1,
+        };
+        setProjectIndex(prev => {
+            const updated = [meta, ...prev];
+            saveProjectIndexToDB(updated).catch(() => { });
+            return updated;
+        });
+
+        // Save initial skeleton data so the project exists in IDB immediately
+        saveProjectDataToDB2(newId, {
+            id: newId,
+            framework: resolvedFramework,
+            elements: INITIAL_DATA,
+            pages: [{ id: 'page-home', name: 'Home', slug: '/', rootId: 'page-home' }],
+            apiRoutes: [],
+            theme: {},
+        }).catch(() => { });
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const exitProject = useCallback(() => {
-        if (confirm('Exit to dashboard? Unsaved changes will be kept in local history.')) {
+        if (confirm('Exit to dashboard? Your project is auto-saved.')) {
             window.dispatchEvent(new CustomEvent('vectra:exit-project'));
         }
     }, []);
+
+    // ── Phase H: Open existing project ───────────────────────────────────────
+    const loadProject = useCallback(async (meta: ProjectMeta) => {
+        try {
+            // Try localStorage snap first (instant)
+            let loaded: FullProjectSave | undefined;
+            const snap = localStorage.getItem(snapKey(meta.id));
+            if (snap) {
+                try { loaded = JSON.parse(snap); } catch { /* ignore */ }
+            }
+
+            // Fall through to IDB if snap missing or malformed
+            if (!loaded) {
+                loaded = await loadProjectDataFromDB2(meta.id);
+            }
+
+            if (!loaded) {
+                console.warn('[Vectra] loadProject: no data found for', meta.id);
+                return;
+            }
+
+            // Apply loaded state
+            setProjectId(meta.id);
+            setProjectName(meta.name);
+            setFramework(meta.framework as Framework);
+            setElements((loaded.elements as VectraProject) || INITIAL_DATA);
+            setHistoryStack([(loaded.elements as VectraProject) || INITIAL_DATA]);
+            setHistoryIndex(0);
+            if (loaded.pages && (loaded.pages as Page[]).length > 0) {
+                setPages(loaded.pages as Page[]);
+            } else {
+                setPages([{ id: 'page-home', name: 'Home', slug: '/', rootId: 'page-home' }]);
+            }
+            setActivePageId('page-home');
+            setApiRoutes((loaded.apiRoutes as ApiRoute[]) || []);
+
+            // Persist active project selection
+            localStorage.setItem(ACTIVE_PROJECT_ID_KEY, meta.id);
+            localStorage.setItem(FRAMEWORK_KEY, meta.framework);
+
+            console.log('[Vectra] Project loaded:', meta.id, meta.name);
+        } catch (e) {
+            console.error('[Vectra] loadProject failed:', e);
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Phase H: Rename project ────────────────────────────────────────────────
+    const renameProject = useCallback(async (id: string, name: string) => {
+        setProjectIndex(prev => {
+            const updated = prev.map(m => m.id === id ? { ...m, name } : m);
+            saveProjectIndexToDB(updated).catch(() => { });
+            return updated;
+        });
+        if (id === projectId) setProjectName(name);
+    }, [projectId]);
+
+    // ── Phase H: Duplicate project ────────────────────────────────────────────
+    const duplicateProject = useCallback(async (meta: ProjectMeta) => {
+        try {
+            const sourceData = await loadProjectDataFromDB2(meta.id);
+            if (!sourceData) return;
+
+            const newId = generateProjectId();
+            const now = Date.now();
+            const newMeta: ProjectMeta = {
+                ...meta,
+                id: newId,
+                name: `${meta.name} (Copy)`,
+                createdAt: now,
+                lastEditedAt: now,
+            };
+
+            await saveProjectDataToDB2(newId, { ...sourceData, id: newId });
+
+            setProjectIndex(prev => {
+                // Insert copy directly after source
+                const idx = prev.findIndex(m => m.id === meta.id);
+                const updated = [...prev];
+                updated.splice(idx + 1, 0, newMeta);
+                saveProjectIndexToDB(updated).catch(() => { });
+                return updated;
+            });
+
+            console.log('[Vectra] Project duplicated:', meta.id, '→', newId);
+        } catch (e) {
+            console.error('[Vectra] duplicateProject failed:', e);
+        }
+    }, []);
+
+    // ── Sprint 2: Soft-delete — 3-stage pattern ──────────────────────────────
+    //
+    // Stage 1 — removeProjectFromIndex():
+    //   Removes meta from index. Project disappears from Dashboard immediately.
+    //   IDB data is NOT touched. Combined with a 5s countdown toast in Dashboard.
+    //
+    // Stage 2 — restoreProjectToIndex() [undo path]:
+    //   Re-inserts meta into the index. The IDB data was never deleted so the
+    //   project loads cleanly. Called by Dashboard if user clicks Undo.
+    //
+    // Stage 3 — purgeProjectData() [expiry path]:
+    //   Permanently deletes IDB data + localStorage snap.
+    //   Called by Dashboard after the 5-second window closes.
+
+    /** Stage 1: remove from visible index. Does NOT delete IDB data. */
+    const removeProjectFromIndex = useCallback(async (id: string) => {
+        setProjectIndex(prev => {
+            const updated = prev.filter(m => m.id !== id);
+            saveProjectIndexToDB(updated).catch(() => { });
+            return updated;
+        });
+    }, []);
+
+    /** Stage 2 (undo path): restore meta to index. */
+    const restoreProjectToIndex = useCallback(async (meta: ProjectMeta) => {
+        setProjectIndex(prev => {
+            if (prev.some(m => m.id === meta.id)) return prev; // guard duplicate
+            const updated = [...prev, meta];
+            saveProjectIndexToDB(updated).catch(() => { });
+            return updated;
+        });
+    }, []);
+
+    /** Stage 3 (expiry path): permanently delete IDB data + snap. */
+    const purgeProjectData = useCallback(async (id: string) => {
+        await deleteProjectDataFromDB2(id).catch(() => { });
+        localStorage.removeItem(snapKey(id));
+        console.log('[Vectra] Project permanently purged:', id);
+    }, []);
+
+    /**
+     * deleteProject: legacy one-shot delete (stages 1 + 3 combined).
+     * Preserved for any callers that don't need the undo window.
+     * Dashboard now uses removeProjectFromIndex + purgeProjectData instead.
+     */
+    const deleteProject = useCallback(async (id: string) => {
+        await removeProjectFromIndex(id);
+        await purgeProjectData(id);
+    }, [removeProjectFromIndex, purgeProjectData]);
 
     // ── AI ────────────────────────────────────────────────────────────────────
     const runAI = async (prompt: string): Promise<string | undefined> => {
@@ -582,7 +950,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             dataSources,
             addDataSource: (ds) => setDataSources(p => [...p, ds]),
             removeDataSource: (id) => setDataSources(p => p.filter(d => d.id !== id)),
+            apiRoutes, addApiRoute, updateApiRoute, deleteApiRoute,
+            framework, setFramework,
             createNewProject, exitProject, runAI, compileComponent,
+            // ── Phase H ──────────────────────────────────────────────────────
+            projectId, projectName, projectIndex,
+            loadProject, renameProject, duplicateProject, deleteProject,
+            // ── Sprint 2: soft-delete API ─────────────────────────────────────
+            removeProjectFromIndex, purgeProjectData, restoreProjectToIndex,
         }}>
             {children}
         </ProjectContext.Provider>

@@ -3,12 +3,13 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useEditor } from '../context/EditorContext';
 import { useContainer } from '../context/ContainerContext';
-import { generateCode, copyToClipboard } from '../utils/codeGenerator';
+import { generateCode, copyToClipboard, generateNextProjectCode, generateProjectCode, generateGridPage } from '../utils/codeGenerator';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 import {
-    Play, Undo, Redo, Code,
+    Play, Undo, Redo, Code, Grid,
     Check, X, Copy, Trash2,
-    Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck
+    Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck,
+    Cpu,
 } from 'lucide-react';
 
 import { cn } from '../lib/utils';
@@ -18,6 +19,7 @@ export const Header = () => {
         history, previewMode, setPreviewMode, elements, setElements,
         activePageId, setSelectedId, viewMode, setViewMode, selectedId,
         deleteElement, exitProject, setMagicBarOpen,
+        pages, dataSources, framework,
     } = useEditor();
 
     const { instance, status } = useContainer();
@@ -26,6 +28,15 @@ export const Header = () => {
     const [copied, setCopied] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [exportDone, setExportDone] = useState(false);
+    // ── Phase F2: Grid converter state ──────────────────────────────────────
+    const [gridCode, setGridCode] = useState('');
+    const [showGridCode, setShowGridCode] = useState(false);
+    const [gridCopied, setGridCopied] = useState(false);
+    const [isConvertingGrid, setIsConvertingGrid] = useState(false);
+    const [gridError, setGridError] = useState<string | null>(null);
+    // Sprint 1: fr unit toggle
+    const [useFrUnits, setUseFrUnits] = useState(false);
+    const [currentGridLayout, setCurrentGridLayout] = useState<import('../utils/codeGenerator').GridLayout | null>(null);
 
     const handleGenerate = () => {
         // HYBRID GENERATION: Try Rust first, then fallback to TS
@@ -66,11 +77,127 @@ export const Header = () => {
         }
     };
 
-    // ─── ZIP EXPORTER ──────────────────────────────────────────────────────────
-    // Recursively walks the WebContainer VFS, collects every file (excluding
-    // node_modules and .git), and bundles them into a downloadable .zip.
-    // Because useFileSync has already written real .tsx files there, the zip
-    // contains a 100% production-ready Vite + React project.
+    // ── Phase F2: WASM Grid Converter ─────────────────────────────────────────
+    // Collects the direct children of the active page's canvas frame,
+    // strips their style values to plain numbers, calls the Rust WASM
+    // absolute_to_grid() function, then generates a responsive CSS Grid page.
+    const handleConvertToGrid = () => {
+        if (!(window as any).vectraWasm?.absolute_to_grid) {
+            setGridError(
+                'Rust WASM engine is not loaded.\n\n' +
+                'Compile the engine first:\n' +
+                '  cd vectra-engine && wasm-pack build --target web'
+            );
+            setShowGridCode(true);
+            setGridCode('');
+            return;
+        }
+
+        setIsConvertingGrid(true);
+        setGridError(null);
+
+        try {
+            // 1. Find the active page and its canvas frame
+            const activePage = pages.find(p => p.id === activePageId);
+            if (!activePage) throw new Error('No active page found.');
+
+            const pageRoot = elements[activePage.rootId];
+            const canvasFrameId = pageRoot?.children?.find(
+                (cid: string) => elements[cid]?.type === 'webpage'
+            ) || pageRoot?.children?.[0];
+
+            if (!canvasFrameId) throw new Error('No canvas frame found on this page.');
+
+            const canvasFrame = elements[canvasFrameId];
+            const childIds: string[] = canvasFrame?.children || [];
+
+            if (childIds.length === 0) {
+                throw new Error('The canvas frame has no children to convert.');
+            }
+
+            // 2. Parse coordinates for each child — strip "px", clamp NaN to 0
+            const px = (val: unknown): number => {
+                const n = parseFloat(String(val || 0));
+                return isNaN(n) ? 0 : n;
+            };
+
+            const gridNodes = childIds
+                .map(id => {
+                    const node = elements[id];
+                    if (!node) return null;
+                    const style = (node.props?.style as any) || {};
+                    return { id, x: px(style.left), y: px(style.top), w: px(style.width), h: px(style.height) };
+                })
+                .filter((n): n is NonNullable<typeof n> => n !== null && n.w > 0 && n.h > 0);
+
+            if (gridNodes.length === 0) {
+                throw new Error(
+                    'No nodes with valid dimensions found.\n\n' +
+                    'Make sure canvas children have explicit width/height set.'
+                );
+            }
+
+            const canvasWidth = px((canvasFrame.props?.style as any)?.width) || 1440;
+
+            // 3. Call WASM — synchronous, returns JSON string
+            const resultJson: string = (window as any).vectraWasm.absolute_to_grid(
+                JSON.stringify(gridNodes),
+                canvasWidth
+            );
+            const gridLayout = JSON.parse(resultJson);
+
+            // Sprint 1: store raw layout so fr/px toggle can re-generate without WASM re-call
+            setCurrentGridLayout(gridLayout);
+            setUseFrUnits(false); // always reset to px on new conversion
+
+            // 4. Generate the responsive page TSX
+            const generated = generateGridPage(
+                activePage,
+                elements,
+                gridLayout,
+                framework as 'nextjs' | 'vite',
+                false // start with px units
+            );
+
+            setGridCode(generated);
+            setGridError(null);
+            setShowGridCode(true);
+            setGridCopied(false);
+
+            const cols = gridLayout.templateColumns.split(' ').length;
+            const rows = gridLayout.templateRows.split(' ').length;
+            console.log(`[Vectra] ✅ Grid conversion complete — ${cols} cols × ${rows} rows`);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            console.error('[Vectra] Grid conversion failed:', err);
+            setGridError(msg);
+            setGridCode('');
+            setShowGridCode(true);
+        } finally {
+            setIsConvertingGrid(false);
+        }
+    };
+
+    // ─── Sprint 1: fr/px unit toggle ──────────────────────────────────────────
+    // Re-generates the grid page with fr or px units without re-calling WASM.
+    // currentGridLayout is already in memory from the previous WASM call.
+    const handleFrToggle = () => {
+        if (!currentGridLayout) return;
+        const activePage = pages.find(p => p.id === activePageId);
+        if (!activePage) return;
+        const nextFr = !useFrUnits;
+        setUseFrUnits(nextFr);
+        const regenerated = generateGridPage(
+            activePage,
+            elements,
+            currentGridLayout,
+            framework as 'nextjs' | 'vite',
+            nextFr
+        );
+        setGridCode(regenerated);
+        setGridCopied(false); // reset — code changed
+    };
+
     const handleExportZip = async () => {
         if (!instance || status !== 'ready') {
             alert('Virtual File System is still booting. Please wait a moment.');
@@ -81,7 +208,64 @@ export const Header = () => {
         setExportDone(false);
 
         try {
+            // ── PRE-EXPORT FLUSH ───────────────────────────────────────────────
+            // Generate and write all page/layout files directly before reading VFS.
+            // This guarantees the ZIP has the latest state even if useFileSync's
+            // 600ms debounce hasn't fired yet.
+            try {
+                if (framework === 'nextjs') {
+                    const { files } = generateNextProjectCode(elements, pages, dataSources || []);
+                    for (const [path, content] of Object.entries(files)) {
+                        await instance.fs.writeFile(path, content).catch(() => { });
+                    }
+                } else {
+                    const { files } = generateProjectCode(elements, pages, dataSources || []);
+                    for (const [path, content] of Object.entries(files)) {
+                        await instance.fs.writeFile(path, content).catch(() => { });
+                    }
+                }
+                console.log('[Vectra] Pre-export flush complete.');
+            } catch (flushErr) {
+                console.warn('[Vectra] Pre-export flush warn (non-fatal):', flushErr);
+            }
+
             const zip = new JSZip();
+
+            // ── Sprint 3: Grid page injection ──────────────────────────────────
+            // If the user ran "Convert to Grid" this session and no error occurred,
+            // inject the generated grid page TSX into a /grid/ folder in the ZIP.
+            // This does NOT modify the VFS — written directly to JSZip object.
+            if (gridCode && !gridError) {
+                const activePage = pages.find(p => p.id === activePageId);
+                const pageName = (activePage?.name || 'Page').replace(/[^a-zA-Z0-9]/g, '');
+                const gridFolder = zip.folder('grid')!;
+                gridFolder.file(`${pageName}Grid.tsx`, gridCode);
+                const unitType = useFrUnits ? 'fr (fluid)' : 'px (fixed)';
+                const colCount = (gridCode.match(/gridTemplateColumns:\s*'([^']+)'/) || [])[1]?.split(' ').length ?? '?';
+                const rowCount = (gridCode.match(/gridTemplateRows:\s*'([^']+)'/) || [])[1]?.split(' ').length ?? '?';
+                gridFolder.file('README.md', [
+                    `# Grid Layout \u2014 ${pageName}`,
+                    ``,
+                    `Auto-generated by Vectra "Convert to Grid" (Phase F2).`,
+                    ``,
+                    `## File`,
+                    `\`${pageName}Grid.tsx\` \u2014 ${colCount} columns \u00d7 ${rowCount} rows, ${unitType}`,
+                    ``,
+                    `## Usage`,
+                    `Replace \`app/page.tsx\` (Next.js) or \`src/pages/${pageName}.tsx\` (Vite)`,
+                    `with this file, or copy the grid layout styles into your existing page.`,
+                    ``,
+                    `## Customising tracks`,
+                    `- Change \`gridTemplateColumns\` and \`gridTemplateRows\` to adjust track sizes`,
+                    `- Convert px tracks to fr for fluid layouts: \`360px \u2192 0.5fr\``,
+                    `- Add \`gap: '16px'\` to the container style for gutters between cells`,
+                    ``,
+                    `Generated: ${new Date().toISOString()}`,
+                    `Framework: ${framework === 'nextjs' ? 'Next.js 14 App Router' : 'Vite + React'}`,
+                ].join('\n'));
+                console.log(`[Vectra] \uD83D\uDCCF Grid page injected into ZIP: grid/${pageName}Grid.tsx`);
+            }
+            // ── End Sprint 3 ────────────────────────────────────────────────────
 
             // Recursively read VFS directory → populate zip
             const addDir = async (dirPath: string, zipFolder: JSZip) => {
@@ -89,7 +273,7 @@ export const Header = () => {
 
                 for (const entry of entries) {
                     // Skip heavy / irrelevant dirs
-                    if (['node_modules', '.git', '.vite', 'dist'].includes(entry.name)) continue;
+                    if (['node_modules', '.git', '.vite', 'dist', '.next'].includes(entry.name)) continue;
 
                     const fullPath = dirPath === '/'
                         ? `/${entry.name}`
@@ -104,7 +288,8 @@ export const Header = () => {
                 }
             };
 
-            console.log('[Vectra] 📦 Building production ZIP from VFS...');
+            const projectName = framework === 'nextjs' ? 'vectra-nextjs' : 'vectra-vite';
+            console.log(`[Vectra] 📦 Building ${projectName} ZIP from VFS...`);
             await addDir('/', zip);
 
             const blob = await zip.generateAsync({
@@ -113,8 +298,8 @@ export const Header = () => {
                 compressionOptions: { level: 6 },
             });
 
-            saveAs(blob, 'vectra-project.zip');
-            console.log('[Vectra] ✅ vectra-project.zip downloaded successfully!');
+            saveAs(blob, `${projectName}-project.zip`);
+            console.log(`[Vectra] ✅ ${projectName}-project.zip downloaded!`);
 
             // Show green checkmark briefly
             setExportDone(true);
@@ -168,6 +353,15 @@ export const Header = () => {
                     >
                         <RotateCcw size={10} /> Reset
                     </button>
+
+                    {/* Phase E: Framework Badge */}
+                    <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${framework === 'nextjs'
+                        ? 'bg-white/5 border-white/10 text-[#999]'
+                        : 'bg-blue-500/10 border-blue-500/20 text-blue-400'
+                        }`}>
+                        {framework === 'nextjs' ? <Cpu size={10} /> : <Code size={10} />}
+                        {framework === 'nextjs' ? 'Next.js 14' : 'Vite + React'}
+                    </div>
                 </div>
 
                 {/* CENTER: View Switcher & Device Toggles */}
@@ -241,6 +435,29 @@ export const Header = () => {
                     {/* Export Code */}
                     <button onClick={handleGenerate} className="p-2 text-[#858585] hover:text-white hover:bg-[#3e3e42] rounded transition-colors" title="Export Code">
                         <Code size={16} />
+                    </button>
+
+                    {/* ── Phase F2: Convert to Grid ──────────────────────────────── */}
+                    <button
+                        id="convert-to-grid-btn"
+                        onClick={handleConvertToGrid}
+                        disabled={isConvertingGrid || !(window as any).vectraWasm?.absolute_to_grid}
+                        title={
+                            !(window as any).vectraWasm?.absolute_to_grid
+                                ? 'WASM engine not loaded — run: cd vectra-engine && wasm-pack build --target web'
+                                : 'Convert canvas layout to responsive CSS Grid'
+                        }
+                        className={cn(
+                            'flex items-center gap-1.5 px-2 py-1.5 rounded text-[10px] font-bold transition-all border',
+                            isConvertingGrid
+                                ? 'bg-[#252526] border-[#3e3e42] text-purple-400 cursor-wait'
+                                : 'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-purple-400 hover:border-purple-500/40 disabled:opacity-30 disabled:cursor-not-allowed'
+                        )}
+                    >
+                        {isConvertingGrid
+                            ? <><Loader2 size={11} className="animate-spin" /><span>Converting...</span></>
+                            : <><Grid size={11} /><span>To Grid</span></>
+                        }
                     </button>
 
                     {/* ── Download ZIP Button ────────────────────────────── */}
@@ -317,6 +534,108 @@ export const Header = () => {
                     </div>
                 )
             }
+
+            {/* ── Phase F2: Grid Code Modal ─────────────────────────────────────────── */}
+            {showGridCode && (
+                <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-8 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-[#1e1e1e] w-full max-w-5xl h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden border border-[#333]">
+
+                        {/* Modal header */}
+                        <div className="flex justify-between items-center p-4 border-b border-[#333] bg-[#252526]">
+                            <span className="font-medium text-gray-200 flex items-center gap-2">
+                                <Grid size={16} className="text-purple-400" />
+                                Responsive CSS Grid — {pages.find(p => p.id === activePageId)?.name || 'Page'}
+                                {!gridError && gridCode && (
+                                    <span className="text-[10px] text-[#555] font-normal font-mono ml-2">
+                                        {(() => {
+                                            try {
+                                                const m = gridCode.match(/gridTemplateColumns: '([^']+)'/);
+                                                const r = gridCode.match(/gridTemplateRows: '([^']+)'/);
+                                                if (m?.[1] && r?.[1]) return `${m[1].split(' ').length} cols \u00d7 ${r[1].split(' ').length} rows`;
+                                            } catch { return ''; }
+                                            return '';
+                                        })()}
+                                    </span>
+                                )}
+                            </span>
+                            <div className="flex gap-2">
+                                {/* Sprint 1: fr/px unit toggle */}
+                                {!gridError && currentGridLayout && (
+                                    <button
+                                        onClick={handleFrToggle}
+                                        title={useFrUnits ? 'Switch to fixed pixel tracks' : 'Switch to fluid fr units (responsive)'}
+                                        className={cn(
+                                            'flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold border transition-all',
+                                            useFrUnits
+                                                ? 'bg-purple-500/20 border-purple-500/40 text-purple-300 hover:bg-purple-500/30'
+                                                : 'bg-[#2d2d2d] border-[#3e3e42] text-[#666] hover:text-[#999] hover:border-[#555]'
+                                        )}
+                                    >
+                                        <span className={cn(
+                                            'w-6 h-3 rounded-full flex items-center transition-colors px-0.5',
+                                            useFrUnits ? 'bg-purple-500 justify-end' : 'bg-[#444] justify-start'
+                                        )}>
+                                            <span className="w-2 h-2 rounded-full bg-white shadow-sm" />
+                                        </span>
+                                        <span>{useFrUnits ? 'fr units' : 'px units'}</span>
+                                    </button>
+                                )}
+                                {!gridError && gridCode && (
+                                    <button
+                                        onClick={async () => {
+                                            const ok = await copyToClipboard(gridCode);
+                                            if (ok) { setGridCopied(true); setTimeout(() => setGridCopied(false), 2000); }
+                                        }}
+                                        className="px-3 py-1.5 bg-purple-600 hover:bg-purple-700 text-white text-xs font-bold rounded flex items-center gap-2 transition-colors"
+                                    >
+                                        {gridCopied ? <><Check size={12} />Copied!</> : <><Copy size={12} />Copy</>}
+                                    </button>
+                                )}
+                                <button
+                                    onClick={() => { setShowGridCode(false); setGridError(null); }}
+                                    className="p-1.5 hover:bg-[#3e3e42] rounded text-[#858585] hover:text-white transition-colors"
+                                >
+                                    <X size={16} />
+                                </button>
+                            </div>
+                        </div>
+
+                        {/* Modal body */}
+                        <div className="flex-1 overflow-auto">
+                            {gridError ? (
+                                <div className="p-6">
+                                    <div className="bg-red-500/5 border border-red-500/20 rounded-lg p-4 mb-4">
+                                        <p className="text-red-400 text-xs font-bold mb-2 flex items-center gap-2">
+                                            <X size={12} /> Conversion failed
+                                        </p>
+                                        <pre className="text-red-300/80 text-[11px] font-mono whitespace-pre-wrap leading-relaxed">{gridError}</pre>
+                                    </div>
+                                    <div className="p-3 bg-[#252526] border border-[#3e3e42] rounded text-[10px] text-[#666] font-mono space-y-1">
+                                        <p className="text-[#888] font-bold mb-1">Checklist:</p>
+                                        <p>• Canvas frame children must have explicit left / top / width / height</p>
+                                        <p>• WASM must be compiled: cd vectra-engine &amp;&amp; wasm-pack build --target web</p>
+                                        <p>• Elements must use absolute layout (canvas layoutMode nodes)</p>
+                                    </div>
+                                </div>
+                            ) : (
+                                <pre className="p-6 text-[#d4d4d4] text-xs font-mono leading-relaxed whitespace-pre overflow-x-auto h-full">
+                                    <code>{gridCode}</code>
+                                </pre>
+                            )}
+                        </div>
+
+                        {/* Modal footer */}
+                        {!gridError && gridCode && (
+                            <div className="px-4 py-2 border-t border-[#333] bg-[#1a1a1a] flex items-center gap-3">
+                                <span className="text-[10px] text-[#555]">
+                                    Replace <code className="text-[#777]">app/page.tsx</code> with this file, or adapt it for responsive redesign.
+                                </span>
+                                <span className="ml-auto text-[9px] text-[#444] font-mono">Phase F2 — Rust WASM Grid Engine</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
         </>
     );
 };

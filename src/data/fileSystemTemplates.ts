@@ -1,26 +1,229 @@
+/**
+ * ─── FILE SYSTEM TEMPLATES ────────────────────────────────────────────────────
+ *
+ * NEXTJS_APP_ROUTER_TEMPLATE — Next.js 14 App Router (current default)
+ * VITE_REACT_TEMPLATE        — Original Vite + React SPA (preserved for future framework switcher)
+ *
+ * Phase A: NEXTJS_APP_ROUTER_TEMPLATE replaces VITE_REACT_TEMPLATE as the
+ * default template mounted by ContainerContext on VFS boot.
+ *
+ * Key path differences from Vite template:
+ *  • No index.html, no src/ dir — Next.js uses app/ directory convention
+ *  • package.json uses `next dev` / `next build` scripts
+ *  • tailwind.config.js targets app/** and components/** (not src/**)
+ *  • All marketplace components are tagged 'use client' (required for motion/state)
+ *  • Path alias @/* → ./* configured in tsconfig.json
+ *  • next.config.js enables remote image patterns (for useAssetSync URLs)
+ *  • components/ at root (not src/components/) — useFileSync writes here
+ */
+
 import type { FileSystemTree } from '@webcontainer/api';
 
-// --- 1. UTILS ---
-const UTILS_CODE = `
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-export function cn(...inputs: ClassValue[]) { return twMerge(clsx(inputs)); }
+// ─── SHARED UTILITY CODE ──────────────────────────────────────────────────────
+
+const UTILS_CODE = `import { clsx, type ClassValue } from 'clsx';
+import { twMerge } from 'tailwind-merge';
+
+export function cn(...inputs: ClassValue[]) {
+  return twMerge(clsx(inputs));
+}
 `;
 
-// --- 2. MARKETPLACE COMPONENT SOURCE CODE ---
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEXT.JS MARKETPLACE COMPONENTS — 'use client' versions
+// All motion/state-dependent components must be client components in Next.js
+// App Router. The 'use client' directive is the first line of every file.
+// ═══════════════════════════════════════════════════════════════════════════════
 
-const HERO_GEOMETRIC_CODE = `
+const NEXT_HERO_GEOMETRIC_CODE = `'use client';
+
+import React from 'react';
+import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
+
+export default function HeroGeometric({
+  badge = "Design System",
+  title1 = "Elevate",
+  title2 = "Your Vision",
+  description = "Crafting exceptional digital experiences",
+  style,
+  className,
+}: any) {
+  return (
+    <div
+      className={cn(
+        "relative flex items-center justify-center overflow-hidden bg-slate-950 w-full min-h-[600px]",
+        className
+      )}
+      style={style}
+    >
+      {/* Background geometric shapes */}
+      <div className="absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-transparent to-purple-500/10" />
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+          className="absolute -right-40 -top-40 w-80 h-80 border border-slate-700/30 rounded-full"
+        />
+        <motion.div
+          animate={{ rotate: -360 }}
+          transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+          className="absolute -left-20 -bottom-20 w-64 h-64 border border-slate-700/20 rounded-full border-dashed"
+        />
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+          className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] border border-slate-800/20 rounded-full"
+        />
+      </div>
+
+      {/* Content */}
+      <div className="relative z-10 text-center px-4 max-w-4xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-white/10 bg-white/5 text-sm text-zinc-300 mb-8"
+        >
+          <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse" />
+          {badge}
+        </motion.div>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.1 }}
+          className="text-6xl md:text-8xl font-bold tracking-tight mb-6"
+        >
+          <span className="text-white block">{title1}</span>
+          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 block">
+            {title2}
+          </span>
+        </motion.div>
+
+        <motion.p
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="text-zinc-400 text-lg md:text-xl max-w-2xl mx-auto mb-10"
+        >
+          {description}
+        </motion.p>
+
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6, delay: 0.3 }}
+          className="flex flex-col sm:flex-row items-center justify-center gap-4"
+        >
+          <button className="px-8 py-3 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 text-white font-semibold hover:opacity-90 transition-opacity">
+            Get Started
+          </button>
+          <button className="px-8 py-3 rounded-full border border-white/10 text-zinc-300 hover:bg-white/5 transition-colors">
+            Learn More
+          </button>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
+`;
+
+const NEXT_FEATURE_HOVER_CODE = `'use client';
+
+import React from 'react';
+import { motion } from 'framer-motion';
+import * as Lucide from 'lucide-react';
+import { cn } from '@/lib/utils';
+
+export default function FeatureHover({
+  title = "Feature Title",
+  description = "A compelling description of this feature and its benefits.",
+  icon = "Sparkles",
+  style,
+  className,
+}: any) {
+  const Icon = (Lucide as any)[icon] || Lucide.Sparkles;
+
+  return (
+    <motion.div
+      whileHover={{ y: -5 }}
+      transition={{ type: "spring", stiffness: 300 }}
+      className={cn(
+        "group relative p-8 bg-zinc-900/50 border border-white/10 rounded-2xl overflow-hidden cursor-pointer backdrop-blur-sm",
+        className
+      )}
+      style={style}
+    >
+      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 via-transparent to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <div className="relative z-10 flex flex-col h-full">
+        <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-zinc-300 group-hover:text-blue-400 group-hover:scale-110 transition-all duration-300">
+          <Icon size={24} />
+        </div>
+        <h3 className="text-xl font-bold text-white mb-3 group-hover:text-blue-200 transition-colors">
+          {title}
+        </h3>
+        <p className="text-zinc-400 text-sm leading-relaxed group-hover:text-zinc-300 transition-colors">
+          {description}
+        </p>
+      </div>
+    </motion.div>
+  );
+}
+`;
+
+const NEXT_GEOMETRIC_SHAPES_CODE = `'use client';
+
+import React from 'react';
+import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
+
+export default function GeometricShapes({ style, className }: any) {
+  return (
+    <div
+      className={cn(
+        "relative w-full h-full overflow-hidden min-h-[300px] bg-slate-950",
+        className
+      )}
+      style={style}
+    >
+      <motion.div
+        animate={{ rotate: 360 }}
+        transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+        className="absolute top-1/4 left-1/4 w-64 h-64 border border-slate-700/30 rounded-full"
+      />
+      <motion.div
+        animate={{ rotate: -360 }}
+        transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
+        className="absolute bottom-1/4 right-1/4 w-48 h-48 border border-slate-600/20 rounded-full border-dashed"
+      />
+      <motion.div
+        animate={{ scale: [1, 1.1, 1] }}
+        transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl rotate-45"
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent" />
+    </div>
+  );
+}
+`;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VITE MARKETPLACE COMPONENTS (preserved — original versions with '../../lib/utils')
+// ═══════════════════════════════════════════════════════════════════════════════
+
+const VITE_HERO_GEOMETRIC_CODE = `
 import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "../../lib/utils";
 
-export default function HeroGeometric({ 
-  badge = "KOKONUT UI", 
-  title1 = "Elevate Your", 
+export default function HeroGeometric({
+  badge = "KOKONUT UI",
+  title1 = "Elevate Your",
   title2 = "Digital Vision",
   subtitle,
   style,
-  className 
+  className
 }: any) {
   return (
     <div className={cn("relative min-h-screen w-full flex items-center justify-center overflow-hidden bg-[#030303]", className)} style={style}>
@@ -49,7 +252,7 @@ export default function HeroGeometric({
 }
 `;
 
-const FEATURE_HOVER_CODE = `
+const VITE_FEATURE_HOVER_CODE = `
 import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "../../lib/utils";
@@ -91,7 +294,7 @@ export default function FeatureHover({
 }
 `;
 
-const GEOMETRIC_SHAPES_CODE = `
+const VITE_GEOMETRIC_SHAPES_CODE = `
 import React from "react";
 import { motion } from "framer-motion";
 import { cn } from "../../lib/utils";
@@ -99,12 +302,12 @@ import { cn } from "../../lib/utils";
 export default function GeometricShapes({ style, className }: any) {
   return (
     <div className={cn("relative w-full h-full overflow-hidden min-h-[300px] bg-slate-950", className)} style={style}>
-      <motion.div 
+      <motion.div
         animate={{ rotate: 360 }}
         transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
         className="absolute top-1/4 left-1/4 w-64 h-64 border border-slate-700/30 rounded-full"
       />
-      <motion.div 
+      <motion.div
         animate={{ rotate: -360 }}
         transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
         className="absolute bottom-1/4 right-1/4 w-48 h-48 border border-slate-600/20 rounded-full border-dashed"
@@ -115,46 +318,305 @@ export default function GeometricShapes({ style, className }: any) {
 }
 `;
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// NEXTJS_APP_ROUTER_TEMPLATE — Default VFS template (Phase A)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+export const NEXTJS_APP_ROUTER_TEMPLATE: FileSystemTree = {
+  'package.json': {
+    file: {
+      contents: JSON.stringify({
+        name: 'vectra-app',
+        version: '0.1.0',
+        private: true,
+        scripts: {
+          dev: 'next dev',
+          build: 'next build',
+          start: 'next start',
+          lint: 'next lint',
+        },
+        dependencies: {
+          next: '14.2.5',
+          react: '^18.3.1',
+          'react-dom': '^18.3.1',
+          'lucide-react': '^0.263.1',
+          'framer-motion': '^10.16.4',
+          clsx: '^2.0.0',
+          'tailwind-merge': '^2.0.0',
+        },
+        devDependencies: {
+          '@types/node': '^20',
+          '@types/react': '^18',
+          '@types/react-dom': '^18',
+          tailwindcss: '^3.4.1',
+          postcss: '^8',
+          autoprefixer: '^10.0.1',
+          typescript: '^5',
+        },
+      }, null, 2),
+    },
+  },
+
+  'next.config.js': {
+    file: {
+      contents: `/** @type {import('next').NextConfig} */
+const nextConfig = {
+  images: {
+    remotePatterns: [
+      { protocol: 'https', hostname: '**' },
+      { protocol: 'http', hostname: '**' },
+    ],
+  },
+  poweredByHeader: false,
+};
+
+module.exports = nextConfig;
+`,
+    },
+  },
+
+  'tsconfig.json': {
+    file: {
+      contents: JSON.stringify(
+        {
+          compilerOptions: {
+            lib: ['dom', 'dom.iterable', 'esnext'],
+            allowJs: true,
+            skipLibCheck: true,
+            strict: true,
+            noEmit: true,
+            esModuleInterop: true,
+            module: 'esnext',
+            moduleResolution: 'bundler',
+            resolveJsonModule: true,
+            isolatedModules: true,
+            jsx: 'preserve',
+            incremental: true,
+            plugins: [{ name: 'next' }],
+            paths: { '@/*': ['./*'] },
+          },
+          include: ['next-env.d.ts', '**/*.ts', '**/*.tsx', '.next/types/**/*.ts'],
+          exclude: ['node_modules'],
+        },
+        null,
+        2
+      ),
+    },
+  },
+
+  'tailwind.config.js': {
+    file: {
+      contents: `/** @type {import('tailwindcss').Config} */
+module.exports = {
+  darkMode: 'class',
+  content: [
+    './app/**/*.{js,ts,jsx,tsx,mdx}',
+    './components/**/*.{js,ts,jsx,tsx,mdx}',
+    './tailwind-gen.js',
+    './data/project.json',
+  ],
+  theme: {
+    extend: {},
+  },
+  plugins: [],
+};
+`,
+    },
+  },
+
+  'postcss.config.js': {
+    file: {
+      contents: `module.exports = {
+  plugins: {
+    tailwindcss: {},
+    autoprefixer: {},
+  },
+};
+`,
+    },
+  },
+
+  // ── app/ directory ───────────────────────────────────────────────────────────
+  app: {
+    directory: {
+      'globals.css': {
+        file: {
+          contents: `@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --primary: #3b82f6;
+    --secondary: #8b5cf6;
+    --accent: #ec4899;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
+  body {
+    background-color: #000000;
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #1a1a1a; }
+::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #52525b; }
+`,
+        },
+      },
+
+      'layout.tsx': {
+        file: {
+          contents: `import type { Metadata } from 'next';
+import './globals.css';
+
+export const metadata: Metadata = {
+  title: 'Vectra App',
+  description: 'Built with Vectra Visual Builder',
+};
+
+export default function RootLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
+  return (
+    <html lang="en" className="dark">
+      <body className="bg-black text-white antialiased">
+        {children}
+      </body>
+    </html>
+  );
+}
+`,
+        },
+      },
+
+      'page.tsx': {
+        file: {
+          contents: `export default function HomePage() {
+  return (
+    <main className="flex items-center justify-center min-h-screen text-zinc-500 font-mono text-sm">
+      <div className="text-center">
+        <div className="text-2xl mb-2">⚡</div>
+        <div>Vectra is initializing...</div>
+        <div className="text-xs mt-2 text-zinc-600">Open the AI bar and build something!</div>
+      </div>
+    </main>
+  );
+}
+`,
+        },
+      },
+    },
+  },
+
+  // ── components/ directory ────────────────────────────────────────────────────
+  components: {
+    directory: {
+      marketplace: {
+        directory: {
+          'HeroGeometric.tsx': { file: { contents: NEXT_HERO_GEOMETRIC_CODE } },
+          'FeatureHover.tsx': { file: { contents: NEXT_FEATURE_HOVER_CODE } },
+          'GeometricShapes.tsx': { file: { contents: NEXT_GEOMETRIC_SHAPES_CODE } },
+        },
+      },
+      '.gitkeep': { file: { contents: '' } },
+    },
+  },
+
+  // ── lib/ directory ────────────────────────────────────────────────────────────
+  lib: {
+    directory: {
+      'utils.ts': { file: { contents: UTILS_CODE } },
+    },
+  },
+
+  // ── public/ directory ─────────────────────────────────────────────────────────
+  public: {
+    directory: {
+      assets: {
+        directory: {
+          '.gitkeep': { file: { contents: '' } },
+        },
+      },
+    },
+  },
+
+  // ── data/ directory ───────────────────────────────────────────────────────────
+  data: {
+    directory: {
+      'project.json': {
+        file: { contents: '{"pages":[],"elements":{}}' },
+      },
+    },
+  },
+
+  // ── Tailwind JIT ghost file ───────────────────────────────────────────────────
+  'tailwind-gen.js': {
+    file: {
+      contents: '// Auto-generated by Vectra for Tailwind JIT — do not edit\nexport const classes = "";',
+    },
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VITE_REACT_TEMPLATE — Preserved for future framework switcher (Phase E)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 export const VITE_REACT_TEMPLATE: FileSystemTree = {
   'package.json': {
     file: {
-      contents: JSON.stringify({
-        name: "vectra-app",
-        type: "module",
-        scripts: { "dev": "vite", "build": "vite build", "preview": "vite preview" },
-        dependencies: {
-          "react": "^18.2.0",
-          "react-dom": "^18.2.0",
-          "lucide-react": "^0.263.1",
-          "framer-motion": "^10.16.4",
-          "clsx": "^2.0.0",
-          "tailwind-merge": "^1.14.0",
-          "react-router-dom": "^6.14.1"
+      contents: JSON.stringify(
+        {
+          name: 'vectra-app',
+          type: 'module',
+          scripts: { dev: 'vite', build: 'vite build', preview: 'vite preview' },
+          dependencies: {
+            react: '^18.2.0',
+            'react-dom': '^18.2.0',
+            'lucide-react': '^0.263.1',
+            'framer-motion': '^10.16.4',
+            clsx: '^2.0.0',
+            'tailwind-merge': '^1.14.0',
+            'react-router-dom': '^6.14.1',
+          },
+          devDependencies: {
+            '@vitejs/plugin-react-swc': '^3.3.2',
+            tailwindcss: '^3.3.3',
+            vite: '^4.4.5',
+            autoprefixer: '^10.4.14',
+            postcss: '^8.4.27',
+          },
         },
-        devDependencies: {
-          "@vitejs/plugin-react-swc": "^3.3.2",
-          "tailwindcss": "^3.3.3",
-          "vite": "^4.4.5",
-          "autoprefixer": "^10.4.14",
-          "postcss": "^8.4.27"
-        }
-      }, null, 2)
-    }
+        null,
+        2
+      ),
+    },
   },
   'vite.config.ts': {
-    file: { contents: `import { defineConfig } from 'vite'; import react from '@vitejs/plugin-react-swc'; export default defineConfig({ plugins: [react()] }); ` }
+    file: {
+      contents: `import { defineConfig } from 'vite'; import react from '@vitejs/plugin-react-swc'; export default defineConfig({ plugins: [react()] });`,
+    },
   },
   'tailwind.config.js': {
-    file: { contents: `/** @type {import('tailwindcss').Config} */\nexport default { \n  darkMode: 'class', \n  content: [\n    "./index.html", \n    "./src/**/*.{js,ts,jsx,tsx}", \n    "./src/data/project.json"\n], \n  theme: { extend: { } }, \n  plugins: []\n } ` }
+    file: {
+      contents: `/** @type {import('tailwindcss').Config} */\nexport default { \n  darkMode: 'class', \n  content: [\n    "./index.html", \n    "./src/**/*.{js,ts,jsx,tsx}", \n    "./src/data/project.json"\n], \n  theme: { extend: { } }, \n  plugins: []\n }`,
+    },
   },
   'postcss.config.js': {
-    file: { contents: `export default { plugins: { tailwindcss: {}, autoprefixer: {} } }` }
+    file: { contents: `export default { plugins: { tailwindcss: {}, autoprefixer: {} } }` },
   },
   'index.html': {
     file: {
-      contents:
-        `<!doctype html>
+      contents: `<!doctype html>
 <html lang="en" class="dark">
   <head>
     <meta charset="UTF-8" />
@@ -165,30 +627,33 @@ export const VITE_REACT_TEMPLATE: FileSystemTree = {
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
-</html>`
-    }
+</html>`,
+    },
   },
-  'src': {
+  src: {
     directory: {
-      'lib': { directory: { 'utils.ts': { file: { contents: UTILS_CODE } } } },
-      'components': {
+      lib: { directory: { 'utils.ts': { file: { contents: UTILS_CODE } } } },
+      components: {
         directory: {
-          'marketplace': {
+          marketplace: {
             directory: {
-              'HeroGeometric.tsx': { file: { contents: HERO_GEOMETRIC_CODE } },
-              'FeatureHover.tsx': { file: { contents: FEATURE_HOVER_CODE } },
-              'GeometricShapes.tsx': { file: { contents: GEOMETRIC_SHAPES_CODE } }
-            }
-          }
-        }
+              'HeroGeometric.tsx': { file: { contents: VITE_HERO_GEOMETRIC_CODE } },
+              'FeatureHover.tsx': { file: { contents: VITE_FEATURE_HOVER_CODE } },
+              'GeometricShapes.tsx': { file: { contents: VITE_GEOMETRIC_SHAPES_CODE } },
+            },
+          },
+        },
       },
       'main.tsx': {
-        file: { contents: `import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; import './index.css'; ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);` }
+        file: {
+          contents: `import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App'; import './index.css'; ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);`,
+        },
       },
       'index.css': {
-        file: { contents: `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n@layer base {\n  body { background-color: #000; color: #fff; }\n}` }
+        file: {
+          contents: `@tailwind base;\n@tailwind components;\n@tailwind utilities;\n\n@layer base {\n  body { background-color: #000; color: #fff; }\n}`,
+        },
       },
-      // Initial placeholder — useFileSync overwrites this on first sync
       'App.tsx': {
         file: {
           contents: `import React from 'react';
@@ -200,10 +665,15 @@ export default function App() {
     </div>
   );
 }
-` }
+`,
+        },
       },
-      'data': { directory: { 'project.json': { file: { contents: `{"pages":[], "elements":{}}` } } } },
-      'tailwind-gen.js': { file: { contents: '// Auto-generated' } }
-    }
-  }
+      data: {
+        directory: {
+          'project.json': { file: { contents: `{"pages":[], "elements":{}}` } },
+        },
+      },
+      'tailwind-gen.js': { file: { contents: '// Auto-generated' } },
+    },
+  },
 };

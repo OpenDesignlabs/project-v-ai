@@ -129,9 +129,29 @@ export const useEditor = () => {
         dataSources: project.dataSources,
         addDataSource: project.addDataSource,
         removeDataSource: project.removeDataSource,
+        apiRoutes: project.apiRoutes,
+        addApiRoute: project.addApiRoute,
+        updateApiRoute: project.updateApiRoute,
+        deleteApiRoute: project.deleteApiRoute,
+        framework: project.framework,
+        setFramework: project.setFramework,
         createNewProject: project.createNewProject,
         exitProject: project.exitProject,
         runAI: project.runAI,
+
+        // ── Phase H: Multi-project ────────────────────────────────────────────
+        projectId: project.projectId,
+        projectName: project.projectName,
+        projectIndex: project.projectIndex,
+        loadProject: project.loadProject,
+        renameProject: project.renameProject,
+        duplicateProject: project.duplicateProject,
+        deleteProject: project.deleteProject,
+        // ── Sprint 2: soft-delete API ─────────────────────────────────────────
+        removeProjectFromIndex: project.removeProjectFromIndex,
+        purgeProjectData: project.purgeProjectData,
+        restoreProjectToIndex: project.restoreProjectToIndex,
+
 
         // ── UI ────────────────────────────────────────────────────────────────
         selectedId: ui.selectedId,

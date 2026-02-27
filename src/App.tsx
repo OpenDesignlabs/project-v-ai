@@ -1,6 +1,6 @@
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { EditorProvider, useEditor } from './context/EditorContext';
-import { ProjectProvider } from './context/ProjectContext';
+import { ProjectProvider, useProject } from './context/ProjectContext';
 import { UIProvider, useUI } from './context/UIContext';
 import { ContainerProvider, useContainer } from './context/ContainerContext';
 
@@ -156,13 +156,18 @@ const EditorLayout = () => {
 const MainRouter = () => {
   // Use UIContext directly — doesn't subscribe to project data changes
   const { currentView } = useUI();
+  // Phase E: Read framework from ProjectContext — available because
+  // ProjectProvider wraps MainRouter in the App component tree.
+  const { framework } = useProject();
 
   if (currentView === 'dashboard') {
     return <Dashboard />;
   }
 
   return (
-    <ContainerProvider>
+    // framework prop tells ContainerProvider which VFS template to mount.
+    // It is set synchronously by createNewProject() before currentView switches.
+    <ContainerProvider framework={framework}>
       <EditorLayout />
     </ContainerProvider>
   );

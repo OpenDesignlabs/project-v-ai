@@ -597,3 +597,256 @@ impl SwcCompiler {
 pub fn compile_component(code: String) -> Result<String, JsValue> {
     SwcCompiler::new().compile(code)
 }
+
+// ============================================
+// PRIORITY 6: RESPONSIVE GRID CONVERTER (Phase F2)
+// ============================================
+//
+// absolute_to_grid() transforms a set of absolutely-positioned canvas nodes
+// into a CSS Grid layout descriptor.
+//
+// ALGORITHM OVERVIEW
+// ──────────────────
+// 1. Collect all X breakpoints (each node's left and left+width).
+//    Collect all Y breakpoints (each node's top and top+height).
+// 2. Sort and deduplicate both lists using a snap tolerance (SNAP_TOL = 4px).
+//    Adjacent coordinates within tolerance are merged to their group mean.
+//    This handles the common case where elements were dragged to "almost"
+//    the same position and should share a grid line.
+// 3. Consecutive breakpoint pairs define tracks:
+//      col_widths[i]  = x_breaks[i+1] - x_breaks[i]
+//      row_heights[i] = y_breaks[i+1] - y_breaks[i]
+// 4. For each node, find its start/end coordinates in the breakpoint arrays.
+//    CSS Grid is 1-based: array_index + 1 = CSS line number.
+//    Both start and end use the same formula — the end is already exclusive
+//    because it points to the line AFTER the last occupied track.
+// 5. Serialize as JSON and return. TypeScript parses with JSON.parse().
+//
+// TIME COMPLEXITY
+// ────────────────
+// O(N log N) for sorting. O(N) for deduplication and placement.
+// Typical canvas has N < 100 nodes — this runs in microseconds.
+//
+// SNAP TOLERANCE
+// ──────────────
+// 4px chosen to handle Vectra drag precision without merging intentionally
+// separate tracks. A hero and a navbar that differ by 2px in top coordinate
+// will correctly share a row boundary. Two cards at 100px and 108px apart
+// will correctly produce separate tracks.
+
+/// Snap tolerance in canvas pixels. Adjacent coordinates within this
+/// distance are merged to a single canonical grid line.
+const SNAP_TOL: f64 = 4.0;
+
+/// Input geometry for a single canvas node.
+/// The caller (TypeScript) strips style strings to plain numbers before calling.
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridInputNode {
+    pub id: String,
+    /// Left position in canvas pixels (parsed from style.left).
+    pub x: f64,
+    /// Top position in canvas pixels (parsed from style.top).
+    pub y: f64,
+    /// Width in canvas pixels (parsed from style.width).
+    pub w: f64,
+    /// Height in canvas pixels (parsed from style.height).
+    pub h: f64,
+}
+
+/// CSS Grid placement for a single node.
+/// All indices are 1-based CSS line numbers.
+/// col_end and row_end are EXCLUSIVE (standard CSS grid-column / grid-row syntax).
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridItem {
+    pub id: String,
+    /// CSS: grid-column-start
+    pub col_start: usize,
+    /// CSS: grid-column-end (exclusive — the line after the last occupied track)
+    pub col_end: usize,
+    /// CSS: grid-row-start
+    pub row_start: usize,
+    /// CSS: grid-row-end (exclusive)
+    pub row_end: usize,
+}
+
+/// Complete grid layout descriptor — the full output of absolute_to_grid().
+#[derive(Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GridLayout {
+    /// CSS grid-template-columns value, e.g. "120px 360px 240px"
+    pub template_columns: String,
+    /// CSS grid-template-rows value, e.g. "80px 640px 60px"
+    pub template_rows: String,
+    /// Column track widths in raw pixels (parallel to template_columns tokens).
+    /// Exposed so TypeScript can optionally convert to fr units.
+    pub col_widths_px: Vec<f64>,
+    /// Row track heights in raw pixels (parallel to template_rows tokens).
+    pub row_heights_px: Vec<f64>,
+    /// Per-node grid placements, in the same order as the input nodes array.
+    pub items: Vec<GridItem>,
+}
+
+/// Deduplicate a list of f64 coordinates with snap tolerance.
+///
+/// Algorithm:
+///   1. Sort the input.
+///   2. Walk left-to-right, accumulating a "group" of values that are all
+///      within SNAP_TOL of the running group mean.
+///   3. When a value falls outside the tolerance, seal the current group
+///      (push its mean to output) and start a new group.
+///
+/// Using the running group mean (not pairwise distance to the first element)
+/// prevents drift: if 10 values cluster between 99px and 107px, the mean
+/// stays accurate and no value escapes the tolerance band.
+fn dedup_coords(mut coords: Vec<f64>) -> Vec<f64> {
+    if coords.is_empty() {
+        return coords;
+    }
+    coords.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut result: Vec<f64> = Vec::with_capacity(coords.len());
+    let mut group_sum: f64 = coords[0];
+    let mut group_count: usize = 1;
+
+    for &val in &coords[1..] {
+        let group_mean = group_sum / group_count as f64;
+        if (val - group_mean).abs() <= SNAP_TOL {
+            group_sum += val;
+            group_count += 1;
+        } else {
+            result.push(group_sum / group_count as f64);
+            group_sum = val;
+            group_count = 1;
+        }
+    }
+    result.push(group_sum / group_count as f64);
+    result
+}
+
+/// Return the index of the coordinate in `breaks` nearest to `target`.
+///
+/// Because `breaks` is produced by `dedup_coords` and the input coordinates
+/// came from the same source data, the nearest element should always be
+/// within SNAP_TOL. The linear scan is acceptable: N < 100 in all real cases.
+fn find_coord_idx(breaks: &[f64], target: f64) -> usize {
+    breaks
+        .iter()
+        .enumerate()
+        .min_by(|(_, &a), (_, &b)| {
+            let da = (a - target).abs();
+            let db = (b - target).abs();
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|(i, _)| i)
+        .unwrap_or(0)
+}
+
+/// Convert a set of absolutely-positioned canvas nodes into a CSS Grid layout.
+///
+/// # Arguments
+/// * `nodes_json`    — JSON-encoded `Vec<GridInputNode>`. All coordinates must
+///                     be plain numbers (no "px" suffix). The TypeScript caller
+///                     is responsible for stripping units before serializing.
+/// * `canvas_width`  — Pixel width of the parent canvas frame. Currently unused
+///                     in track-size computation (tracks use px, not fr), but
+///                     passed for future fr-unit conversion support.
+///
+/// # Returns
+/// JSON-encoded `GridLayout` on success, or a `JsValue` error string on failure.
+///
+/// # CSS Line Numbering
+/// CSS Grid is 1-based. Array index 0 in `x_breaks` = CSS line 1.
+/// `col_start = find_coord_idx(x_breaks, node.x) + 1`
+/// `col_end   = find_coord_idx(x_breaks, node.x + node.w) + 1`
+/// The end index is already the exclusive boundary because `node.x + node.w`
+/// maps to the line AFTER the last occupied track — adding another +1 would
+/// be wrong and produce a one-track-too-wide result.
+#[wasm_bindgen]
+pub fn absolute_to_grid(nodes_json: String, _canvas_width: f64) -> Result<String, JsValue> {
+    let nodes: Vec<GridInputNode> = serde_json::from_str(&nodes_json)
+        .map_err(|e| JsValue::from_str(&format!("[absolute_to_grid] Parse error: {}", e)))?;
+
+    if nodes.is_empty() {
+        return Err(JsValue::from_str("[absolute_to_grid] No nodes provided"));
+    }
+
+    // ── Step 1: Collect all coordinate breakpoints ────────────────────────────
+    let mut x_raw: Vec<f64> = Vec::with_capacity(nodes.len() * 2);
+    let mut y_raw: Vec<f64> = Vec::with_capacity(nodes.len() * 2);
+
+    for node in &nodes {
+        x_raw.push(node.x);
+        x_raw.push(node.x + node.w);
+        y_raw.push(node.y);
+        y_raw.push(node.y + node.h);
+    }
+
+    // ── Step 2: Deduplicate with snap tolerance → canonical grid lines ─────────
+    let x_breaks = dedup_coords(x_raw);
+    let y_breaks = dedup_coords(y_raw);
+
+    // Guard: need at least 2 lines per axis to form 1 track
+    if x_breaks.len() < 2 || y_breaks.len() < 2 {
+        return Err(JsValue::from_str(
+            "[absolute_to_grid] Degenerate layout: all nodes share the same coordinate",
+        ));
+    }
+
+    // ── Step 3: Compute track sizes ───────────────────────────────────────────
+    // Each consecutive pair of lines defines one track.
+    // Round to integers; clamp to 1px minimum to prevent zero-width ghost tracks.
+    let col_widths: Vec<f64> = x_breaks
+        .windows(2)
+        .map(|w| (w[1] - w[0]).round().max(1.0))
+        .collect();
+
+    let row_heights: Vec<f64> = y_breaks
+        .windows(2)
+        .map(|w| (w[1] - w[0]).round().max(1.0))
+        .collect();
+
+    // ── Step 4: Build CSS template strings ────────────────────────────────────
+    let template_columns = col_widths
+        .iter()
+        .map(|&w| format!("{}px", w as i64))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let template_rows = row_heights
+        .iter()
+        .map(|&h| format!("{}px", h as i64))
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    // ── Step 5: Assign grid placements ────────────────────────────────────────
+    // CSS line number = array index + 1  (1-based, no extra offset on end)
+    let items: Vec<GridItem> = nodes
+        .iter()
+        .map(|node| {
+            let col_start = find_coord_idx(&x_breaks, node.x) + 1;
+            let col_end   = find_coord_idx(&x_breaks, node.x + node.w) + 1;
+            let row_start = find_coord_idx(&y_breaks, node.y) + 1;
+            let row_end   = find_coord_idx(&y_breaks, node.y + node.h) + 1;
+            GridItem {
+                id: node.id.clone(),
+                col_start,
+                col_end,
+                row_start,
+                row_end,
+            }
+        })
+        .collect();
+
+    // ── Step 6: Serialize and return ──────────────────────────────────────────
+    serde_json::to_string(&GridLayout {
+        template_columns,
+        template_rows,
+        col_widths_px: col_widths,
+        row_heights_px: row_heights,
+        items,
+    })
+    .map_err(|e| JsValue::from_str(&format!("[absolute_to_grid] Serialize error: {}", e)))
+}
+
