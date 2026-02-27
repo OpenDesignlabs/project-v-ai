@@ -46,6 +46,7 @@ import {
   generateApiRouteFile,
   apiRouteToVfsPath,
   generateProjectCode,
+  deduplicatePageSlugs,
 } from '../utils/codeGenerator';
 import type { VectraProject } from '../types';
 
@@ -284,7 +285,35 @@ export const useFileSync = () => {
 
         if (isNext) {
           // ── B-NEXT: Per-page generation ───────────────────────────
-          for (const page of pages) {
+          const safePages = deduplicatePageSlugs(pages);
+          const currentSafePageIds = new Set(safePages.map(p => p.id));
+
+          // Detect + remove deleted pages and detect renames
+          for (const [prevId, prevEntry] of Object.entries(prevPageStructuresRef.current)) {
+            if (prevId === '__vite_pages__') continue;
+
+            const prevPath = prevEntry.split('::')[0];
+            const correspondingSafePage = safePages.find(p => p.id === prevId);
+            const currentPath = correspondingSafePage ? slugToNextPath(correspondingSafePage.slug) : null;
+
+            // If the page was deleted OR renamed (path changed), remove the old file
+            if (!currentSafePageIds.has(prevId) || (currentPath && prevPath !== currentPath)) {
+              if (prevPath && prevPath !== 'app/page.tsx' && prevPath !== 'src/App.tsx') {
+                try {
+                  await removeFile(prevPath);
+                  syncedFiles.current.delete(prevPath);
+                  console.log(`🗑️ [Vectra] Deleted page file → ${prevPath}`);
+                } catch {
+                  // File may not exist yet
+                }
+              }
+              if (!currentSafePageIds.has(prevId)) {
+                delete prevPageStructuresRef.current[prevId];
+              }
+            }
+          }
+
+          for (const page of safePages) {
             const pageRoot = elements[page.rootId];
             const children = pageRoot?.children || [];
             const structureKey = JSON.stringify(
@@ -294,10 +323,16 @@ export const useFileSync = () => {
               }))
             );
 
-            if (structureKey === prevPageStructuresRef.current[page.id]) continue;
+            const filePath = slugToNextPath(page.slug);
+            const prevEntry = prevPageStructuresRef.current[page.id];
+            const prevStructure = prevEntry?.split('::')[1];
+
+            // Same path and same structure -> skip
+            if (prevEntry && prevEntry.startsWith(filePath + '::') && prevStructure === structureKey) {
+              continue;
+            }
 
             anyPageChanged = true;
-            const filePath = slugToNextPath(page.slug);
             let pageContent: string;
             try {
               pageContent = generateNextPage(page, elements);
@@ -310,20 +345,20 @@ export const useFileSync = () => {
               syncedFiles.current.set(filePath, pageContent);
               console.log(`📄 [Vectra] Page → ${filePath}`);
             }
-            prevPageStructuresRef.current[page.id] = structureKey;
+            prevPageStructuresRef.current[page.id] = `${filePath}::${structureKey}`;
           }
 
           // ── B-NEXT: layout.tsx + Navbar ───────────────────────────
-          const pageCountChanged = pages.length !== prevPageCountRef.current;
+          const pageCountChanged = safePages.length !== prevPageCountRef.current;
           if (pageCountChanged || anyPageChanged) {
-            const layoutContent = generateRootLayout(pages, theme);
+            const layoutContent = generateRootLayout(safePages, theme);
             if (syncedFiles.current.get('app/layout.tsx') !== layoutContent) {
               await writeFile('app/layout.tsx', layoutContent);
               syncedFiles.current.set('app/layout.tsx', layoutContent);
               console.log('[Vectra] Layout → app/layout.tsx');
             }
-            if (pages.length > 1) {
-              const navContent = generateNextNavbar(pages);
+            if (safePages.length > 1) {
+              const navContent = generateNextNavbar(safePages);
               if (syncedFiles.current.get('components/Navbar.tsx') !== navContent) {
                 await writeFile('components/Navbar.tsx', navContent);
                 syncedFiles.current.set('components/Navbar.tsx', navContent);

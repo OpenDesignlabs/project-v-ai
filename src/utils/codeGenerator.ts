@@ -870,6 +870,7 @@ export const generateRootLayout = (
   return `import type { Metadata } from 'next';
 import type React from 'react';
 ${navbarImport}import './globals.css';
+/* import './tokens.css'; // Uncomment to use design tokens from ZIP export */
 
 export const metadata: Metadata = {
   title: 'Vectra App',
@@ -922,7 +923,7 @@ export default function RootLayout({
  * @param pages   Original page list — not mutated
  * @returns       New page list with all slugs guaranteed unique
  */
-const deduplicatePageSlugs = (pages: Page[]): Page[] => {
+export const deduplicatePageSlugs = (pages: Page[]): Page[] => {
   const seen = new Set<string>();
   return pages.map(page => {
     let slug = page.slug || '/';

@@ -140,6 +140,70 @@ export const Canvas = () => {
         };
     }, [isPanning, interaction, handleInteractionMove, handleInteractionEnd, setPan, setIsPanning, spacePressed, previewMode]);
 
+    // ── ITEM B: Zoom to Fit (⌘0 / Ctrl+0) + CustomEvent ───────────────────────
+    useEffect(() => {
+        const handleZoomToFit = () => {
+            if (previewMode) return;
+            const pageRoot = elements[activePageId];
+            if (!pageRoot || !pageRoot.children) return;
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            let hasWebpage = false;
+
+            pageRoot.children.forEach(cid => {
+                const child = elements[cid];
+                if (child?.type === 'webpage') {
+                    hasWebpage = true;
+                    const s = (child.props?.style || {}) as Record<string, string>;
+                    const x = parseFloat(s.left || '0');
+                    const y = parseFloat(s.top || '0');
+                    const w = parseFloat(s.width || '1440');
+                    const h = parseFloat(s.height || '900');
+                    if (x < minX) minX = x;
+                    if (y < minY) minY = y;
+                    if (x + w > maxX) maxX = x + w;
+                    if (y + h > maxY) maxY = y + h;
+                }
+            });
+
+            if (!hasWebpage) return;
+
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (!rect) return;
+
+            const targetW = maxX - minX;
+            const targetH = maxY - minY;
+            const padding = 80;
+
+            const scaleX = (rect.width - padding * 2) / Math.max(targetW, 1);
+            const scaleY = (rect.height - padding * 2) / Math.max(targetH, 1);
+            const newZoom = Math.min(Math.max(Math.min(scaleX, scaleY), 0.1), 3);
+
+            const centerX = minX + targetW / 2;
+            const centerY = minY + targetH / 2;
+
+            setZoom(newZoom);
+            setPan({
+                x: rect.width / 2 - centerX * newZoom,
+                y: rect.height / 2 - centerY * newZoom
+            });
+        };
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+                e.preventDefault();
+                handleZoomToFit();
+            }
+        };
+
+        window.addEventListener('keydown', onKeyDown);
+        window.addEventListener('vectra:zoom-to-fit', handleZoomToFit);
+        return () => {
+            window.removeEventListener('keydown', onKeyDown);
+            window.removeEventListener('vectra:zoom-to-fit', handleZoomToFit);
+        };
+    }, [elements, activePageId, previewMode, setZoom, setPan]);
+
     // ── 4. DROP — element creation from sidebar drag ──────────────────────────
     const handleGlobalDrop = (e: React.DragEvent) => {
         e.preventDefault();

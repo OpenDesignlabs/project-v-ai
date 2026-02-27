@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useEditor } from '../context/EditorContext';
@@ -9,7 +9,7 @@ import {
     Play, Undo, Redo, Code, Grid,
     Check, X, Copy, Trash2,
     Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck,
-    Cpu,
+    Cpu, Maximize
 } from 'lucide-react';
 
 import { cn } from '../lib/utils';
@@ -79,13 +79,14 @@ const buildTokensCSS = (theme: {
     ].join('\n');
 };
 
+
 export const Header = () => {
     const {
         history, previewMode, setPreviewMode, elements, setElements,
         activePageId, setSelectedId, viewMode, setViewMode, selectedId,
         deleteElement, exitProject, setMagicBarOpen,
         pages, dataSources, framework,
-        theme,  // Direction 2: needed by buildTokensCSS()
+        theme, projectId // Direction 2 + Gap 2
     } = useEditor();
 
     const { instance, status } = useContainer();
@@ -142,6 +143,13 @@ export const Header = () => {
         if (!previewMode) setSelectedId(null);
         setPreviewMode(!previewMode);
     };
+
+    // ── Gap 2 Fix: Clear grid results when project switches ─────────────────
+    useEffect(() => {
+        setGridPageResults(new Map());
+        setGridSelectedPageId('');
+        setShowGridCode(false);
+    }, [projectId]);
 
     const handleReset = () => {
         if (confirm('Reset project to default? This will clear all changes.')) {
@@ -506,10 +514,11 @@ export const Header = () => {
 
                 {/* RIGHT: Actions */}
                 <div className="flex items-center gap-2">
-                    {/* History */}
+                    {/* History & Zoom */}
                     <div className="flex items-center gap-0.5 opacity-80">
                         <button onClick={history.undo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Undo"><Undo size={14} /></button>
                         <button onClick={history.redo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Redo"><Redo size={14} /></button>
+                        <button onClick={() => window.dispatchEvent(new CustomEvent('vectra:zoom-to-fit'))} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Zoom to Fit (⌘0)"><Maximize size={14} /></button>
                     </div>
 
                     {/* AI Magic Bar Toggle */}
