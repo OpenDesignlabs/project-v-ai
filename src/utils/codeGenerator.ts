@@ -380,6 +380,69 @@ export const buildMobileCSS = (hasMobileNodes: boolean): string => {
   return [...layer1, ...layer2, '}'].join('\n');
 };
 
+
+// ─── Direction A: camelCase → kebab-case CSS property converter ──────────────
+const camelToKebab = (str: string): string =>
+  str.replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
+
+/**
+ * buildBreakpointCSS
+ * ──────────────────
+ * Generates @media CSS rules for all nodes that carry breakpoint overrides.
+ * Keyed by [data-vid="nodeId"] — the same attribute RenderNode stamps on every
+ * DOM element, so selectors are class-collision-free.
+ *
+ * !important is required to override React's inline style attribute.
+ *
+ * Example output:
+ *   @media (max-width: 1024px) {
+ *     [data-vid="el-abc"] { font-size: 14px !important; }
+ *   }
+ *   @media (max-width: 768px) {
+ *     [data-vid="el-abc"] { font-size: 12px !important; }
+ *     [data-vid="el-xyz"] { display: none !important; }
+ *   }
+ */
+export const buildBreakpointCSS = (
+  project: VectraProject,
+  nodeIds: string[]
+): string => {
+  const tabletRules: string[] = [];
+  const mobileRules: string[] = [];
+
+  for (const id of nodeIds) {
+    const node = project[id];
+    if (!node?.props?.breakpoints) continue;
+
+    const { tablet, mobile } = node.props.breakpoints as {
+      tablet?: Record<string, string>;
+      mobile?: Record<string, string>;
+    };
+
+    if (tablet && Object.keys(tablet).length > 0) {
+      const decls = Object.entries(tablet)
+        .map(([k, v]) => `    ${camelToKebab(k)}: ${v} !important;`)
+        .join('\n');
+      tabletRules.push(`  [data-vid="${id}"] {\n${decls}\n  }`);
+    }
+
+    if (mobile && Object.keys(mobile).length > 0) {
+      const decls = Object.entries(mobile)
+        .map(([k, v]) => `    ${camelToKebab(k)}: ${v} !important;`)
+        .join('\n');
+      mobileRules.push(`  [data-vid="${id}"] {\n${decls}\n  }`);
+    }
+  }
+
+  const parts: string[] = [];
+  if (tabletRules.length > 0)
+    parts.push(`@media (max-width: 1024px) {\n${tabletRules.join('\n')}\n}`);
+  if (mobileRules.length > 0)
+    parts.push(`@media (max-width: 768px) {\n${mobileRules.join('\n')}\n}`);
+
+  return parts.join('\n\n');
+};
+
 // ═══════════════════════════════════════════════════════════════════════════════
 // PHASE F2 — CSS GRID LAYER 3 (WASM-POWERED RESPONSIVE GRID EXPORT)
 //
@@ -678,7 +741,23 @@ export const generateNextPage = (
   const mobileCSSString = buildMobileCSS(hasMobileNodes);
   const mobileCSSLiteral = JSON.stringify(mobileCSSString);
 
-  // ── Build JSX content ───────────────────────────────────────────────────
+  // ── Direction A: Collect all descendant node IDs for breakpoint CSS ─────
+  // Walk the full subtree once to gather IDs. buildBreakpointCSS filters
+  // to only those nodes with props.breakpoints populated — O(N), N < ~200.
+  const allPageNodeIds: string[] = [];
+  const collectPageIds = (id: string, visited = new Set<string>()) => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    allPageNodeIds.push(id);
+    const n = project[id];
+    if (n?.children) n.children.forEach((c: string) => collectPageIds(c, visited));
+  };
+  if (canvasFrameId) collectPageIds(canvasFrameId);
+
+  const breakpointCSSString = buildBreakpointCSS(project, allPageNodeIds);
+  const breakpointCSSLiteral = breakpointCSSString.length > 0
+    ? JSON.stringify(breakpointCSSString)
+    : 'null';
   let jsxParts: string[] = [];
 
   for (const childId of canvasChildren) {
@@ -757,12 +836,16 @@ ${metadataBlock}
 // Vectra responsive styles — Layer 1 (canvas scroll) + Layer 2 (stack on mobile).
 // Auto-generated. Do not edit manually.
 const VECTRA_MOBILE_CSS = ${mobileCSSLiteral};
+// Direction A: per-node breakpoint overrides keyed by [data-vid] selector.
+const VECTRA_BP_CSS = ${breakpointCSSLiteral};
 
 export default function ${componentName}() {
   return (
     <main className="w-full min-h-screen bg-black text-white">
-      {/* Vectra responsive styles */}
+      {/* Vectra responsive styles — Layer 1+2 (canvas scroll + stack-mobile) */}
       <style dangerouslySetInnerHTML={{ __html: VECTRA_MOBILE_CSS }} />
+      {/* Direction A: per-node breakpoint overrides */}
+      {VECTRA_BP_CSS && <style dangerouslySetInnerHTML={{ __html: VECTRA_BP_CSS }} />}
 
       {/*
         Canvas frame — ${canvasWidth}px wide, matching the Vectra editor exactly.
