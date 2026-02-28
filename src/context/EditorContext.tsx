@@ -122,6 +122,7 @@ export const useEditor = () => {
         addPage: project.addPage,
         deletePage: project.deletePage,
         switchPage: project.switchPage,
+        updatePageSEO: project.updatePageSEO,  // Direction D
         history: project.history,
         querySnapping: project.querySnapping,
         theme: project.theme,

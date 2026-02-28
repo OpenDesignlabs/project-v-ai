@@ -724,13 +724,35 @@ export const generateNextPage = (
     .filter(Boolean)
     .join('\n');
 
+  // ── Phase F: Direction D — Build SEO metadata block before the template literal
+  // Variables are computed in plain JS so there's no backtick nesting conflict.
+  const esc = (s: string) => s.replace(/'/g, "\\'");
+  const seoTitle = page.seo?.title || `${page.name} | Vectra App`;
+  const seoDescription = page.seo?.description || `${page.name} page — built with Vectra Visual Builder`;
+  const seoOgTitle = page.seo?.ogTitle || seoTitle;
+  const seoOgDesc = page.seo?.ogDescription
+    ? `'${esc(page.seo.ogDescription)}'`
+    : `'${esc(seoDescription)}'`;
+  const seoOgImage = page.seo?.ogImage;
+  const seoCanonical = page.seo?.canonical;
+  const seoNoIndex = page.seo?.noIndex === true;
+  const ogImageLine = seoOgImage ? `\n    images: ['${seoOgImage}'],` : '';
+  const canonicalLine = seoCanonical ? `\n  alternates: { canonical: '${seoCanonical}' },` : '';
+  const robotsLine = seoNoIndex ? `\n  robots: { index: false, follow: false },` : '';
+
+  const metadataBlock = `export const metadata: Metadata = {
+  title: '${esc(seoTitle)}',
+  description: '${esc(seoDescription)}',
+  openGraph: {
+    title: '${esc(seoOgTitle)}',
+    description: ${seoOgDesc},${ogImageLine}
+  },${canonicalLine}${robotsLine}
+};`;
+
   // ── Phase F: Assemble the responsive page wrapper ──────────────────────
   return `${importBlock}
 
-export const metadata: Metadata = {
-  title: '${page.name} | Vectra App',
-  description: '${page.name} page — built with Vectra Visual Builder',
-};
+${metadataBlock}
 
 // Vectra responsive styles — Layer 1 (canvas scroll) + Layer 2 (stack on mobile).
 // Auto-generated. Do not edit manually.
@@ -767,7 +789,7 @@ ${jsxContent}
  */
 export const generateNextNavbar = (pages: Page[]): string => {
   const navItems = pages
-    .map(p => `  { label: '${p.name}', href: '${p.slug}' }`)
+    .map(p => `  { label: '${p.name}', href: '${p.slug}' } `)
     .join(',\n');
 
   return `'use client';
@@ -777,7 +799,7 @@ import Link from 'next/link';
 import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
-${navItems},
+  ${navItems},
 ];
 
 export default function Navbar({ className }: { className?: string }) {
@@ -785,58 +807,66 @@ export default function Navbar({ className }: { className?: string }) {
 
   return (
     <nav
-      className={cn(
+      className= {
+      cn(
         'fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/10',
         className
-      )}
+      )
+    }
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
-          <Link href="/" className="text-white font-bold text-xl tracking-tight">
-            Vectra<span className="text-blue-400">.</span>
-          </Link>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" >
+      <div className="flex items-center justify-between h-16" >
+        <Link href="/" className = "text-white font-bold text-xl tracking-tight" >
+          Vectra < span className = "text-blue-400" >.</span>
+            </Link>
 
-          <div className="hidden md:flex items-center gap-8">
-            {NAV_ITEMS.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                className="text-zinc-400 hover:text-white transition-colors text-sm font-medium"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
+            < div className = "hidden md:flex items-center gap-8" >
+            {
+              NAV_ITEMS.map((item) => (
+                <Link
+                key= { item.href }
+                href = { item.href }
+                className = "text-zinc-400 hover:text-white transition-colors text-sm font-medium"
+                >
+                { item.label }
+                </Link>
+              ))
+            }
+              </div>
 
-          <button
-            onClick={() => setIsOpen(!isOpen)}
-            className="md:hidden p-2 text-zinc-400 hover:text-white transition-colors"
-            aria-label="Toggle menu"
-          >
-            <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
-            <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
-            <div className="w-5 h-0.5 bg-current transition-all" />
-          </button>
+              < button
+  onClick = {() => setIsOpen(!isOpen)
+}
+className = "md:hidden p-2 text-zinc-400 hover:text-white transition-colors"
+aria - label="Toggle menu"
+  >
+  <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
+    <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
+      <div className="w-5 h-0.5 bg-current transition-all" />
+        </button>
         </div>
-      </div>
-
-      {isOpen && (
-        <div className="md:hidden border-t border-white/10 bg-black/95">
-          <div className="px-4 py-4 flex flex-col gap-3">
-            {NAV_ITEMS.map((item) => (
-              <Link
-                key={item.href}
-                href={item.href}
-                onClick={() => setIsOpen(false)}
-                className="text-zinc-400 hover:text-white transition-colors text-sm font-medium py-2"
-              >
-                {item.label}
-              </Link>
-            ))}
-          </div>
         </div>
+
+{
+  isOpen && (
+    <div className="md:hidden border-t border-white/10 bg-black/95" >
+      <div className="px-4 py-4 flex flex-col gap-3" >
+      {
+        NAV_ITEMS.map((item) => (
+          <Link
+                key= { item.href }
+                href = { item.href }
+                onClick = {() => setIsOpen(false)}
+  className = "text-zinc-400 hover:text-white transition-colors text-sm font-medium py-2"
+    >
+    { item.label }
+    </Link>
+            ))
+}
+</div>
+  </div>
       )}
-    </nav>
+</nav>
   );
 }
 `;
@@ -852,24 +882,24 @@ export const generateRootLayout = (
 ): string => {
   const hasMultiplePages = pages.length > 1;
   const navbarImport = hasMultiplePages
-    ? `import Navbar from '@/components/Navbar';\n`
+    ? `import Navbar from '@/components/Navbar'; \n`
     : '';
   const navbarJsx = hasMultiplePages
-    ? `\n        <Navbar />`
+    ? `\n < Navbar /> `
     : '';
 
   const cssVars = theme
     ? `
-        style={{
-          '--primary': '${theme.primary || '#3b82f6'}',
-          '--secondary': '${theme.secondary || '#8b5cf6'}',
-          '--accent': '${theme.accent || '#ec4899'}',
+style = {{
+  '--primary': '${theme.primary || '#3b82f6'}',
+    '--secondary': '${theme.secondary || '#8b5cf6'}',
+      '--accent': '${theme.accent || '#ec4899'}',
         } as React.CSSProperties}`
     : '';
 
   return `import type { Metadata } from 'next';
 import type React from 'react';
-${navbarImport}import './globals.css';
+${navbarImport} import './globals.css';
 /* import './tokens.css'; // Uncomment to use design tokens from ZIP export */
 
 export const metadata: Metadata = {
@@ -883,12 +913,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="dark">
+    <html lang= "en" className = "dark" >
       <body
         className="bg-black text-white antialiased"${cssVars}
-      >${navbarJsx}
-        {children}
-      </body>
+      > ${navbarJsx}
+  { children }
+  </body>
     </html>
   );
 }
@@ -935,15 +965,15 @@ export const deduplicatePageSlugs = (pages: Page[]): Page[] => {
 
     // Collision — find a safe suffix
     let counter = 2;
-    let candidate = `${slug}-${counter}`;
+    let candidate = `${slug} -${counter} `;
     while (seen.has(candidate)) {
       counter++;
-      candidate = `${slug}-${counter}`;
+      candidate = `${slug} -${counter} `;
     }
 
     console.warn(
       `[Vectra] Slug collision detected: page "${page.name}" has slug "${slug}" ` +
-      `which is already used. Auto-renamed to "${candidate}" in export. ` +
+      `which is already used.Auto - renamed to "${candidate}" in export.` +
       `Fix this in the Pages panel to avoid surprises.`
     );
 
@@ -1009,7 +1039,7 @@ export const generateNextProjectCode = (
  */
 export const apiRouteToVfsPath = (path: string): string => {
   const clean = path.replace(/^\/+/, '').replace(/\/+$/, '').trim() || 'unnamed';
-  return `app/api/${clean}/route.ts`;
+  return `app / api / ${clean}/route.ts`;
 };
 
 /**

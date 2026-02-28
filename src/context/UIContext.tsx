@@ -54,6 +54,13 @@ interface UIContextType {
     setPreviewMode: (v: boolean) => void;
     device: DeviceType;
     setDevice: (d: DeviceType) => void;
+    /**
+     * Direction A — activeBreakpoint: derived from `device`.
+     * 'desktop' → writes go to node.props.style (base)
+     * 'tablet'  → writes go to node.props.breakpoints.tablet
+     * 'mobile'  → writes go to node.props.breakpoints.mobile
+     */
+    activeBreakpoint: 'desktop' | 'tablet' | 'mobile';
     viewMode: ViewMode;
     setViewMode: (m: ViewMode) => void;
 
@@ -222,6 +229,12 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setZoom(d === 'mobile' ? 1 : 0.8);
     };
 
+    // Direction A: activeBreakpoint is a pure derivation from device — no state needed.
+    // It routes RightSidebar style writes to the correct storage key.
+    const activeBreakpoint: 'desktop' | 'tablet' | 'mobile' =
+        device === 'mobile' ? 'mobile' :
+            device === 'tablet' ? 'tablet' : 'desktop';
+
     const addAsset = (file: File) => {
         const reader = new FileReader();
         reader.onload = (e) => setAssets(prev => [...prev, { id: `asset-${Date.now()}`, type: 'image', url: e.target?.result as string, name: file.name }]);
@@ -248,7 +261,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             activeTool, setActiveTool, zoom, setZoom, pan, setPan,
             isPanning, setIsPanning, dragData, setDragData,
             interaction, setInteraction, guides, setGuides,
-            previewMode, setPreviewMode, device, setDevice,
+            previewMode, setPreviewMode, device, setDevice, activeBreakpoint,
             viewMode, setViewMode, activePanel, setActivePanel,
             togglePanel: (p) => setActivePanel(cur => cur === p ? null : p),
             isInsertDrawerOpen, toggleInsertDrawer: () => setIsInsertDrawerOpen(p => !p),

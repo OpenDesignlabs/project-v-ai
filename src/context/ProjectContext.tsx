@@ -121,6 +121,12 @@ interface ProjectContextType {
     addPage: (name: string, slug?: string) => void;
     deletePage: (id: string) => void;
     switchPage: (pageId: string) => void;
+    /**
+     * Direction D — SEO Control
+     * Merge-update the SEO fields for a specific page.
+     * Only the fields provided are changed — all others are preserved.
+     */
+    updatePageSEO: (pageId: string, seo: Partial<import('../types').PageSEO>) => void;
 
     // ── History ───────────────────────────────────────────────────────────────
     history: { undo: () => void; redo: () => void };
@@ -883,7 +889,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             const currentPages = pages;          // pages is stable between renders
             const currentPageId = activePageId;  // same
 
-            const result = await generateWithAI(prompt, currentElements);
+            const result = await generateWithAI(prompt, currentElements, {
+                pageRootId: currentPages.find(p => p.id === currentPageId)?.rootId ?? currentPageId,
+                pageName: currentPages.find(p => p.id === currentPageId)?.name ?? 'Page',
+            });
 
             if (result.action === 'error') {
                 console.warn('❌ AI Error:', result.message);
@@ -946,6 +955,17 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }, [pages, activePageId, pushHistory]);
     // Note: elements intentionally omitted from deps — read via elementsRef
     // to prevent runAI from being recreated on every element change (60fps).
+
+    // Direction D: updatePageSEO — merge-update SEO fields for a specific page.
+    // All fields are optional; only the provided keys are changed.
+    const updatePageSEO = useCallback(
+        (pageId: string, seo: Partial<import('../types').PageSEO>) => {
+            setPages(prev => prev.map(p =>
+                p.id === pageId ? { ...p, seo: { ...p.seo, ...seo } } : p
+            ));
+        },
+        []
+    );
 
     // ── Phase 6 + 10: Rust SWC Compiler ──────────────────────────────────────
     // Phase 6: TSX→JS via Rust SWC (no Babel), ESM→CJS shim for iframe shell.
@@ -1012,7 +1032,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             elements, setElements, updateProject, pushHistory, deleteElement,
             instantiateTemplate: instantiateTemplateTS,
             pages, activePageId, setActivePageId, realPageId: activePageId,
-            addPage, deletePage, switchPage,
+            addPage, deletePage, switchPage, updatePageSEO,
             history: { undo, redo },
             syncLayoutEngine, querySnapping,
             theme, updateTheme: (u) => setTheme(p => ({ ...p, ...u })),

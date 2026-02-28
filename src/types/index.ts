@@ -37,6 +37,13 @@ export interface VectraNode {
     props: {
         className?: string;
         style?: React.CSSProperties;
+        /**
+         * Direction A — Responsive Breakpoint Editing
+         * Per-node style overrides applied at specific viewport widths.
+         * Overrides are ADDITIVE — they merge over base `style` at the breakpoint.
+         * mobile:  max-width: 768px  | tablet: max-width: 1024px
+         */
+        breakpoints?: BreakpointMap;
         layoutMode?: 'canvas' | 'flex' | 'grid';
         stackOnMobile?: boolean;
         placeholder?: string;
@@ -51,12 +58,54 @@ export interface VectraNode {
 
 export type VectraProject = Record<string, VectraNode>;
 
+/**
+ * Direction A — BreakpointMap
+ * additive style overrides keyed by viewport.
+ * desktop (>1024px) → base props.style  (no override needed)
+ * tablet  (≤1024px) → props.breakpoints.tablet merges over base
+ * mobile  (≤768px)  → props.breakpoints.mobile merges over base
+ *
+ * WHY NOT TAILWIND CLASSES
+ * Tailwind responsive prefixes (md:, sm:) require compile-time class knowledge.
+ * Since Vectra generates arbitrary pixel values, inline style overrides compiled
+ * to @media CSS rules (via buildBreakpointCSS) are the correct approach.
+ */
+export interface BreakpointMap {
+    /** Applied at max-width: 768px (mobile phones) */
+    mobile?: Partial<React.CSSProperties>;
+    /** Applied at max-width: 1024px (tablets) */
+    tablet?: Partial<React.CSSProperties>;
+}
+
+/**
+ * Direction D — PageSEO
+ * Per-page metadata fields — maps directly to Next.js Metadata API.
+ * All fields optional — generateNextPage() uses page.name as fallback.
+ */
+export interface PageSEO {
+    /** <title> tag — falls back to "${page.name} | Vectra App" */
+    title?: string;
+    /** <meta name="description"> */
+    description?: string;
+    /** og:title — falls back to title, then page.name */
+    ogTitle?: string;
+    /** og:description — falls back to description */
+    ogDescription?: string;
+    /** og:image — absolute URL required for social sharing */
+    ogImage?: string;
+    /** <link rel="canonical"> — full URL including domain */
+    canonical?: string;
+    /** robots noindex — hides page from search engines when true */
+    noIndex?: boolean;
+}
+
 // Page definition for Multi-Page Architecture
 export interface Page {
     id: string;
     name: string;
     slug: string;       // URL path (e.g., '/', '/about', '/contact')
     rootId: string;     // Pointer to the page's root element in VectraProject
+    seo?: PageSEO;      // Direction D — per-page SEO metadata
 }
 
 /**

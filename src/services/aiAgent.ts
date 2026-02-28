@@ -186,10 +186,66 @@ const callDirectAPI = async (
     throw new Error(`AI failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
 };
 
+// ─── DIRECTION C: Canvas Context Builder ─────────────────────────────────────────────────────────────────────────
+/**
+ * buildCanvasContext
+ * ──────────────────
+ * Serializes the current active page tree into a compact human-readable
+ * string for injection into the AI system prompt (Direction C).
+ *
+ * WHY COMPACT
+ * The system prompt has a token budget. We cannot send the full VectraProject
+ * (potentially 10k+ tokens). Instead we extract only what the LLM needs:
+ *   - Element types, names, text presence, child counts
+ *   - Tree structure up to depth 4
+ * This lets AI avoid duplicating existing sections and match the existing density.
+ *
+ * @param elements   Full VectraProject
+ * @param pageRootId Root node ID of the current page
+ * @param pageName   Human name for the page
+ */
+const buildCanvasContext = (
+    elements: VectraProject,
+    pageRootId: string,
+    pageName: string
+): string => {
+    const nodeList: string[] = [];
+    const visited = new Set<string>();
+
+    const walk = (id: string, depth: number) => {
+        if (visited.has(id) || depth > 4) return;
+        visited.add(id);
+        const node = elements[id];
+        if (!node) return;
+        const typeLabel = node.type.replace(/_/g, ' ');
+        const hasText = typeof node.content === 'string' && node.content.length > 0;
+        const childCount = node.children?.length ?? 0;
+        const indent = '  '.repeat(depth);
+        nodeList.push(
+            `${indent}• ${typeLabel}${node.name ? ` ("${node.name}")` : ''
+            }${hasText ? ' [has text]' : ''
+            }${childCount > 0 ? ` [${childCount} children]` : ''
+            }`
+        );
+        node.children?.slice(0, 8).forEach((cid: string) => walk(cid, depth + 1));
+    };
+
+    walk(pageRootId, 0);
+
+    const summary = nodeList.slice(0, 30).join('\n');
+    const truncated = nodeList.length > 30 ? `\n  ... and ${nodeList.length - 30} more` : '';
+
+    return [
+        `Page: "${pageName}" (${visited.size} total nodes)`,
+        summary + truncated,
+    ].join('\n');
+};
+
 // ─── TIER 2: CLOUD LLM PROCESSOR ─────────────────────────────────────────────
 const processCloudLLM = async (
     prompt: string,
-    _currentElements: VectraProject
+    _currentElements: VectraProject,
+    canvasContext?: string          // Direction C: pre-built canvas context string
 ): Promise<AIResponse> => {
 
     const systemPrompt = `VECTRA UI ENGINE — You MUST return EXACTLY two code blocks. Nothing else.
@@ -234,7 +290,17 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
 - Background: min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black
 - Headers: tracking-tight font-bold. Body: text-slate-400 leading-relaxed.
 - Fully responsive: sm: md: lg: prefixes on all layouts.
-- Default for vague prompts: stunning Hero section + Feature grid below it.`;
+- Default for vague prompts: stunning Hero section + Feature grid below it.
+
+${canvasContext ? `[CURRENT CANVAS STATE — read before generating]
+${canvasContext}
+
+Rules for context awareness:
+- If the canvas already has a hero section, do NOT add another hero.
+- If the user says "change", "update", "make", "edit" + element name → target that element specifically.
+- If the canvas is empty → generate freely.
+- Match the existing visual density and color scheme.
+- New sections should visually complement what's already there.` : '[CURRENT CANVAS STATE: empty — generate freely]'}`;
 
     let content = '';
 
@@ -455,7 +521,8 @@ Provide ZERO conversational text, diagnoses, explanations, or apologies.`;
 // ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
 export const generateWithAI = async (
     prompt: string,
-    currentElements: VectraProject
+    currentElements: VectraProject,
+    pageContext?: { pageRootId: string; pageName: string }   // Direction C
 ): Promise<AIResponse> => {
 
     // Tier 1: Local heuristics (instant, zero-cost)
@@ -464,8 +531,13 @@ export const generateWithAI = async (
         if (local) return local;
     }
 
+    // Direction C: build canvas context string so LLM knows what's on screen
+    const canvasContext = pageContext
+        ? buildCanvasContext(currentElements, pageContext.pageRootId, pageContext.pageName)
+        : undefined;
+
     // Tier 2: Cloud LLM generation
-    const cloudResult = await processCloudLLM(prompt, currentElements);
+    const cloudResult = await processCloudLLM(prompt, currentElements, canvasContext);
 
     // Tier 3: Template fallback if cloud fails
     if (cloudResult.action === 'error') {

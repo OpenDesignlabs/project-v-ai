@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useEditor } from '../context/EditorContext';
+import { useUI } from '../context/UIContext';
 import ColorPicker from 'react-best-gradient-color-picker';
 import { Section, Row, NumberInput, ColorInput, ToggleGroup, BoxModel, TextInput, SelectInput } from './ui/PremiumInputs';
 import { removeClasses } from '../utils/tailwindHelpers';
@@ -10,7 +11,7 @@ import {
     Hand, Settings, Layout, Hash, Type as TypeIcon,
     MoveHorizontal, MoveVertical, Droplets, Sun, Move,
     CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, Layers,
-    Smartphone,
+    Smartphone, Tablet, Monitor,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -67,6 +68,8 @@ const InputUnit = ({ label, icon: Icon, value, onChange, step, unit }: { label: 
 
 export const RightSidebar = () => {
     const { elements, selectedId, updateProject, previewMode, pages } = useEditor();
+    // Direction A: read activeBreakpoint and setDevice from UIContext
+    const { activeBreakpoint, setDevice } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
     const [fillMode, setFillMode] = useState<FillMode>('solid');
     const [animScope, setAnimScope] = useState<'single' | 'all'>('single');
@@ -139,6 +142,11 @@ export const RightSidebar = () => {
     }
 
     // --- HELPERS ---
+
+    // Direction A: updateStyle routes to the correct target based on activeBreakpoint.
+    //   desktop  → writes to node.props.style (unchanged behaviour)
+    //   tablet   → writes to node.props.breakpoints.tablet
+    //   mobile   → writes to node.props.breakpoints.mobile
     const updateStyle = (key: string, value: any) => {
         const newElements = { ...elements };
         const unitlessKeys = ['fontWeight', 'opacity', 'zIndex', 'flexGrow', 'scale', 'lineHeight'];
@@ -157,12 +165,24 @@ export const RightSidebar = () => {
         }
 
         targetIds.forEach(id => {
-            const currentStyle = newElements[id].props.style || {};
-            let mergeStyle = {};
-            if (key === 'animationName' && value !== 'none' && !currentStyle.animationDuration) {
-                mergeStyle = { animationDuration: '0.5s', animationFillMode: 'both' };
+            const el = newElements[id];
+            if (activeBreakpoint === 'desktop') {
+                // Base style path — unchanged behaviour
+                const currentStyle = el.props.style || {};
+                let mergeStyle = {};
+                if (key === 'animationName' && value !== 'none' && !currentStyle.animationDuration) {
+                    mergeStyle = { animationDuration: '0.5s', animationFillMode: 'both' };
+                }
+                el.props.style = { ...currentStyle, [key]: finalValue, ...mergeStyle };
+            } else {
+                // Breakpoint override path — writes to props.breakpoints[bp]
+                const bp = activeBreakpoint; // 'tablet' | 'mobile'
+                const currentBpStyle = el.props.breakpoints?.[bp] || {};
+                el.props.breakpoints = {
+                    ...(el.props.breakpoints || {}),
+                    [bp]: { ...currentBpStyle, [key]: finalValue },
+                };
             }
-            newElements[id].props.style = { ...currentStyle, [key]: finalValue, ...mergeStyle };
         });
 
         updateProject(newElements);
@@ -199,7 +219,13 @@ export const RightSidebar = () => {
         updateStyle(key, `repeat(${val}, 1fr)`);
     };
 
-    const style = element.props.style || {};
+    // Direction A: when on a non-desktop breakpoint, the style panel displays
+    // the merged (base + override) value so the user sees the effective result.
+    const baseStyle = element.props.style || {};
+    const bpOverride = activeBreakpoint !== 'desktop'
+        ? (element.props.breakpoints?.[activeBreakpoint] || {})
+        : {};
+    const style = { ...baseStyle, ...bpOverride };
     const props = element.props || {};
     const classes = props.className || '';
     const getVal = (val: any, fallback: any = 0) => parseInt(String(val || fallback).replace('px', ''));
@@ -235,6 +261,43 @@ export const RightSidebar = () => {
                 <TabButton active={activeTab === 'interact'} onClick={() => setActiveTab('interact')} icon={MousePointer2} label="Interact" />
                 <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={Settings} label="Settings" />
             </div>
+
+            {/* Direction A: Breakpoint selector — shown only when an element is selected */}
+            <div className="flex items-center gap-0.5 px-2 pt-2 pb-1 border-b border-[#2a2a2c]">
+                {([
+                    { bp: 'desktop', icon: Monitor, label: 'Desktop' },
+                    { bp: 'tablet', icon: Tablet, label: 'Tablet' },
+                    { bp: 'mobile', icon: Smartphone, label: 'Mobile' },
+                ] as const).map(({ bp, icon: Icon, label }) => (
+                    <button
+                        key={bp}
+                        title={`Edit ${label} styles`}
+                        onClick={() => setDevice(
+                            bp === 'desktop' ? 'desktop' :
+                                bp === 'tablet' ? 'tablet' : 'mobile'
+                        )}
+                        className={cn(
+                            'flex-1 flex items-center justify-center gap-1 py-1 rounded text-[10px] font-bold transition-all',
+                            activeBreakpoint === bp
+                                ? 'bg-blue-500/15 border border-blue-500/30 text-blue-400'
+                                : 'text-[#555] hover:text-[#888] border border-transparent'
+                        )}
+                    >
+                        <Icon size={10} />
+                        {label}
+                    </button>
+                ))}
+            </div>
+
+            {/* Breakpoint edit banner — only shown when NOT on desktop */}
+            {activeBreakpoint !== 'desktop' && (
+                <div className="mx-2 mt-1.5 px-2 py-1 rounded bg-blue-500/8 border border-blue-500/20 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-blue-400 animate-pulse" />
+                    <span className="text-[9px] text-blue-400 font-bold uppercase tracking-wider">
+                        Editing {activeBreakpoint} overrides — desktop style unchanged
+                    </span>
+                </div>
+            )}
 
             {/* CONTENT AREA */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
