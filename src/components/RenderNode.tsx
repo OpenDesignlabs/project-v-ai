@@ -303,6 +303,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         selectedId, setSelectedId, hoveredId, setHoveredId,
         previewMode, dragData, setDragData,
         interaction, setInteraction, zoom, activeTool, setActivePanel,
+        device,                       // Direction A Gap A1 — drives live breakpoint preview
     } = useUI();
     // componentRegistry merges static COMPONENT_TYPES + dynamically-registered entries
     const { componentRegistry } = useEditor();
@@ -596,6 +597,28 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         finalStyle.transition = 'none';
     }
 
+    // ── Direction A Gap A1: Breakpoint override merge ─────────────────────────
+    // Applies per-node responsive overrides from props.breakpoints in the editor
+    // so the canvas previews mobile/tablet styles live at the correct device setting.
+    //
+    // ORDER IS INTENTIONAL:
+    //   1. Base style (props.style)         — already in finalStyle above
+    //   2. Breakpoint merge (here)          — additively overrides specific keys
+    //   3. Artboard / isMobileMirror blocks (below) — structural constraints always win
+    //
+    // We guard with !previewMode because the exported page applies overrides via
+    // @media CSS rules (buildBreakpointCSS), not via inline style.
+    if (!previewMode && element.props.breakpoints) {
+        const bpOverride: React.CSSProperties =
+            device === 'mobile' ? (element.props.breakpoints.mobile ?? {}) :
+                device === 'tablet' ? (element.props.breakpoints.tablet ?? {}) :
+                    {};
+        if (Object.keys(bpOverride).length > 0) {
+            Object.assign(finalStyle, bpOverride);
+        }
+    }
+    // ── End Direction A Gap A1 ────────────────────────────────────────────────
+
     if (isArtboard) {
         finalStyle.display = 'block';
         // Allow AI content to grow the artboard — never clip it
@@ -732,6 +755,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             ref={nodeRef}
             {...motionProps}
             id={isMobileMirror ? `${element.props.id}-mobile` : element.id}
+            data-vid={element.id}         // Direction A Gap A2: enables [data-vid] CSS selectors from buildBreakpointCSS
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
