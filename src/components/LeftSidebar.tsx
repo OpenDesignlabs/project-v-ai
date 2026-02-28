@@ -6,10 +6,11 @@ import {
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
     Trash2, Hexagon, Palette, Wand2, Database, Globe, Braces,
-    Server, Zap, CheckCircle2,
+    Server, Zap, CheckCircle2, Rocket,
     Send, TerminalSquare, ChevronUp,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
+import { DeployPanel } from './DeployPanel';
 import { cn } from '../lib/utils';
 import { processImportedCode, generateComponentId } from '../utils/importHelpers';
 import { TEMPLATES, type TemplateConfig } from '../data/templates';
@@ -879,6 +880,14 @@ export const LeftSidebar = () => {
                 <NavButton icon={Store} active={activePanel === 'marketplace'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('marketplace'); }} tooltip="Marketplace" />
                 <NavButton icon={Layers} active={activePanel === 'layers'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('layers'); }} tooltip="Layers" />
                 <NavButton icon={ImageIcon} active={activePanel === 'assets'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('assets'); }} tooltip="Assets" />
+                <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
+                {/* Gap B2 — Deploy nav button */}
+                <NavButton
+                    icon={Rocket}
+                    active={activePanel === 'deploy'}
+                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('deploy'); }}
+                    tooltip="Deploy"
+                />
             </div>
 
             {/* --- PANELS --- */}
@@ -1662,6 +1671,26 @@ export const LeftSidebar = () => {
                     <Suspense fallback={<div className="p-8 text-center"><Loader2 className="animate-spin mx-auto mb-2 text-[#007acc]" /> Loading Layers...</div>}>
                         <LayersPanel />
                     </Suspense>
+                </div>
+            )}
+
+            {/* ── GAP B3: DEPLOY PANEL ─────────────────────────────────────── */}
+            {activePanel === 'deploy' && (
+                <div className="absolute left-[60px] top-0 bottom-0 w-[300px] bg-[#252526] border-r border-[#3f3f46] shadow-xl z-40 flex flex-col">
+                    <div className="p-4 border-b border-[#3f3f46] flex items-center justify-between shrink-0">
+                        <h2 className="font-bold text-[#cccccc] text-xs uppercase tracking-wide flex items-center gap-2">
+                            <Rocket size={14} className="text-purple-400" /> Deploy
+                        </h2>
+                        <button
+                            onClick={() => setActivePanel(null)}
+                            className="p-1 hover:bg-[#333] rounded text-[#666] hover:text-[#999] transition-colors"
+                        >
+                            <X size={14} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <DeployPanel />
+                    </div>
                 </div>
             )}
 

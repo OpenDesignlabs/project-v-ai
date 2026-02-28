@@ -20,7 +20,7 @@ interface PageViewport {
     zoom: number;
 }
 
-export type SidebarPanel = 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files' | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | 'backend' | null;
+export type SidebarPanel = 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files' | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | 'backend' | 'deploy' | null;
 export type AppView = 'dashboard' | 'editor';
 export type ViewMode = 'visual' | 'skeleton';
 
