@@ -78,7 +78,10 @@ export const sanitizeAIElements = (
 
     // Build a mapping: old ID → new unique ID
     incomingIds.forEach(oldId => {
-        idMap[oldId] = `ai_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
+        // NH-3 FIX: crypto.randomUUID() — same collision-free standard applied in M-5/templateUtils.
+        // Date.now() + Math.random() produced identical IDs for all nodes in a single AI pass
+        // (same millisecond, tiny random suffix space). Orphaned subtrees + corrupt parentMap resulted.
+        idMap[oldId] = `ai_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     });
 
     // Reconstruct the element map with remapped IDs and children

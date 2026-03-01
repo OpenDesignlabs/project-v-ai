@@ -1,11 +1,18 @@
-import { useEditor } from '../context/EditorContext';
+// NS-8 FIX: useEditor() subscribed Resizer to the full bridge (ProjectContext + UIContext +
+// useMemo componentRegistry + interaction handlers). During a resize at 60fps, elements
+// updates every frame — Resizer re-rendered even though it only needs 3 values.
+// Direct context calls keep the subscription scope minimal.
+import React from 'react';
+import { useProject } from '../context/ProjectContext';
+import { useUI } from '../context/UIContext';
 
 interface ResizerProps {
     elementId: string;
 }
 
 export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
-    const { elements, setInteraction, zoom } = useEditor();
+    const { elements } = useProject();
+    const { setInteraction, zoom } = useUI();
     const element = elements[elementId];
 
     if (!element) return null;

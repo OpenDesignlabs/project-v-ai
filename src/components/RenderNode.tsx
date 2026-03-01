@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState, useEffect, Suspense, lazy, Component } from 'react';
+﻿import React, { useRef, useState, useEffect, useMemo, Suspense, lazy, Component } from 'react';
 import type { ErrorInfo } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
@@ -108,14 +108,16 @@ class ComponentErrorBoundary extends Component<
 const LiveComponent = ({
     code,
     elementId,
-    updateProject,
-    elements,
+    setElements,
+    elementsRef,
+    pushHistory,
     ...props
 }: {
     code: string;
     elementId: string;
-    updateProject: (proj: Record<string, any>) => void;
-    elements: Record<string, any>;
+    setElements: React.Dispatch<React.SetStateAction<Record<string, any>>>;
+    elementsRef: React.MutableRefObject<Record<string, any>>;
+    pushHistory: (els: Record<string, any>) => void;
     [key: string]: any;
 }) => {
     const [Component, setComponent] = useState<React.ElementType | null>(null);
@@ -142,12 +144,14 @@ const LiveComponent = ({
             const { fixComponentError } = await import('../services/aiAgent');
             const fixedCode = await fixComponentError(code, errorMessage);
 
-            // Write fixed code back into the canvas element tree
-            const newElements = { ...elements };
-            if (newElements[elementId]) {
-                newElements[elementId] = { ...newElements[elementId], code: fixedCode };
-                updateProject(newElements);
-            }
+            // NM-5 FIX: functional updater reads fresh state AFTER the async AI gap.
+            // The old { ...elements } spread captured stale state from render time,
+            // silently discarding any edits made during the 2-5s await.
+            setElements(cur => {
+                if (!cur[elementId]) return cur;
+                return { ...cur, [elementId]: { ...cur[elementId], code: fixedCode } };
+            });
+            setTimeout(() => pushHistory(elementsRef.current), 0);
             setError(null);
         } catch (err: any) {
             console.error('🔴 Auto-fix failed:', err.message);
@@ -221,13 +225,13 @@ const LiveComponent = ({
                 // The worker already sanitised the code (stripped imports, fixed
                 // quotes, fixed icon syntax). Persisting this means subsequent
                 // compile passes skip re-sanitising, saving CPU every re-render.
+                // NM-5 FIX: use functional updater — elements is stale inside setTimeout.
                 if (e.data.cleanCode && e.data.cleanCode !== code) {
                     setTimeout(() => {
-                        const newEls = { ...elements };
-                        if (newEls[elementId]) {
-                            newEls[elementId] = { ...newEls[elementId], code: e.data.cleanCode };
-                            updateProject(newEls);
-                        }
+                        setElements(cur => {
+                            if (!cur[elementId]) return cur;
+                            return { ...cur, [elementId]: { ...cur[elementId], code: e.data.cleanCode } };
+                        });
                     }, 0);
                 }
 
@@ -299,7 +303,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     // useUI:      re-renders when UI state changes (selection, hover, tool, zoom)
     // Keeping them separate means hovering an element doesn't re-render every
     // RenderNode that only uses project data, and vice-versa.
-    const { elements, updateProject, instantiateTemplate, syncLayoutEngine, parentMap } = useProject();
+    const { elements, setElements, elementsRef, updateProject, pushHistory, instantiateTemplate, syncLayoutEngine, parentMap } = useProject();
     const {
         selectedId, setSelectedId, hoveredId, setHoveredId,
         previewMode, dragData, setDragData,
@@ -313,7 +317,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         componentRegistry: rawRegistry,
     } = useUI();
     // Merge with static COMPONENT_TYPES (module constant, never changes)
-    const componentRegistry = { ...COMPONENT_TYPES, ...rawRegistry };
+    // NM-1 FIX: useMemo so the merged object is stable between renders.
+    // Without this, { ...COMPONENT_TYPES, ...rawRegistry } runs on every render of
+    // every RenderNode — 200+ new objects/frame during a multi-node drag.
+    const componentRegistry = useMemo(
+        () => ({ ...COMPONENT_TYPES, ...rawRegistry }),
+        [rawRegistry] // COMPONENT_TYPES is a module constant — never changes
+    );
 
 
 
@@ -686,8 +696,9 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 <LiveComponent
                     code={element.code}
                     elementId={elementId}
-                    updateProject={updateProject}
-                    elements={elements}
+                    setElements={setElements}
+                    elementsRef={elementsRef}
+                    pushHistory={pushHistory}
                     {...(element.props as any)}
                 />
             </Suspense>
@@ -790,7 +801,17 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             onBlur={(e) => {
                 if (isEditing) {
                     setIsEditing(false);
-                    updateProject({ ...elements, [elementId]: { ...elements[elementId], content: e.currentTarget.innerText } });
+                    // NS-6 FIX: spread props separately to prevent aliasing. Without this,
+                    // elements[elementId].props is the same reference in the new state object
+                    // — any mutation of props.style later becomes a C-1-class direct mutation.
+                    updateProject({
+                        ...elements,
+                        [elementId]: {
+                            ...elements[elementId],
+                            props: { ...elements[elementId].props },
+                            content: e.currentTarget.innerText,
+                        },
+                    });
                 }
             }}
             className={cn(

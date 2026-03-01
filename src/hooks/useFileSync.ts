@@ -210,13 +210,20 @@ export const useFileSync = () => {
 
   const syncedFiles = useRef<Map<string, string>>(new Map());
   const isSyncing = useRef<boolean>(false);
+  // NS-7 FIX: interaction in the dep array caused the sync effect to re-run at 60fps
+  // during drag (setInteraction produces a new object every pointermove). The early-return
+  // guard was hit correctly but the debounce timer was still reset 60×/second, starving
+  // the VFS for the entire drag duration (> 800ms). Now use a ref mirrored by a separate
+  // stable effect, and remove interaction from the sync dep array entirely.
+  const interactionRef = useRef(interaction);
+  useEffect(() => { interactionRef.current = interaction; }, [interaction]);
 
   useEffect(() => {
     // ── Guard 1: VFS not ready ────────────────────────────────────────────
     if (status !== 'ready' || !instance) return;
 
-    // ── Guard 2: Suppress during 60fps drag/resize ────────────────────────
-    if (interaction?.type === 'MOVE' || interaction?.type === 'RESIZE') return;
+    // ── Guard 2: Suppress during 60fps drag/resize (NS-7: reads ref, not dep) ────
+    if (interactionRef.current?.type === 'MOVE' || interactionRef.current?.type === 'RESIZE') return;
 
     // ── Guard 3: Early-exit if nothing changed ────────────────────────────
     if (elements === prevElementsRef.current && pages.length === prevPageCountRef.current) return;
@@ -523,5 +530,5 @@ export const useFileSync = () => {
     const timer = setTimeout(sync, debounceMs);
     return () => clearTimeout(timer);
 
-  }, [elements, pages, apiRoutes, framework, interaction, status, instance, writeFile, removeFile, theme]);
+  }, [elements, pages, apiRoutes, framework, status, instance, writeFile, removeFile, theme]); // interaction removed — read via interactionRef
 };

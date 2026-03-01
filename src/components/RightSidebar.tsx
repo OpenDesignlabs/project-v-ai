@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useEditor } from '../context/EditorContext';
 import { useUI } from '../context/UIContext';
 import ColorPicker from 'react-best-gradient-color-picker';
@@ -67,12 +67,17 @@ const InputUnit = ({ label, icon: Icon, value, onChange, step, unit }: { label: 
 );
 
 export const RightSidebar = () => {
-    const { elements, selectedId, updateProject, previewMode, pages, parentMap } = useEditor();
+    const { elements, selectedId, updateProject, pushHistory, elementsRef, previewMode, pages, parentMap } = useEditor();
     // Direction A: read activeBreakpoint and setDevice from UIContext
     const { activeBreakpoint, setDevice } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
     const [fillMode, setFillMode] = useState<FillMode>('solid');
     const [animScope, setAnimScope] = useState<'single' | 'all'>('single');
+    // NM-7 FIX: track whether the user is actively dragging a slider so we can skip
+    // history entries during the drag and commit exactly ONE entry on pointerUp.
+    // Previously every onChange called updateProject() without skipHistory — dragging
+    // opacity 100→50 produced ~50 undo steps, evicting all prior structural changes.
+    const isSliderDragging = useRef(false);
 
     // Local state for glassmorphism effects
     const [blur, setBlur] = useState(0);
@@ -126,7 +131,16 @@ export const RightSidebar = () => {
         if (trMatch) { setTranslateX(parseFloat(trMatch[1])); setTranslateY(parseFloat(trMatch[2])); }
         else { setTranslateX(0); setTranslateY(0); }
 
-    }, [element?.id]);
+    }, [
+        element?.id,
+        // NS-5 FIX: re-parse whenever these specific style values change, not just on selection.
+        // AI generation, Cmd+Z, and programmatic setElements can all update transform/filter
+        // without changing the selected element ID — sliders showed stale values while canvas
+        // rendered correctly.
+        element?.props?.style?.transform,
+        element?.props?.style?.backdropFilter,
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    ]);
 
     if (previewMode) return null;
 
@@ -199,7 +213,19 @@ export const RightSidebar = () => {
             }
         });
 
-        updateProject(next);
+        updateProject(next, { skipHistory: isSliderDragging.current });
+    };
+
+    // NM-7: call on slider pointerUp to commit one stable history entry.
+    const commitSliderHistory = () => {
+        isSliderDragging.current = false;
+        pushHistory(elementsRef.current);
+    };
+    // Spread onto any NumberInput that should participate in skip-history drag:
+    //   <NumberInput {...sliderDragProps} ... />
+    const sliderDragProps = {
+        onDragStart: () => { isSliderDragging.current = true; },
+        onDragEnd: commitSliderHistory,
     };
 
     // C-2 FIX: clone the node chain — don't mutate newElements[element.id].props in-place.
@@ -335,18 +361,18 @@ export const RightSidebar = () => {
                         {/* LAYOUT */}
                         <Section title="Layout">
                             <div className="grid grid-cols-2 gap-2 mb-2">
-                                <NumberInput label="W" value={getVal(style.width, 'auto')} onChange={(v: any) => updateStyle('width', v)} />
-                                <NumberInput label="H" value={getVal(style.height, 'auto')} onChange={(v: any) => updateStyle('height', v)} />
+                                <NumberInput label="W" value={getVal(style.width, 'auto')} onChange={(v: any) => updateStyle('width', v)} {...sliderDragProps} />
+                                <NumberInput label="H" value={getVal(style.height, 'auto')} onChange={(v: any) => updateStyle('height', v)} {...sliderDragProps} />
                             </div>
                             {element.props.style?.position === 'absolute' && (
                                 <div className="grid grid-cols-2 gap-2 mb-2">
-                                    <NumberInput label="X" value={getVal(style.left)} onChange={(v: any) => updateStyle('left', v)} />
-                                    <NumberInput label="Y" value={getVal(style.top)} onChange={(v: any) => updateStyle('top', v)} />
+                                    <NumberInput label="X" value={getVal(style.left)} onChange={(v: any) => updateStyle('left', v)} {...sliderDragProps} />
+                                    <NumberInput label="Y" value={getVal(style.top)} onChange={(v: any) => updateStyle('top', v)} {...sliderDragProps} />
                                 </div>
                             )}
 
                             <div className="mb-3">
-                                <NumberInput label="Z-Index" value={getVal(style.zIndex, 0)} onChange={(v: number) => updateStyle('zIndex', v)} />
+                                <NumberInput label="Z-Index" value={getVal(style.zIndex, 0)} onChange={(v: number) => updateStyle('zIndex', v)} {...sliderDragProps} />
                             </div>
 
                             <div className="h-px bg-[#2a2a2c] my-3" />

@@ -43,7 +43,9 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
 
     const handleRename = () => {
         if (renameVal.trim()) {
-            updateProject({ ...elements, [nodeId]: { ...element, name: renameVal } });
+            // NS-3 FIX: rename is cosmetic — don't consume a history slot.
+            // Cmd+Z will revert to the last structural snapshot which retains the old name.
+            updateProject({ ...elements, [nodeId]: { ...element, name: renameVal } }, { skipHistory: true });
         }
         setIsRenaming(false);
     };

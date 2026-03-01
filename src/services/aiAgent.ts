@@ -30,7 +30,8 @@ interface AIResponse {
     message: string;
 }
 
-const uid = () => 'ai_' + Math.random().toString(36).substr(2, 9);
+// NH-3 FIX: aligned with project-wide crypto.randomUUID() standard (M-5 / aiHelpers.ts fix).
+const uid = () => `ai_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 
 // ─── TIER 1: LOCAL HEURISTICS (Instant, zero-cost) ───────────────────────────
 const processLocalIntent = (

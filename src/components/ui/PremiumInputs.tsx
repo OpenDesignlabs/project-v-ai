@@ -31,7 +31,7 @@ export const Row = ({ label, children }: { label?: string, children: React.React
 );
 
 // --- 3. DRAGGABLE NUMBER INPUT ---
-export const NumberInput = ({ label, value, onChange, min = -9999, max = 9999, step = 1, className }: any) => {
+export const NumberInput = ({ label, value, onChange, onDragStart, onDragEnd, min = -9999, max = 9999, step = 1, className }: any) => {
     const startX = useRef<number>(0);
     const startVal = useRef<number>(0);
 
@@ -40,6 +40,8 @@ export const NumberInput = ({ label, value, onChange, min = -9999, max = 9999, s
         startX.current = e.clientX;
         startVal.current = typeof value === 'number' ? value : parseInt(value) || 0;
         document.body.style.cursor = 'ew-resize';
+        // NM-7: notify parent that a drag-scrub is starting
+        onDragStart?.();
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
     };
@@ -54,6 +56,8 @@ export const NumberInput = ({ label, value, onChange, min = -9999, max = 9999, s
         document.body.style.cursor = 'default';
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('mouseup', handleMouseUp);
+        // NM-7: notify parent that the drag-scrub is done — caller commits history
+        onDragEnd?.();
     };
 
     return (

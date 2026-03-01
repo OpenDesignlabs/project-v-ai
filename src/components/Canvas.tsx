@@ -12,7 +12,7 @@ import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 // Dragging it live-updates height + minHeight and commits one history entry on release.
 // Lives in the canvas world coordinate space — no coordinate transform needed.
 const ArtboardResizeHandle: React.FC<{ frameId: string; zoom: number }> = ({ frameId, zoom }) => {
-    const { elements, updateProject, pushHistory } = useProject();
+    const { elements, updateProject, pushHistory, elementsRef } = useProject();
     const frame = elements[frameId];
     if (!frame) return null;
 
@@ -46,7 +46,11 @@ const ArtboardResizeHandle: React.FC<{ frameId: string; zoom: number }> = ({ fra
         if (!dragState.current) return;
         dragState.current = null;
         e.currentTarget.releasePointerCapture(e.pointerId);
-        setTimeout(() => pushHistory(elements), 0);
+        // NM-3 FIX: read elementsRef.current, not the closed-over elements state.
+        // onPointerUp fires in the same event flush as the last onPointerMove —
+        // elements in the closure is the render snapshot from BEFORE pointerUp,
+        // which may be one frame behind the committed drag state.
+        setTimeout(() => pushHistory(elementsRef.current), 0);
     };
 
     return (
@@ -115,6 +119,12 @@ export const Canvas = () => {
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const [spacePressed, setSpacePressed] = useState(false);
+    // NH-1 FIX: mirror zoom into a ref so the wheel handler reads the current value
+    // without having zoom in its dep array. zoom in deps → listener torn down + re-attached
+    // on every setZoom call → 60fps teardown → one-frame gap where e.preventDefault() drops
+    // → browser scrolls page body instead of zooming canvas (especially bad on Safari).
+    const zoomRef = useRef(zoom);
+    useEffect(() => { zoomRef.current = zoom; }, [zoom]);
     // Item 2 — box-select state
     const boxSelectRef = useRef<{ active: boolean; startX: number; startY: number; worldStartX: number; worldStartY: number } | null>(null);
     const [boxSelectRect, setBoxSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
@@ -126,7 +136,8 @@ export const Canvas = () => {
             if (previewMode) return;
             e.preventDefault();
             if (e.ctrlKey || e.metaKey) {
-                const newZoom = Math.min(Math.max(zoom + -e.deltaY * 0.002, 0.1), 3);
+                // NH-1 FIX: read from zoomRef — never from closed-over zoom state.
+                const newZoom = Math.min(Math.max(zoomRef.current + -e.deltaY * 0.002, 0.1), 3);
                 setZoom(newZoom);
             } else {
                 setPan(prev => ({ x: prev.x - e.deltaX, y: prev.y - e.deltaY }));
@@ -135,7 +146,7 @@ export const Canvas = () => {
         const el = canvasRef.current;
         if (el) el.addEventListener('wheel', onWheel, { passive: false });
         return () => el?.removeEventListener('wheel', onWheel);
-    }, [zoom, previewMode, setZoom, setPan]);
+    }, [previewMode, setZoom, setPan]); // zoom removed — read via zoomRef.current
 
     // ── Direction 3: Per-page viewport save/restore ───────────────────────────
     // Listens for the 'vectra:page-switching' CustomEvent dispatched by
@@ -320,14 +331,15 @@ export const Canvas = () => {
             w = parseFloat(String(newNodes[newRootId].props.style?.width || 0));
             h = parseFloat(String(newNodes[newRootId].props.style?.height || 0));
         } else if (dragData.type === 'ICON') {
-            newRootId = `icon-${Date.now()}`;
+            // NM-6 FIX: crypto.randomUUID() — Date.now() collides on same-ms drops
+            newRootId = `icon-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             w = 48; h = 48;
             newNodes[newRootId] = {
                 id: newRootId, type: 'icon', name: 'Icon', children: [],
                 props: { iconName: dragData.meta?.iconName, style: { width: '48px', height: '48px' }, className: 'text-blue-500' }
             };
         } else if (dragData.type === 'ASSET_IMAGE' || (dragData.type === 'NEW' && dragData.payload === 'image')) {
-            newRootId = `img-${Date.now()}`;
+            newRootId = `img-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             w = 300; h = 200;
             const src = dragData.type === 'ASSET_IMAGE'
                 ? dragData.payload
@@ -340,7 +352,7 @@ export const Canvas = () => {
         } else if (dragData.type === 'NEW') {
             const conf = componentRegistry[dragData.payload];
             if (!conf) return;
-            newRootId = `el-${Date.now()}`;
+            newRootId = `el-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             w = dragData.payload === 'webpage' ? 1440 : 200;
             h = dragData.payload === 'webpage' ? 1080 : 100;
             newNodes[newRootId] = {
@@ -368,7 +380,14 @@ export const Canvas = () => {
 
             const newProject = { ...elements, ...newNodes };
             if (newProject[activePageId]) {
-                newProject[activePageId].children = [...(newProject[activePageId].children || []), newRootId];
+                // NS-2 FIX: newProject[activePageId] is the same object reference as
+                // elements[activePageId] when activePageId was NOT modified in newNodes.
+                // Writing .children directly mutates live React state — C-1 class bug.
+                // Clone the node immutably before appending the new child.
+                newProject[activePageId] = {
+                    ...newProject[activePageId],
+                    children: [...(newProject[activePageId].children || []), newRootId],
+                };
             }
             updateProject(newProject);
             setSelectedId(newRootId);

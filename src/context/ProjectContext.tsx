@@ -56,8 +56,10 @@ import {
 const ACTIVE_PROJECT_ID_KEY = 'vectra_active_id';
 
 /** Generate a collision-resistant project UUID. */
-const generateProjectId = (): string =>
-    `proj_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+// NS-1 FIX: Date.now()+random is the primary IDB key for all project data.
+// Two projects created in the same ms (tests, batch-create) get the same key —
+// one silently overwrites the other's IDB entry. crypto.randomUUID() eliminates this.
+const generateProjectId = (): string => `proj_${crypto.randomUUID().replace(/-/g, '')}`;
 
 /** Per-project localStorage snap key (fast-boot cache). */
 const snapKey = (id: string) => `vectra_snap_${id}`;
@@ -274,6 +276,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
         return map;
     }, [elements]);
+    // NM-4 FIX: stable ref that always mirrors the latest parentMap so reorderElement
+    // (and other callbacks) can do O(1) parent lookups without adding parentMap to deps.
+    const parentMapRef = useRef(parentMap);
+    useEffect(() => { parentMapRef.current = parentMap; }, [parentMap]);
 
 
     // JS-fallback history stack (used when Wasm HistoryManager is unavailable)
@@ -663,52 +669,59 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
     }, [pushHistory]);
 
-    // ── Item 1: duplicateElement ──────────────────────────────────────────────
-    // Deep-clones the subtree using the same instantiateTemplateTS engine used by
-    // canvas drag-and-drop. New IDs are guaranteed collision-free.
-    // Offsets the copy +20px/+20px so it doesn't land exactly on the original.
-    // Inserts immediately after the source in the parent's children list.
-    // Returns the new root ID so the caller can select it.
+    // NH-2 FIX: two bugs fixed:
+    //  1. elements in dep array → new fn reference after every state change (60fps drag)
+    //     → App.tsx re-registers Cmd+D keydown on every drag frame.
+    //     Fix: read via elementsRef.current (H-4 pattern) — no closure on elements state.
+    //  2. setElements(next) + setTimeout(pushHistory) lost the async race when React
+    //     batched. Fix: move everything inside a functional setElements updater.
     const duplicateElement = useCallback((id: string): string | null => {
         if (!canDeleteNode(id)) return null;
-        const current = elements;
+        // Read current elements from the live ref — never stale, no dep needed.
+        const current = elementsRef.current;
         const source = current[id];
         if (!source) return null;
 
-        // Clone subtree — fresh IDs throughout
+        // Clone subtree with fresh collision-free IDs (uses crypto.randomUUID internally)
         const { newNodes, rootId: newRootId } = instantiateTemplateTS(id, current);
 
-        // Offset position of the new root so it doesn't overlap the original
+        // Offset position so the copy doesn't land exactly on the original
         const newRoot = newNodes[newRootId];
         if (newRoot?.props?.style) {
             const s = newRoot.props.style as Record<string, any>;
-            const left = parseFloat(String(s.left ?? '0'));
-            const top = parseFloat(String(s.top ?? '0'));
             newNodes[newRootId] = {
                 ...newRoot,
-                props: { ...newRoot.props, style: { ...s, left: `${left + 20}px`, top: `${top + 20}px` } },
+                props: {
+                    ...newRoot.props, style: {
+                        ...s,
+                        left: `${parseFloat(String(s.left ?? '0')) + 20}px`,
+                        top: `${parseFloat(String(s.top ?? '0')) + 20}px`,
+                    }
+                },
             };
         }
 
-        // Merge cloned subtree
-        const next: VectraProject = { ...current, ...newNodes };
-
-        // Insert immediately after the source in its parent's children
-        for (const key in next) {
-            const node = next[key];
-            if (node.children?.includes(id)) {
-                const idx = node.children.indexOf(id);
-                const newChildren = [...node.children];
-                newChildren.splice(idx + 1, 0, newRootId);
-                next[key] = { ...node, children: newChildren };
-                break;
+        setElements(prev => {
+            const next: VectraProject = { ...prev, ...newNodes };
+            // Insert immediately after the source in its parent's children.
+            // O(N) scan here is acceptable — runs only on actual duplicate action,
+            // not on every render frame. Full O(1) requires parentMapRef (future refactor).
+            for (const key in next) {
+                const node = next[key];
+                if (node.children?.includes(id)) {
+                    const idx = node.children.indexOf(id);
+                    const newChildren = [...node.children];
+                    newChildren.splice(idx + 1, 0, newRootId);
+                    next[key] = { ...node, children: newChildren };
+                    break;
+                }
             }
-        }
-
-        setElements(next);
-        setTimeout(() => pushHistory(next), 0);
+            // Push history inside the updater so it always sees the committed state
+            setTimeout(() => pushHistory(elementsRef.current), 0);
+            return next;
+        });
         return newRootId;
-    }, [elements, pushHistory]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [pushHistory]); // elements removed — reads via elementsRef.current
 
     // ── Item 4: reorderElement ────────────────────────────────────────────────
     // Moves a node to a new index in the same or a different parent's children.
@@ -720,9 +733,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     ): void => {
         if (!canDeleteNode(nodeId)) return;
         setElements(prev => {
-            const currentParentId = Object.keys(prev).find(
-                k => prev[k].children?.includes(nodeId)
-            );
+            // NM-4 FIX: O(1) lookup via parentMapRef instead of O(N) Object.keys().find().
+            // parentMapRef.current is always the latest map — safe to read inside any updater.
+            const currentParentId = parentMapRef.current.get(nodeId) ?? null;
             if (!currentParentId) return prev;
 
             const next = { ...prev };
@@ -748,20 +761,49 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }, [pushHistory]);
 
     // ── Page ops ──────────────────────────────────────────────────────────────
-    const addPage = (name: string, slug?: string) => {
-        const pageId = `page-${Date.now()}`;
-        const canvasId = `canvas-${Date.now()}`;
-        const pageSlug = slug || `/${name.toLowerCase().replace(/\s+/g, '-')}`;
-        const newElements = { ...elements };
-        newElements[pageId] = { id: pageId, type: 'page', name, children: [canvasId], props: { className: 'w-full h-full relative', style: { width: '100%', height: '100%' } } };
-        // S-3 FIX: use 1440px not '100%' — parseFloat('100%') === NaN, breaking
-        // the code generator, breakpoint CSS builder, and zoom-to-fit calculation.
-        newElements[canvasId] = { id: canvasId, type: 'webpage', name, children: [], props: { layoutMode: 'canvas', style: { width: '1440px', minHeight: '100vh', backgroundColor: '#ffffff' } } };
-        if (newElements['application-root']) newElements['application-root'].children = [...(newElements['application-root'].children || []), pageId];
+    // NM-2 FIX: three bugs fixed:
+    //  1. Plain arrow fn → now useCallback([], []) for stable identity.
+    //  2. Closed-over `elements` was stale on rapid async edits → setElements functional updater.
+    //  3. `newElements['application-root'].children = [...]` mutated live state (C-1 class) →
+    //     clone the appRoot node immutably before writing.
+    const addPage = useCallback((name: string, slug?: string) => {
+        // Use crypto.randomUUID for collision-free IDs (NS-1/M-5 standard)
+        const pageId = `page-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+        const canvasId = `canvas-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+
+        // NS-4 FIX: enforce slug uniqueness at creation time.
+        // deduplicatePageSlugs() only runs at export — two pages named "About"
+        // would collide at /about for the entire editing session without this guard.
+        const baseSlug = slug || `/${name.toLowerCase().replace(/\s+/g, '-')}`;
+        const existingSlugs = new Set(pages.map(p => p.slug));
+        let pageSlug = baseSlug;
+        let counter = 2;
+        while (existingSlugs.has(pageSlug)) {
+            pageSlug = `${baseSlug}-${counter++}`;
+        }
+
+        setElements(prev => {
+            const appRoot = prev['application-root'];
+            return {
+                ...prev,
+                [pageId]: {
+                    id: pageId, type: 'page', name, children: [canvasId],
+                    props: { className: 'w-full h-full relative', style: { width: '100%', height: '100%' } },
+                },
+                [canvasId]: {
+                    // S-3: pixel width so parseFloat never returns NaN in code-gen / zoom-to-fit
+                    id: canvasId, type: 'webpage', name, children: [],
+                    props: { layoutMode: 'canvas', style: { width: '1440px', minHeight: '100vh', backgroundColor: '#ffffff' } },
+                },
+                ...(appRoot ? {
+                    // NM-2 FIX: clone appRoot — do NOT write into the shared live-state reference
+                    'application-root': { ...appRoot, children: [...(appRoot.children || []), pageId] },
+                } : {}),
+            };
+        });
         setPages(prev => [...prev, { id: pageId, name, slug: pageSlug, rootId: pageId }]);
-        updateProject(newElements);
         setActivePageId(pageId);
-    };
+    }, [pages]); // pages needed for slug uniqueness check
 
     // M-1 + S-7 FIX: use functional setElements to avoid stale closure on elements;
     // clone the appRoot node properly; and compute the fallback page from the list
