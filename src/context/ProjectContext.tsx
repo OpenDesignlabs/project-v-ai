@@ -111,6 +111,10 @@ interface ProjectContextType {
     /** Commit current state to history — call once after a drag ends. */
     pushHistory: (elements: VectraProject) => void;
     deleteElement: (id: string) => void;
+    /** Item 1 — Deep-clone a node + subtree with fresh IDs. Returns new root ID, or null if protected. */
+    duplicateElement: (id: string) => string | null;
+    /** Item 4 — Move a node to targetIndex inside targetParent.children. One history entry on drop. */
+    reorderElement: (nodeId: string, targetParentId: string, targetIndex: number) => void;
     instantiateTemplate: (rootId: string, nodes: VectraProject) => { newNodes: VectraProject; rootId: string };
 
     // ── Pages ─────────────────────────────────────────────────────────────────
@@ -636,6 +640,90 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
     }, [pushHistory]);
 
+    // ── Item 1: duplicateElement ──────────────────────────────────────────────
+    // Deep-clones the subtree using the same instantiateTemplateTS engine used by
+    // canvas drag-and-drop. New IDs are guaranteed collision-free.
+    // Offsets the copy +20px/+20px so it doesn't land exactly on the original.
+    // Inserts immediately after the source in the parent's children list.
+    // Returns the new root ID so the caller can select it.
+    const duplicateElement = useCallback((id: string): string | null => {
+        if (!canDeleteNode(id)) return null;
+        const current = elements;
+        const source = current[id];
+        if (!source) return null;
+
+        // Clone subtree — fresh IDs throughout
+        const { newNodes, rootId: newRootId } = instantiateTemplateTS(id, current);
+
+        // Offset position of the new root so it doesn't overlap the original
+        const newRoot = newNodes[newRootId];
+        if (newRoot?.props?.style) {
+            const s = newRoot.props.style as Record<string, any>;
+            const left = parseFloat(String(s.left ?? '0'));
+            const top = parseFloat(String(s.top ?? '0'));
+            newNodes[newRootId] = {
+                ...newRoot,
+                props: { ...newRoot.props, style: { ...s, left: `${left + 20}px`, top: `${top + 20}px` } },
+            };
+        }
+
+        // Merge cloned subtree
+        const next: VectraProject = { ...current, ...newNodes };
+
+        // Insert immediately after the source in its parent's children
+        for (const key in next) {
+            const node = next[key];
+            if (node.children?.includes(id)) {
+                const idx = node.children.indexOf(id);
+                const newChildren = [...node.children];
+                newChildren.splice(idx + 1, 0, newRootId);
+                next[key] = { ...node, children: newChildren };
+                break;
+            }
+        }
+
+        setElements(next);
+        setTimeout(() => pushHistory(next), 0);
+        return newRootId;
+    }, [elements, pushHistory]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // ── Item 4: reorderElement ────────────────────────────────────────────────
+    // Moves a node to a new index in the same or a different parent's children.
+    // Safe with protected nodes — canDeleteNode guards the move (can't move root).
+    const reorderElement = useCallback((
+        nodeId: string,
+        targetParentId: string,
+        targetIndex: number,
+    ): void => {
+        if (!canDeleteNode(nodeId)) return;
+        setElements(prev => {
+            const currentParentId = Object.keys(prev).find(
+                k => prev[k].children?.includes(nodeId)
+            );
+            if (!currentParentId) return prev;
+
+            const next = { ...prev };
+
+            // Remove from current parent
+            const curParent = next[currentParentId];
+            next[currentParentId] = {
+                ...curParent,
+                children: (curParent.children || []).filter(id => id !== nodeId),
+            };
+
+            // Insert into target parent
+            const tgtParent = next[targetParentId];
+            if (!tgtParent) return prev;
+            const tgtChildren = (tgtParent.children || []).filter(id => id !== nodeId);
+            const safeIdx = Math.min(Math.max(0, targetIndex), tgtChildren.length);
+            tgtChildren.splice(safeIdx, 0, nodeId);
+            next[targetParentId] = { ...tgtParent, children: tgtChildren };
+
+            pushHistory(next);
+            return next;
+        });
+    }, [pushHistory]);
+
     // ── Page ops ──────────────────────────────────────────────────────────────
     const addPage = (name: string, slug?: string) => {
         const pageId = `page-${Date.now()}`;
@@ -1029,7 +1117,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     return (
         <ProjectContext.Provider value={{
-            elements, setElements, updateProject, pushHistory, deleteElement,
+            elements, setElements, updateProject, pushHistory,
+            deleteElement, duplicateElement, reorderElement,
             instantiateTemplate: instantiateTemplateTS,
             pages, activePageId, setActivePageId, realPageId: activePageId,
             addPage, deletePage, switchPage, updatePageSEO,

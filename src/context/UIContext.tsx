@@ -30,6 +30,12 @@ interface UIContextType {
     setSelectedId: (id: string | null) => void;
     hoveredId: string | null;
     setHoveredId: (id: string | null) => void;
+    // Item 2 — Multi-select set (always contains selectedId as the anchor)
+    selectedIds: Set<string>;
+    addToSelection: (id: string) => void;
+    removeFromSelection: (id: string) => void;
+    clearSelection: () => void;
+    isInMultiSelect: (id: string) => boolean;
 
     // ── Tool & viewport ───────────────────────────────────────────────────────
     activeTool: EditorTool;
@@ -115,8 +121,37 @@ const UIContext = createContext<UIContextType | null>(null);
 // ─── PROVIDER ────────────────────────────────────────────────────────────────
 
 export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-    const [selectedId, setSelectedId] = useState<string | null>(null);
+    const [selectedIdRaw, setSelectedIdRaw] = useState<string | null>(null);
     const [hoveredId, setHoveredId] = useState<string | null>(null);
+    // Item 2: selectedIds tracks the full multi-select set.
+    // selectedId is the "anchor" — the last clicked element.
+    const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+
+    // setSelectedId is the unified single-select entry point.
+    // Wrapping it ensures selectedIds stays in sync as a singleton
+    // so all existing callers work without modification.
+    const setSelectedId = useCallback((id: string | null) => {
+        setSelectedIdRaw(id);
+        setSelectedIds(id ? new Set([id]) : new Set());
+    }, []);
+    const selectedId = selectedIdRaw;
+
+    const addToSelection = useCallback((id: string) => {
+        setSelectedIds(prev => new Set([...prev, id]));
+        setSelectedIdRaw(id); // anchor tracks latest added
+    }, []);
+
+    const removeFromSelection = useCallback((id: string) => {
+        setSelectedIds(prev => { const n = new Set(prev); n.delete(id); return n; });
+        setSelectedIdRaw(prev => prev === id ? null : prev);
+    }, []);
+
+    const clearSelection = useCallback(() => {
+        setSelectedIdRaw(null);
+        setSelectedIds(new Set());
+    }, []);
+
+    const isInMultiSelect = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
     const [activeTool, setActiveTool] = useState<EditorTool>('select');
     const [zoom, setZoom] = useState(0.5);
     const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -258,6 +293,8 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     return (
         <UIContext.Provider value={{
             selectedId, setSelectedId, hoveredId, setHoveredId,
+            // Item 2 multi-select
+            selectedIds, addToSelection, removeFromSelection, clearSelection, isInMultiSelect,
             activeTool, setActiveTool, zoom, setZoom, pan, setPan,
             isPanning, setIsPanning, dragData, setDragData,
             interaction, setInteraction, guides, setGuides,

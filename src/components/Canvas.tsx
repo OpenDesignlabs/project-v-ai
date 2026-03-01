@@ -1,11 +1,75 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
-import { useEditor } from '../context/EditorContext'; // for handleInteractionMove + componentRegistry (assembled bridge)
+import { useEditor } from '../context/EditorContext';
 import { RenderNode } from './RenderNode';
 import { ContainerPreview } from './ContainerPreview';
 import { TEMPLATES } from '../data/templates';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
+
+// ── Item 3: ArtboardResizeHandle ─────────────────────────────────────────────────────────
+// An 8px invisible hit-target at the bottom edge of each artboard frame.
+// Dragging it live-updates height + minHeight and commits one history entry on release.
+// Lives in the canvas world coordinate space — no coordinate transform needed.
+const ArtboardResizeHandle: React.FC<{ frameId: string; zoom: number }> = ({ frameId, zoom }) => {
+    const { elements, updateProject, pushHistory } = useProject();
+    const frame = elements[frameId];
+    if (!frame) return null;
+
+    const s = (frame.props?.style || {}) as Record<string, any>;
+    const frameLeft = parseFloat(String(s.left ?? '0'));
+    const frameTop = parseFloat(String(s.top ?? '0'));
+    const frameWidth = parseFloat(String(s.width ?? '1440'));
+    const frameHeight = parseFloat(String(s.height ?? s.minHeight ?? '900'));
+
+    const dragState = useRef<{ startY: number; startH: number } | null>(null);
+
+    const onPointerDown = (e: React.PointerEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        dragState.current = { startY: e.clientY, startH: frameHeight };
+    };
+    const onPointerMove = (e: React.PointerEvent) => {
+        if (!dragState.current) return;
+        const delta = (e.clientY - dragState.current.startY) / zoom;
+        const newH = Math.max(200, Math.round(dragState.current.startH + delta));
+        updateProject({
+            ...elements,
+            [frameId]: {
+                ...frame,
+                props: { ...frame.props, style: { ...frame.props.style, height: `${newH}px`, minHeight: `${newH}px` } },
+            },
+        }, true); // skipHistory=true at 60fps
+    };
+    const onPointerUp = (e: React.PointerEvent) => {
+        if (!dragState.current) return;
+        dragState.current = null;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        setTimeout(() => pushHistory(elements), 0);
+    };
+
+    return (
+        <div
+            title="Drag to resize artboard height"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            style={{
+                position: 'absolute',
+                left: `${frameLeft}px`,
+                top: `${frameTop + frameHeight - 4}px`,
+                width: `${frameWidth}px`,
+                height: '8px',
+                cursor: 'ns-resize',
+                zIndex: 9998,
+            }}
+            className="group"
+        >
+            <div className="absolute inset-x-0 top-[3px] h-[2px] bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity rounded-full" />
+        </div>
+    );
+};
 
 /**
  * ─── CANVAS ────────────────────────────────────────────────────────────────────
@@ -42,6 +106,8 @@ export const Canvas = () => {
         isInsertDrawerOpen, toggleInsertDrawer,
         savePageViewport,
         restorePageViewport,
+        // Item 2 — multi-select
+        clearSelection, addToSelection,
     } = useUI();
 
     // ── Assembled bridge values (componentRegistry merges static + dynamic) ───
@@ -49,6 +115,9 @@ export const Canvas = () => {
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const [spacePressed, setSpacePressed] = useState(false);
+    // Item 2 — box-select state
+    const boxSelectRef = useRef<{ active: boolean; startX: number; startY: number; worldStartX: number; worldStartY: number } | null>(null);
+    const [boxSelectRect, setBoxSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
     // ── 1. WHEEL — zoom & pan ─────────────────────────────────────────────────
     // Isolated to Canvas. Only Canvas re-renders on wheel events.
@@ -314,10 +383,62 @@ export const Canvas = () => {
             ref={canvasRef}
             className="flex-1 bg-[#1e1e1e] relative overflow-hidden cursor-default select-none"
             style={{ cursor: isPanning || spacePressed ? 'grab' : 'default' }}
-            onMouseDown={() => {
-                setSelectedId(null);
-                // Auto-collapse Insert Drawer when clicking canvas background
+            onMouseDown={(e) => {
+                // Middle-button / space-pan — pass through to existing pan logic
+                if (isPanning || spacePressed || e.button !== 0) {
+                    setSelectedId(null);
+                    if (isInsertDrawerOpen) toggleInsertDrawer();
+                    return;
+                }
                 if (isInsertDrawerOpen) toggleInsertDrawer();
+                // Start box-select
+                const rect = canvasRef.current?.getBoundingClientRect();
+                if (!rect) { setSelectedId(null); return; }
+                const worldX = (e.clientX - rect.left - pan.x) / zoom;
+                const worldY = (e.clientY - rect.top - pan.y) / zoom;
+                boxSelectRef.current = { active: true, startX: e.clientX, startY: e.clientY, worldStartX: worldX, worldStartY: worldY };
+                clearSelection();
+                setBoxSelectRect(null);
+            }}
+            onMouseMove={(e) => {
+                if (!boxSelectRef.current?.active) return;
+                const rect = canvasRef.current?.getBoundingClientRect();
+                if (!rect) return;
+                const rawX = Math.min(e.clientX, boxSelectRef.current.startX) - rect.left;
+                const rawY = Math.min(e.clientY, boxSelectRef.current.startY) - rect.top;
+                const rawW = Math.abs(e.clientX - boxSelectRef.current.startX);
+                const rawH = Math.abs(e.clientY - boxSelectRef.current.startY);
+                // Only show after 5px movement — avoids ghost rect on plain clicks
+                if (rawW < 5 && rawH < 5) return;
+                setBoxSelectRect({ x: rawX, y: rawY, w: rawW, h: rawH });
+            }}
+            onMouseUp={(e) => {
+                if (!boxSelectRef.current?.active) return;
+                const bs = boxSelectRef.current;
+                boxSelectRef.current = null;
+                if (!boxSelectRect) { setBoxSelectRect(null); return; }
+                const rect = canvasRef.current?.getBoundingClientRect();
+                if (!rect) { setBoxSelectRect(null); return; }
+                const worldEndX = (e.clientX - rect.left - pan.x) / zoom;
+                const worldEndY = (e.clientY - rect.top - pan.y) / zoom;
+                const selMinX = Math.min(bs.worldStartX, worldEndX);
+                const selMaxX = Math.max(bs.worldStartX, worldEndX);
+                const selMinY = Math.min(bs.worldStartY, worldEndY);
+                const selMaxY = Math.max(bs.worldStartY, worldEndY);
+                // AABB test against all top-level page children
+                const pageRoot = elements[activePageId];
+                const hits = (pageRoot?.children || []).filter(cid => {
+                    const el = elements[cid];
+                    const st = el?.props?.style as Record<string, any> | undefined;
+                    if (!st) return false;
+                    const l = parseFloat(String(st.left ?? '0'));
+                    const t = parseFloat(String(st.top ?? '0'));
+                    const w = parseFloat(String(st.width ?? '0'));
+                    const h = parseFloat(String(st.height ?? '0'));
+                    return l < selMaxX && l + w > selMinX && t < selMaxY && t + h > selMinY;
+                });
+                if (hits.length > 0) { hits.forEach(id => addToSelection(id)); }
+                setBoxSelectRect(null);
             }}
             onDrop={handleGlobalDrop}
             onDragOver={(e) => e.preventDefault()}
@@ -343,12 +464,18 @@ export const Canvas = () => {
                 >
                     {/* Artboard — grows with content */}
                     <CanvasErrorBoundary onUndo={history.undo}>
-                        <div style={{ width: '100%', maxWidth: '1440px', minHeight: '100vh', height: 'auto', display: 'flex', flexDirection: 'column' }}>
+                        <div style={{ width: '100%', maxWidth: '1440px', minHeight: '100vh', height: 'auto', display: 'flex', flexDirection: 'column', position: 'relative' }}>
                             <RenderNode elementId={activePageId} key={`editor-${activePageId}`} />
+                            {/* Item 3: per-frame resize handles */}
+                            {(elements[activePageId]?.children || []).map(cid => {
+                                const t = elements[cid]?.type;
+                                if (t !== 'webpage' && t !== 'canvas') return null;
+                                return <ArtboardResizeHandle key={`arh-${cid}`} frameId={cid} zoom={zoom} />;
+                            })}
                         </div>
                     </CanvasErrorBoundary>
 
-                    {/* Smart snap guides */}
+                    {/* Snap guides */}
                     {guides.map((g, i) => (
                         <div key={i} className="absolute bg-red-500 z-[9999]" style={{
                             left: g.orientation === 'vertical' ? g.pos : g.start,
@@ -357,6 +484,13 @@ export const Canvas = () => {
                             height: g.orientation === 'vertical' ? (g.end - g.start) : '1px',
                         }} />
                     ))}
+                    {/* Item 2: Box-select rectangle */}
+                    {boxSelectRect && (
+                        <div
+                            className="absolute pointer-events-none z-[9999] border border-blue-500 bg-blue-500/10"
+                            style={{ left: boxSelectRect.x, top: boxSelectRect.y, width: boxSelectRect.w, height: boxSelectRect.h }}
+                        />
+                    )}
                 </div>
             )}
         </div>

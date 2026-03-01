@@ -3,28 +3,37 @@ import { useEditor } from '../../context/EditorContext';
 import { ChevronRight, ChevronDown, Lock, Eye, Copy, Trash2, BoxSelect } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
+// ── DnD state lives outside React to avoid closure capture issues during drag ──
+let _dragNodeId: string | null = null;
+
 interface LayerNodeProps {
     nodeId: string;
     depth: number;
+    parentId: string | null;
 }
 
-const LayerNode = ({ nodeId, depth }: LayerNodeProps) => {
-    const { elements, selectedId, setSelectedId, updateProject, deleteElement } = useEditor();
+const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
+    const {
+        elements, selectedId, setSelectedId,
+        updateProject, deleteElement, duplicateElement, reorderElement,
+    } = useEditor();
     const element = elements[nodeId];
 
-    // State
     const [isExpanded, setIsExpanded] = useState(true);
     const [isRenaming, setIsRenaming] = useState(false);
     const [renameVal, setRenameVal] = useState('');
     const [contextMenu, setContextMenu] = useState<{ x: number, y: number } | null>(null);
+    const [dropIndicator, setDropIndicator] = useState<'above' | 'below' | 'inside' | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
 
     if (!element) return null;
 
     const isSelected = selectedId === nodeId;
     const hasChildren = element.children && element.children.length > 0;
+    const isContainer = ['container', 'page', 'section', 'canvas', 'webpage', 'app',
+        'grid', 'card', 'stack_v', 'stack_h', 'hero', 'navbar', 'pricing'].includes(element.type);
 
-    // Rename Focus
+    // ── Focus rename input when opened ────────────────────────────────────────
     useEffect(() => {
         if (isRenaming && inputRef.current) {
             inputRef.current.focus();
@@ -45,50 +54,90 @@ const LayerNode = ({ nodeId, depth }: LayerNodeProps) => {
         setSelectedId(nodeId);
     };
 
-    // Close menu on global click
     useEffect(() => {
         const close = () => setContextMenu(null);
         if (contextMenu) window.addEventListener('click', close);
         return () => window.removeEventListener('click', close);
     }, [contextMenu]);
 
-    const handleDuplicate = () => {
-        // Simple duplicate logic
-        const newId = `${nodeId}-copy-${Date.now()}`;
-        const newElement = JSON.parse(JSON.stringify(element));
-        newElement.id = newId;
-        newElement.name = `${element.name} Copy`;
+    // ── HTML5 Drag source ─────────────────────────────────────────────────────
+    const handleDragStart = (e: React.DragEvent) => {
+        _dragNodeId = nodeId;
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', nodeId);
+        e.stopPropagation();
+    };
+    const handleDragEnd = () => {
+        _dragNodeId = null;
+        setDropIndicator(null);
+    };
 
-        // Find parent and add after current
-        const parentId = Object.keys(elements).find(k => elements[k].children?.includes(nodeId));
-        if (parentId) {
-            const parent = elements[parentId];
-            const idx = parent.children?.indexOf(nodeId) ?? -1;
-            const newChildren = [...(parent.children || [])];
-            newChildren.splice(idx + 1, 0, newId);
+    // ── HTML5 Drop target ─────────────────────────────────────────────────────
+    const getIndicator = (e: React.DragEvent): 'above' | 'below' | 'inside' => {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        const rel = (e.clientY - rect.top) / rect.height;
+        if (isContainer && rel > 0.25 && rel < 0.75) return 'inside';
+        return rel < 0.5 ? 'above' : 'below';
+    };
 
-            updateProject({
-                ...elements,
-                [newId]: newElement,
-                [parentId]: { ...parent, children: newChildren }
-            });
-            setSelectedId(newId);
+    const handleDragOver = (e: React.DragEvent) => {
+        if (!_dragNodeId || _dragNodeId === nodeId) return;
+        e.preventDefault();
+        e.stopPropagation();
+        e.dataTransfer.dropEffect = 'move';
+        setDropIndicator(getIndicator(e));
+    };
+
+    const handleDragLeave = () => setDropIndicator(null);
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const dragged = _dragNodeId;
+        _dragNodeId = null;
+        setDropIndicator(null);
+        if (!dragged || dragged === nodeId) return;
+
+        const finalIndicator = getIndicator(e);
+
+        if (finalIndicator === 'inside') {
+            reorderElement(dragged, nodeId, element.children?.length ?? 0);
+        } else if (parentId) {
+            const siblings = elements[parentId]?.children || [];
+            const myIdx = siblings.indexOf(nodeId);
+            const targetIdx = finalIndicator === 'above' ? myIdx : myIdx + 1;
+            reorderElement(dragged, parentId, targetIdx);
         }
-        setContextMenu(null);
     };
 
     return (
         <>
             <div
+                draggable
+                onDragStart={handleDragStart}
+                onDragEnd={handleDragEnd}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
                 className={cn(
-                    "flex items-center h-8 px-2 cursor-pointer border-b border-transparent hover:bg-[#2a2a2c] group text-[#ccc] text-xs select-none relative",
-                    isSelected && "bg-[#007acc] text-white hover:bg-[#007acc]"
+                    "flex items-center h-8 px-2 cursor-pointer border-b border-transparent hover:bg-[#2a2a2c] group text-[#ccc] text-xs select-none relative transition-colors",
+                    isSelected && "bg-[#007acc] text-white hover:bg-[#007acc]",
+                    dropIndicator === 'inside' && "bg-[#007acc]/20",
                 )}
                 style={{ paddingLeft: `${depth * 12 + 8}px` }}
                 onClick={(e) => { e.stopPropagation(); setSelectedId(nodeId); }}
                 onDoubleClick={() => { setRenameVal(element.name); setIsRenaming(true); }}
                 onContextMenu={handleContextMenu}
             >
+                {/* Drop-line indicator above */}
+                {dropIndicator === 'above' && (
+                    <div className="absolute top-0 left-0 right-0 h-[2px] bg-blue-400 z-10 pointer-events-none" />
+                )}
+                {/* Drop-line indicator below */}
+                {dropIndicator === 'below' && (
+                    <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-blue-400 z-10 pointer-events-none" />
+                )}
+
                 {/* Expand Toggle */}
                 <button
                     onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
@@ -125,7 +174,7 @@ const LayerNode = ({ nodeId, depth }: LayerNodeProps) => {
 
             {/* Children */}
             {hasChildren && isExpanded && element.children?.map(childId => (
-                <LayerNode key={childId} nodeId={childId} depth={depth + 1} />
+                <LayerNode key={childId} nodeId={childId} depth={depth + 1} parentId={nodeId} />
             ))}
 
             {/* Context Menu Portal */}
@@ -135,7 +184,11 @@ const LayerNode = ({ nodeId, depth }: LayerNodeProps) => {
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                 >
                     <div className="px-3 py-1.5 text-[10px] font-bold text-[#666] uppercase border-b border-[#3f3f46] mb-1 truncate">{element.name}</div>
-                    <MenuBtn icon={Copy} label="Duplicate" onClick={handleDuplicate} />
+                    <MenuBtn icon={Copy} label="Duplicate" onClick={() => {
+                        const newId = duplicateElement(nodeId);
+                        if (newId) setSelectedId(newId);
+                        setContextMenu(null);
+                    }} />
                     <MenuBtn icon={BoxSelect} label="Rename" onClick={() => { setRenameVal(element.name); setIsRenaming(true); setContextMenu(null); }} />
                     <div className="h-px bg-[#3f3f46] my-1" />
                     <MenuBtn icon={Trash2} label="Delete" onClick={() => { deleteElement(nodeId); setContextMenu(null); }} danger />
@@ -145,11 +198,16 @@ const LayerNode = ({ nodeId, depth }: LayerNodeProps) => {
     );
 };
 
-const MenuBtn = ({ icon: Icon, label, onClick, danger }: { icon: any; label: string; onClick: () => void; danger?: boolean }) => (
+const MenuBtn = ({ icon: Icon, label, onClick, danger }: {
+    icon: React.ComponentType<{ size?: number; className?: string }>;
+    label: string;
+    onClick: () => void;
+    danger?: boolean;
+}) => (
     <button
         onClick={onClick}
         className={cn(
-            "flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-[#007acc] hover:text-white transition-colors text-left",
+            "flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-[#007acc] hover:text-white transition-colors text-left w-full",
             danger ? "text-red-400 hover:bg-red-500/20 hover:text-red-300" : "text-[#ccc]"
         )}
     >
@@ -171,7 +229,7 @@ export const LayersPanel = () => {
             </div>
             <div className="py-2">
                 {root.children?.map(childId => (
-                    <LayerNode key={childId} nodeId={childId} depth={0} />
+                    <LayerNode key={childId} nodeId={childId} depth={0} parentId={activePageId} />
                 ))}
             </div>
         </div>

@@ -303,7 +303,9 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         selectedId, setSelectedId, hoveredId, setHoveredId,
         previewMode, dragData, setDragData,
         interaction, setInteraction, zoom, activeTool, setActivePanel,
-        device,                       // Direction A Gap A1 — drives live breakpoint preview
+        device,
+        // Item 2 — multi-select
+        isInMultiSelect, addToSelection, removeFromSelection,
     } = useUI();
     // componentRegistry merges static COMPONENT_TYPES + dynamically-registered entries
     const { componentRegistry } = useEditor();
@@ -339,7 +341,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     if (element.hidden && previewMode) return null;
 
     const isSelected = selectedId === elementId && !previewMode;
-    const isHovered = hoveredId === elementId && !isSelected && !previewMode && !dragData;
+    const isMultiSel = isInMultiSelect(elementId) && !previewMode;
+    const isHovered = hoveredId === elementId && !isSelected && !isMultiSel && !previewMode && !dragData;
     const isContainer = ['container', 'page', 'section', 'canvas', 'webpage', 'app', 'grid', 'card', 'stack_v', 'stack_h', 'hero', 'navbar', 'pricing'].includes(element.type);
 
     const parentId = Object.keys(elements).find(key => elements[key].children?.includes(elementId));
@@ -352,6 +355,14 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (previewMode) return;
         if (activeTool === 'select') e.preventDefault();
         if (!element.locked) e.stopPropagation();
+
+        // Item 2: Shift+click toggles this element in/out of multi-select
+        if (e.shiftKey && !element.locked) {
+            if (isInMultiSelect(elementId)) { removeFromSelection(elementId); }
+            else { addToSelection(elementId); }
+            return; // don't start a drag on shift-click
+        }
+
         if (!element.locked) setSelectedId(elementId);
 
         if (activeTool === 'type' && ['text', 'button', 'heading', 'link'].includes(element.type)) {
@@ -366,8 +377,6 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             const currentTop = parseFloat(String(style.top || 0));
             dragStart.current = { x: e.clientX, y: e.clientY, left: currentLeft, top: currentTop };
             setInteraction({ type: 'MOVE', itemId: elementId });
-            // 🚀 Phase 5: Push sibling rects into Wasm LayoutEngine once per drag-start.
-            // query_snapping() at 60fps then transfers only 5 scalars — zero serde cost.
             syncLayoutEngine(elementId);
         }
     };
@@ -775,7 +784,9 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 finalClass,
                 'box-border',
                 isSelected && !isMobileMirror && !isEditing && 'outline outline-2 outline-blue-500 z-50',
-                isHovered && !isSelected && !isMobileMirror && 'outline outline-2 outline-blue-500 z-40',
+                // Item 2 — multi-select ring: distinct orange so anchor vs group is clear
+                isMultiSel && !isSelected && !isMobileMirror && 'outline outline-2 outline-orange-400 z-40',
+                isHovered && !isSelected && !isMultiSel && !isMobileMirror && 'outline outline-2 outline-blue-500 z-40',
                 canMove ? 'cursor-move' : '',
                 isArtboard ? 'bg-white' : ''
             )}

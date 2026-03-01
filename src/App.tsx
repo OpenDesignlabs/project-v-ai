@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useState } from 'react';
+import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { EditorProvider, useEditor } from './context/EditorContext';
 import { ProjectProvider, useProject } from './context/ProjectContext';
 import { UIProvider, useUI } from './context/UIContext';
@@ -87,9 +87,13 @@ const LoadingScreen = ({ message = "INITIALIZING ENVIRONMENT" }) => (
 );
 
 const EditorLayout = () => {
-  const { history, deleteElement, selectedId, setSelectedId, setActivePanel } = useEditor();
+  const { history, deleteElement, duplicateElement, selectedId, setSelectedId, setActivePanel } = useEditor();
+  const { selectedIds, clearSelection, addToSelection } = useUI();
   const { status } = useContainer();
   const [isImportOpen, setIsImportOpen] = useState(false);
+  // Item 1 — session clipboard: stores the last copied node ID.
+  // Module-level ref — survives renders, zero context writes.
+  const clipboardRef = useRef<string | null>(null);
 
   useFileSync();
   useAssetSync();
@@ -99,9 +103,20 @@ const EditorLayout = () => {
       const target = e.target as HTMLElement;
       const isTyping = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
 
+      const PROTECTED = new Set(['application-root', 'page-home', 'main-frame',
+        'main-frame-desktop', 'main-frame-mobile', 'main-canvas']);
+
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isTyping) return;
-        if (selectedId && !['application-root', 'page-home', 'main-frame', 'main-frame-desktop', 'main-frame-mobile'].includes(selectedId)) {
+        // Item 2: multi-delete
+        if (selectedIds.size > 1) {
+          e.preventDefault();
+          selectedIds.forEach(id => { if (!PROTECTED.has(id)) deleteElement(id); });
+          clearSelection();
+          return;
+        }
+        // Single-delete (existing logic)
+        if (selectedId && !PROTECTED.has(selectedId)) {
           e.preventDefault();
           deleteElement(selectedId);
         }
@@ -113,10 +128,48 @@ const EditorLayout = () => {
       if (e.key === 'i' && !isTyping && !e.ctrlKey && !e.metaKey) { e.preventDefault(); setActivePanel(prev => prev === 'add' ? null : 'add'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'i' && !isTyping) { e.preventDefault(); setIsImportOpen(true); }
 
+      // Item 1: Copy
+      if ((e.metaKey || e.ctrlKey) && e.key === 'c' && !isTyping) {
+        if (selectedId && !PROTECTED.has(selectedId)) {
+          clipboardRef.current = selectedId;
+        }
+      }
+
+      // Item 1: Paste
+      if ((e.metaKey || e.ctrlKey) && e.key === 'v' && !isTyping) {
+        if (clipboardRef.current) {
+          e.preventDefault();
+          const newId = duplicateElement(clipboardRef.current);
+          if (newId) setSelectedId(newId);
+        }
+      }
+
+      // Item 1 + 2: Duplicate (single or multi)
+      if ((e.metaKey || e.ctrlKey) && e.key === 'd' && !isTyping) {
+        e.preventDefault();
+        if (selectedIds.size > 1) {
+          const newIds: string[] = [];
+          selectedIds.forEach(id => {
+            if (!PROTECTED.has(id)) {
+              const newId = duplicateElement(id);
+              if (newId) newIds.push(newId);
+            }
+          });
+          if (newIds.length > 0) {
+            // Select the last duplicate as anchor
+            newIds.forEach(id => addToSelection(id));
+          }
+        } else if (selectedId && !PROTECTED.has(selectedId)) {
+          const newId = duplicateElement(selectedId);
+          if (newId) setSelectedId(newId);
+        }
+      }
+
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [history, deleteElement, selectedId, setSelectedId, isImportOpen]);
+  }, [history, deleteElement, duplicateElement, selectedId, selectedIds, setSelectedId,
+    clearSelection, addToSelection, isImportOpen]);
 
   if (status === 'booting' || status === 'mounting') {
     let message = "Initializing...";

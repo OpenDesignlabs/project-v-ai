@@ -114,6 +114,8 @@ export const useEditor = () => {
         updateProject: project.updateProject,
         pushHistory: project.pushHistory,
         deleteElement: project.deleteElement,
+        duplicateElement: project.duplicateElement,   // Item 1
+        reorderElement: project.reorderElement,       // Item 4
         instantiateTemplate: project.instantiateTemplate,
         pages: project.pages,
         activePageId: project.activePageId,
