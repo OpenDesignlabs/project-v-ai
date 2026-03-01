@@ -497,7 +497,30 @@ export const useFileSync = () => {
       }
     };
 
-    const timer = setTimeout(sync, 600);
+    // S-2 FIX: smart debounce — delay varies by change type to prevent starvation.
+    //
+    //   AI generation   → node count changes rapidly → 800ms (let it settle)
+    //   Structural edit → children[] or type changed → 600ms (standard structural)
+    //   Style edit only → same nodes, same count    → 250ms (fast for sliders)
+    //
+    // The old flat 600ms timer reset on every AI setElements call, starving the VFS
+    // for 3+ seconds while the AI was running a multi-step generation sequence.
+    const prevNodeCount = prevElementsRef.current ? Object.keys(prevElementsRef.current).length : 0;
+    const currNodeCount = Object.keys(elements).length;
+    const nodeCountChanged = currNodeCount !== prevNodeCount;
+
+    let debounceMs: number;
+    if (nodeCountChanged) {
+      // Could be AI adding nodes, drag-drop template, etc. — let it settle
+      debounceMs = 800;
+    } else if (elements !== prevElementsRef.current) {
+      // Same node count but references changed — could be style slider
+      debounceMs = 250;
+    } else {
+      debounceMs = 600; // pages/apiRoutes/theme change
+    }
+
+    const timer = setTimeout(sync, debounceMs);
     return () => clearTimeout(timer);
 
   }, [elements, pages, apiRoutes, framework, interaction, status, instance, writeFile, removeFile, theme]);

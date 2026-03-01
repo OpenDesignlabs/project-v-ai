@@ -2,10 +2,11 @@
 import type { ErrorInfo } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
-import { useEditor } from '../context/EditorContext'; // Legacy — for sub-components not yet migrated
+// M-6 FIX: useEditor removed — componentRegistry now comes from useUI() directly.
 import { SANDBOX_BLOCKED_PATTERNS } from '../utils/codeSanitizer';
 import type { VectraProject, VectraNode } from '../types';
 import { TEMPLATES } from '../data/templates';
+import { COMPONENT_TYPES } from '../data/constants'; // M-6: for registry merge
 import { Resizer } from './Resizer';
 import { cn } from '../lib/utils';
 import { Loader2, Plus, PlayCircle, Zap } from 'lucide-react';
@@ -298,7 +299,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     // useUI:      re-renders when UI state changes (selection, hover, tool, zoom)
     // Keeping them separate means hovering an element doesn't re-render every
     // RenderNode that only uses project data, and vice-versa.
-    const { elements, updateProject, instantiateTemplate, syncLayoutEngine } = useProject();
+    const { elements, updateProject, instantiateTemplate, syncLayoutEngine, parentMap } = useProject();
     const {
         selectedId, setSelectedId, hoveredId, setHoveredId,
         previewMode, dragData, setDragData,
@@ -306,9 +307,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         device,
         // Item 2 — multi-select
         isInMultiSelect, addToSelection, removeFromSelection,
+        // M-6 FIX: pull componentRegistry directly from UIContext (where it lives)
+        // instead of going through useEditor(), which double-subscribes RenderNode
+        // to both ProjectContext AND UIContext for just this one field.
+        componentRegistry: rawRegistry,
     } = useUI();
-    // componentRegistry merges static COMPONENT_TYPES + dynamically-registered entries
-    const { componentRegistry } = useEditor();
+    // Merge with static COMPONENT_TYPES (module constant, never changes)
+    const componentRegistry = { ...COMPONENT_TYPES, ...rawRegistry };
 
 
 
@@ -345,7 +350,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     const isHovered = hoveredId === elementId && !isSelected && !isMultiSel && !previewMode && !dragData;
     const isContainer = ['container', 'page', 'section', 'canvas', 'webpage', 'app', 'grid', 'card', 'stack_v', 'stack_h', 'hero', 'navbar', 'pricing'].includes(element.type);
 
-    const parentId = Object.keys(elements).find(key => elements[key].children?.includes(elementId));
+    // H-1 FIX: O(1) lookup via pre-built map instead of O(N) Object.keys().find() per render.
+    const parentId = parentMap.get(elementId);
     const parent = parentId ? elements[parentId] : null;
     const isParentCanvas = parent ? (parent.props.layoutMode === 'canvas') : false;
     const isArtboard = element.type === 'canvas' || element.type === 'webpage';
@@ -401,14 +407,21 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 }
             }
 
-            const newElements = { ...elements };
-            newElements[elementId].props.style = {
-                ...newElements[elementId].props.style,
-                left: `${Math.round(newLeft)}px`,
-                top: `${Math.round(newTop)}px`,
-                position: 'absolute'
+            // C-1 FIX: clone the full node chain — not just the top-level map —
+            // so we never mutate the live React state reference in-place.
+            const updatedNode = {
+                ...elements[elementId],
+                props: {
+                    ...elements[elementId].props,
+                    style: {
+                        ...elements[elementId].props.style,
+                        left: `${Math.round(newLeft)}px`,
+                        top: `${Math.round(newTop)}px`,
+                        position: 'absolute' as const,
+                    },
+                },
             };
-            updateProject(newElements);
+            updateProject({ ...elements, [elementId]: updatedNode }, true); // skipHistory at 60fps
         }
     };
 

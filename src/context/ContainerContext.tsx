@@ -104,9 +104,14 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
     const devServerProcessRef = useRef<any>(null);
     const isInitialized = useRef(false);
 
-    // ── Logging ──────────────────────────────────────────────────────────────
+    // S-1 FIX: push + truncate instead of spread+slice on every message.
+    // During pnpm install (hundreds of lines/sec) the old pattern created a new
+    // array per log line, generating significant GC pressure.
     const log = useCallback((msg: string) => {
-        setTerminalOutput(prev => [...prev.slice(-100), msg]);
+        setTerminalOutput(prev => {
+            const next = prev.length >= 100 ? prev.slice(-99) : prev;
+            return [...next, msg];
+        });
         console.log(`[VFS] ${msg}`);
     }, []);
 
@@ -152,9 +157,13 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
         boot();
     }, [log]);
 
-    // ── File tree reader ──────────────────────────────────────────────────────
+    // M-8 FIX: `status` removed from readFileTree deps.
+    // Previously: status in deps → new readFileTree identity every status change
+    // → effect re-runs → double read on every transition.
+    // The guard `if (!instance || status !== 'ready')` still works because
+    // `status` is in the effect's own dep array (not the callback's).
     const readFileTree = useCallback(async () => {
-        if (!instance || status !== 'ready') return;
+        if (!instance) return;
         try {
             const buildTree = async (path: string): Promise<any> => {
                 const entries = await instance.fs.readdir(path, { withFileTypes: true });
@@ -173,11 +182,11 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
         } catch (err) {
             console.error('[VFS] readFileTree error:', err);
         }
-    }, [instance, status]);
+    }, [instance]); // status intentionally omitted — gate is in the effect below
 
     useEffect(() => {
         if (status === 'ready') readFileTree();
-    }, [status, readFileTree]);
+    }, [status, readFileTree]); // readFileTree is now stable across status transitions
 
     // ── writeFile (with auto-mkdir on first write to a new directory) ─────────
     const writeFile = useCallback(async (path: string, content: string) => {

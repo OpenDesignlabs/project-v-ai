@@ -30,33 +30,51 @@ const DB_NAME = 'vectra_db_v1';
 const STORE_NAME = 'projects';
 const DB_VERSION = 1;
 
-/** Opens (and upgrades if necessary) the Vectra IndexedDB database. */
+// M-2 FIX: module-level singleton — one connection for the page lifetime.
+// Previously every call opened + closed a fresh IDB connection at 3-4×/second
+// during autosave. Opening IDB has non-trivial OS I/O overhead.
+let _db: IDBDatabase | null = null;
+let _dbPromise: Promise<IDBDatabase> | null = null;
+
 const openDB = (): Promise<IDBDatabase> =>
     new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-
         request.onupgradeneeded = (event) => {
             const db = (event.target as IDBOpenDBRequest).result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
                 db.createObjectStore(STORE_NAME);
             }
         };
-
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
     });
+
+/** Returns the shared IDB connection, booting it once then reusing it. */
+const getDB = (): Promise<IDBDatabase> => {
+    if (_db) return Promise.resolve(_db);
+    if (_dbPromise) return _dbPromise;
+    _dbPromise = openDB().then(db => {
+        _db = db;
+        // Reset singleton on unexpected close or version bump so the next
+        // caller transparently reopens a fresh connection.
+        db.onclose = () => { _db = null; _dbPromise = null; };
+        db.onversionchange = () => { db.close(); _db = null; _dbPromise = null; };
+        return db;
+    });
+    return _dbPromise;
+};
 
 /**
  * Async write — never blocks the main thread.
  * Safe to call every autosave tick without causing frame drops.
  */
 export const saveProjectToDB = async (key: string, data: unknown): Promise<void> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).put(data, key);
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => { db.close(); reject(tx.error); };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
     });
 };
 
@@ -64,12 +82,12 @@ export const saveProjectToDB = async (key: string, data: unknown): Promise<void>
  * Async read — returns `undefined` if the key doesn't exist.
  */
 export const loadProjectFromDB = async <T = unknown>(key: string): Promise<T | undefined> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');
         const request = tx.objectStore(STORE_NAME).get(key);
-        request.onsuccess = () => { db.close(); resolve(request.result as T | undefined); };
-        request.onerror = () => { db.close(); reject(request.error); };
+        request.onsuccess = () => resolve(request.result as T | undefined);
+        request.onerror = () => reject(request.error);
     });
 };
 
@@ -77,12 +95,12 @@ export const loadProjectFromDB = async <T = unknown>(key: string): Promise<T | u
  * Remove a single key from the store (e.g. when "New Project" is triggered).
  */
 export const deleteProjectFromDB = async (key: string): Promise<void> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).delete(key);
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => { db.close(); reject(tx.error); };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
     });
 };
 
@@ -116,62 +134,60 @@ export interface FullProjectSave {
 
 /** Write the full ProjectMeta[] index to IDB. */
 export const saveProjectIndexToDB = async (index: ProjectMeta[]): Promise<void> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).put(index, PROJECT_INDEX_KEY);
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => { db.close(); reject(tx.error); };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
     });
 };
 
 /** Read the project index. Returns [] if no index exists (fresh install). */
 export const loadProjectIndexFromDB = async (): Promise<ProjectMeta[]> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');
         const request = tx.objectStore(STORE_NAME).get(PROJECT_INDEX_KEY);
         request.onsuccess = () => {
-            db.close();
             resolve(Array.isArray(request.result) ? request.result : []);
         };
-        request.onerror = () => { db.close(); reject(request.error); };
+        request.onerror = () => reject(request.error);
     });
 };
 
 /** Write the full element tree for a specific project UUID. */
 export const saveProjectDataToDB2 = async (id: string, data: FullProjectSave): Promise<void> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).put(data, `project_data_${id}`);
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => { db.close(); reject(tx.error); };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
     });
 };
 
 /** Read the full element tree for a specific project UUID. Returns undefined if missing. */
 export const loadProjectDataFromDB2 = async (id: string): Promise<FullProjectSave | undefined> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readonly');
         const request = tx.objectStore(STORE_NAME).get(`project_data_${id}`);
         request.onsuccess = () => {
-            db.close();
             resolve(request.result as FullProjectSave | undefined);
         };
-        request.onerror = () => { db.close(); reject(request.error); };
+        request.onerror = () => reject(request.error);
     });
 };
 
 /** Remove the element tree for a specific project UUID. */
 export const deleteProjectDataFromDB2 = async (id: string): Promise<void> => {
-    const db = await openDB();
+    const db = await getDB();
     return new Promise((resolve, reject) => {
         const tx = db.transaction(STORE_NAME, 'readwrite');
         tx.objectStore(STORE_NAME).delete(`project_data_${id}`);
-        tx.oncomplete = () => { db.close(); resolve(); };
-        tx.onerror = () => { db.close(); reject(tx.error); };
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
     });
 };
 

@@ -54,9 +54,13 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
         setSelectedId(nodeId);
     };
 
+    // S-6 FIX: early-return when contextMenu is null so no listener is ever
+    // added for the closed state. This prevents the double add+remove pattern
+    // that occurred on unrelated re-renders while the menu was already open.
     useEffect(() => {
+        if (!contextMenu) return;
         const close = () => setContextMenu(null);
-        if (contextMenu) window.addEventListener('click', close);
+        window.addEventListener('click', close);
         return () => window.removeEventListener('click', close);
     }, [contextMenu]);
 

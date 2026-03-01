@@ -22,7 +22,7 @@
  *   all sibling rects into Wasm ONCE per drag gesture.
  */
 
-import React, { useCallback, type ReactNode } from 'react';
+import React, { useCallback, useMemo, type ReactNode } from 'react';
 import { useProject } from './ProjectContext';
 import { useUI } from './UIContext';
 import { COMPONENT_TYPES } from '../data/constants';
@@ -33,7 +33,7 @@ export type { GlobalTheme, DataSource } from './ProjectContext';
 // ── Interaction engine ────────────────────────────────────────────────────────
 // Assembled here so ProjectContext and UIContext stay decoupled from each other.
 function useInteractionEngine() {
-    const { elements, updateProject, pushHistory, querySnapping, syncLayoutEngine } = useProject();
+    const { elementsRef, updateProject, pushHistory, querySnapping, syncLayoutEngine } = useProject();
     const { interaction, zoom, setGuides, setInteraction } = useUI();
 
     // ── MOVE / RESIZE — called at 60fps during drag ────────────────────────────
@@ -67,10 +67,12 @@ function useInteractionEngine() {
             setGuides([]);
         }
 
-        const el = elements[itemId];
+        // H-4 partial: read current elements from ref for move path
+        const curElements = elementsRef.current;
+        const el = curElements[itemId];
         if (!el) return;
         const next = {
-            ...elements,
+            ...curElements,
             [itemId]: {
                 ...el,
                 props: {
@@ -86,16 +88,17 @@ function useInteractionEngine() {
             },
         };
         updateProject(next, true); // skipHistory=true → no JSON.stringify per frame
-    }, [interaction, zoom, elements, setGuides, updateProject, querySnapping]);
+    }, [interaction, zoom, elementsRef, setGuides, updateProject, querySnapping]);
 
     // ── DRAG END — called once on pointer-up ──────────────────────────────────
-    // Commits ONE history entry for the entire drag gesture.
+    // H-4 FIX: `elements` removed from deps — reads from elementsRef.current at call
+    // time so this callback is NOT recreated on every 60fps element update during drag.
     const handleInteractionEnd = useCallback(() => {
         if (!interaction) return;
-        pushHistory(elements);
+        pushHistory(elementsRef.current); // read current, not stale closure
         setGuides([]);
         setInteraction(null);
-    }, [interaction, elements, pushHistory, setGuides, setInteraction]);
+    }, [interaction, elementsRef, pushHistory, setGuides, setInteraction]);
 
     return { handleInteractionMove, handleInteractionEnd, syncLayoutEngine };
 }
@@ -107,16 +110,28 @@ export const useEditor = () => {
     const ui = useUI();
     const { handleInteractionMove, handleInteractionEnd, syncLayoutEngine } = useInteractionEngine();
 
+    // H-2 FIX: memoize the merged registry so the reference is stable between
+    // renders. Previously { ...COMPONENT_TYPES, ...ui.componentRegistry } created
+    // a new object on every call, forcing a re-render in every subscriber
+    // (RenderNode, RightSidebar, InsertDrawer, Header, …) on every frame.
+    // COMPONENT_TYPES is a module-level constant — omit it from deps.
+    const componentRegistry = useMemo(
+        () => ({ ...COMPONENT_TYPES, ...ui.componentRegistry }),
+        [ui.componentRegistry] // eslint-disable-line react-hooks/exhaustive-deps
+    );
+
     return {
         // ── Project ───────────────────────────────────────────────────────────
         elements: project.elements,
         setElements: project.setElements,
+        elementsRef: project.elementsRef,
         updateProject: project.updateProject,
         pushHistory: project.pushHistory,
         deleteElement: project.deleteElement,
         duplicateElement: project.duplicateElement,   // Item 1
         reorderElement: project.reorderElement,       // Item 4
         instantiateTemplate: project.instantiateTemplate,
+        parentMap: project.parentMap,                 // H-1 / M-7
         pages: project.pages,
         activePageId: project.activePageId,
         setActivePageId: project.setActivePageId,
@@ -194,7 +209,7 @@ export const useEditor = () => {
         currentView: ui.currentView,
         setCurrentView: ui.setCurrentView,
         runAction: ui.runAction,
-        componentRegistry: { ...COMPONENT_TYPES, ...ui.componentRegistry },
+        componentRegistry,
         registerComponent: ui.registerComponent,
         recentComponents: ui.recentComponents,
         addRecentComponent: ui.addRecentComponent,

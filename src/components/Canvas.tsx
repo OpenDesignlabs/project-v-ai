@@ -425,9 +425,23 @@ export const Canvas = () => {
                 const selMaxX = Math.max(bs.worldStartX, worldEndX);
                 const selMinY = Math.min(bs.worldStartY, worldEndY);
                 const selMaxY = Math.max(bs.worldStartY, worldEndY);
-                // AABB test against all top-level page children
+                // M-4 FIX: walk the entire visible subtree — not just top-level children.
+                // The original flat filter missed absolutely-positioned nodes inside containers.
+                const collectAbsoluteNodes = (ids: string[]): string[] => {
+                    const result: string[] = [];
+                    for (const id of ids) {
+                        const node = elements[id];
+                        if (!node) continue;
+                        if (node.props?.style && (node.props.style as any).position === 'absolute') {
+                            result.push(id);
+                        }
+                        if (node.children?.length) result.push(...collectAbsoluteNodes(node.children));
+                    }
+                    return result;
+                };
                 const pageRoot = elements[activePageId];
-                const hits = (pageRoot?.children || []).filter(cid => {
+                const allCandidates = collectAbsoluteNodes(pageRoot?.children || []);
+                const hits = allCandidates.filter(cid => {
                     const el = elements[cid];
                     const st = el?.props?.style as Record<string, any> | undefined;
                     if (!st) return false;

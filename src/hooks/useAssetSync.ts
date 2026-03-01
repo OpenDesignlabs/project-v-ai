@@ -113,8 +113,8 @@ const fetchAsDataUrl = async (url: string): Promise<{ dataUrl: string; ext: stri
 // ─── HOOK ─────────────────────────────────────────────────────────────────────
 
 export const useAssetSync = () => {
-    // Narrow subscription: only project elements, not UI state
-    const { elements } = useProject();
+    // Narrow subscription: only project elements + pages
+    const { elements, pages } = useProject();
     const { writeFile, status } = useContainer();
 
     /**
@@ -133,11 +133,14 @@ export const useAssetSync = () => {
             const images: Array<{ id: string; url: string }> = [];
             const visited = new Set<string>();
 
-            const pageRoot = elements['page-home'];
-            if (!pageRoot?.children) return;
-
-            for (const childId of pageRoot.children) {
-                collectRemoteImages(elements, childId, images, visited);
+            // H-5 FIX: scan ALL pages, not just 'page-home'.
+            // Remote images on secondary pages were silently never synced.
+            for (const page of pages) {
+                const pageRoot = elements[page.rootId];
+                if (!pageRoot?.children) continue;
+                for (const childId of pageRoot.children) {
+                    collectRemoteImages(elements, childId, images, visited);
+                }
             }
 
             // Filter to only URLs we haven't already processed this session

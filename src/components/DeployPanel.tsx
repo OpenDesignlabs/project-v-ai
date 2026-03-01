@@ -119,7 +119,7 @@ export const DeployPanel: React.FC = () => {
         setEnvVars(prev => prev.map(e => e.id === id ? { ...e, hidden: !e.hidden } : e));
     }, []);
 
-    const runDeploy = useCallback((simulateError = false) => {
+    const runDeploy = useCallback(async (simulateError = false) => {
         if (status === 'building') return;
         setStatus('building');
         setLogLines([]);
@@ -127,25 +127,37 @@ export const DeployPanel: React.FC = () => {
         setLogOpen(true);
 
         const lines = simulateError ? ERROR_LOG_LINES : BUILD_LOG_LINES;
-        let i = 0;
 
+        // S-5 FIX: stream log lines optimistically, but resolve status from
+        // the actual deploy service response — not from "last log line played".
+        // Replace the Promise.resolve() below with your real Vercel/Netlify API call.
+        const deployApiPromise: Promise<{ success: boolean; url?: string }> = new Promise(resolve => {
+            // TODO: replace with real deploy API call, e.g.:
+            // const res = await fetch('/api/deploy', { method: 'POST', body: JSON.stringify({ envVars }) });
+            // const json = await res.json();
+            // resolve({ success: json.ok, url: json.url });
+            setTimeout(() => resolve({ success: !simulateError, url: containerUrl ?? 'https://my-vectra-app.vercel.app' }), lines.length * 450 + 500);
+        });
+
+        // Stream log lines in parallel with the API request
+        let i = 0;
         const tick = () => {
-            if (i >= lines.length) {
-                if (simulateError) {
-                    setStatus('error');
-                } else {
-                    setStatus('success');
-                    // Use the WebContainer URL when a dev server is running, otherwise fake
-                    setDeployedUrl(containerUrl ?? 'https://my-vectra-app.vercel.app');
-                }
-                return;
-            }
+            if (i >= lines.length) return;
             setLogLines(prev => [...prev, lines[i]]);
             i++;
-            timerRef.current = setTimeout(tick, 400 + Math.random() * 250);
+            timerRef.current = setTimeout(tick, 380 + Math.random() * 200);
         };
-
         timerRef.current = setTimeout(tick, 200);
+
+        // Status is set ONLY after the API resolves — not after the last log tick
+        deployApiPromise.then(result => {
+            if (result.success) {
+                setStatus('success');
+                setDeployedUrl(result.url ?? null);
+            } else {
+                setStatus('error');
+            }
+        });
     }, [status, containerUrl]);
 
     // ── Render helpers ────────────────────────────────────────────────────────

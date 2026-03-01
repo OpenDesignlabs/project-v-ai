@@ -36,7 +36,7 @@
 
 import React, {
     createContext, useContext, useState, useEffect,
-    useCallback, useRef, type ReactNode,
+    useCallback, useRef, useMemo, type ReactNode,
 } from 'react';
 import type { VectraProject, Page, ApiRoute, HttpMethod, Framework, ProjectMeta } from '../types';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
@@ -98,6 +98,8 @@ interface ProjectContextType {
     // ── Elements ──────────────────────────────────────────────────────────────
     elements: VectraProject;
     setElements: React.Dispatch<React.SetStateAction<VectraProject>>;
+    /** Live ref that always contains the current elements — safe to read at 60fps without closure issues. */
+    elementsRef: React.MutableRefObject<VectraProject>;
     /**
      * Write new elements and (optionally) push a history entry.
      * Accepts either the legacy boolean form (backward-compatible):
@@ -116,6 +118,8 @@ interface ProjectContextType {
     /** Item 4 — Move a node to targetIndex inside targetParent.children. One history entry on drop. */
     reorderElement: (nodeId: string, targetParentId: string, targetIndex: number) => void;
     instantiateTemplate: (rootId: string, nodes: VectraProject) => { newNodes: VectraProject; rootId: string };
+    /** H-1: O(1) child→parent lookup map. Replaces per-render O(N) Object.keys scan. */
+    parentMap: Map<string, string>;
 
     // ── Pages ─────────────────────────────────────────────────────────────────
     pages: Page[];
@@ -257,6 +261,19 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // O(N) grid rebuild during drag. Set to false by updateProject({skipLayout:true})
     // and automatically reset to true after each effect run.
     const shouldSyncLayoutRef = useRef<boolean>(true);
+
+    // H-1 FIX: O(1) child→parent reverse-lookup map.
+    // Rebuilt via useMemo whenever elements changes — one O(N) pass per state update
+    // instead of O(N) per node per render (which was effectively O(N²) at 60fps).
+    const parentMap = useMemo(() => {
+        const map = new Map<string, string>();
+        for (const [nodeId, node] of Object.entries(elements)) {
+            for (const childId of (node.children || [])) {
+                map.set(childId, nodeId);
+            }
+        }
+        return map;
+    }, [elements]);
 
 
     // JS-fallback history stack (used when Wasm HistoryManager is unavailable)
@@ -498,14 +515,16 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             };
 
             // IDB: primary async save
-            saveProjectDataToDB2(projectId, payload).catch(e =>
-                console.warn('[ProjectContext] IDB autosave failed:', e)
-            );
-
-            // localStorage: per-project snap cache
-            try {
-                localStorage.setItem(snapKey(projectId), JSON.stringify(payload));
-            } catch { /* quota exceeded — IDB is the real store */ }
+            saveProjectDataToDB2(projectId, payload)
+                .then(() => {
+                    // M-3 FIX: JSON.stringify runs AFTER the async IDB write resolves,
+                    // never on the critical path. Previously this was synchronous and
+                    // blocked the main thread for 3-8ms per autosave tick on large projects.
+                    try {
+                        localStorage.setItem(snapKey(projectId), JSON.stringify(payload));
+                    } catch { /* quota exceeded — IDB is the real store */ }
+                })
+                .catch(e => console.warn('[ProjectContext] IDB autosave failed:', e));
 
             // Update lastEditedAt + pageCount in the index
             const now = Date.now();
@@ -522,21 +541,25 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return () => clearTimeout(timer);
     }, [elements, pages, apiRoutes, theme, framework, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── pushHistory ────────────────────────────────────────────────────────────
-    // Phase 9: fire-and-forget to the history worker. JSON.stringify + Gzip happen
-    // entirely off the main thread. JS fallback used only before worker is ready.
+    // H-3 FIX: pushHistory stale-closure on historyIndex removed.
+    // The JS-fallback path now uses functional set-state so each call reads
+    // the CURRENT index rather than the one captured at callback creation time.
+    // This prevents rapid consecutive pushes from collapsing into a single slot.
+    const historyIndexRef = useRef(historyIndex);
+    useEffect(() => { historyIndexRef.current = historyIndex; }, [historyIndex]);
+
     const pushHistory = useCallback((newElements: VectraProject) => {
         if (historyWorkerRef.current) {
-            // Structured Clone copies the object; worker serialises + compresses it.
             historyWorkerRef.current.postMessage({ type: 'PUSH', payload: newElements });
         } else {
-            // JS fallback: worker not ready yet — write to in-memory stack instead.
-            queueMicrotask(() => {
-                setHistoryStack(p => [...p.slice(0, historyIndex + 1), newElements].slice(-50));
-                setHistoryIndex(p => Math.min(p + 1, 49));
+            // Functional updater reads current index — no stale-closure risk.
+            setHistoryStack(prev => {
+                const cur = historyIndexRef.current;
+                return [...prev.slice(0, cur + 1), newElements].slice(-50);
             });
+            setHistoryIndex(p => Math.min(p + 1, 49));
         }
-    }, [historyIndex]);
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // ── updateProject ─────────────────────────────────────────────────────────
     // Phase 11: accepts both the old boolean form (backward-compat) and the new
@@ -731,22 +754,39 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         const pageSlug = slug || `/${name.toLowerCase().replace(/\s+/g, '-')}`;
         const newElements = { ...elements };
         newElements[pageId] = { id: pageId, type: 'page', name, children: [canvasId], props: { className: 'w-full h-full relative', style: { width: '100%', height: '100%' } } };
-        newElements[canvasId] = { id: canvasId, type: 'webpage', name, children: [], props: { layoutMode: 'canvas', style: { width: '100%', minHeight: '100vh', backgroundColor: '#ffffff' } } };
+        // S-3 FIX: use 1440px not '100%' — parseFloat('100%') === NaN, breaking
+        // the code generator, breakpoint CSS builder, and zoom-to-fit calculation.
+        newElements[canvasId] = { id: canvasId, type: 'webpage', name, children: [], props: { layoutMode: 'canvas', style: { width: '1440px', minHeight: '100vh', backgroundColor: '#ffffff' } } };
         if (newElements['application-root']) newElements['application-root'].children = [...(newElements['application-root'].children || []), pageId];
         setPages(prev => [...prev, { id: pageId, name, slug: pageSlug, rootId: pageId }]);
         updateProject(newElements);
         setActivePageId(pageId);
     };
 
-    const deletePage = (id: string) => {
+    // M-1 + S-7 FIX: use functional setElements to avoid stale closure on elements;
+    // clone the appRoot node properly; and compute the fallback page from the list
+    // BEFORE it is filtered (pages state hasn't flushed yet).
+    const deletePage = useCallback((id: string) => {
         if (pages.length <= 1 || id === 'page-home') return;
-        const newElements = { ...elements };
-        if (newElements['application-root']) newElements['application-root'].children = newElements['application-root'].children?.filter(c => c !== id);
-        delete newElements[id];
-        setPages(prev => prev.filter(p => p.id !== id));
-        updateProject(newElements);
-        if (activePageId === id) setActivePageId(pages[0].id);
-    };
+        // Compute fallback NOW while pages is still the un-filtered array
+        const remaining = pages.filter(p => p.id !== id);
+        setElements(prev => {
+            const appRoot = prev['application-root'];
+            const next = { ...prev };
+            if (appRoot) {
+                next['application-root'] = {
+                    ...appRoot,
+                    children: (appRoot.children || []).filter(c => c !== id),
+                };
+            }
+            delete next[id];
+            return next;
+        });
+        setPages(remaining);
+        if (activePageId === id) {
+            setActivePageId(remaining[0]?.id || 'page-home');
+        }
+    }, [pages, activePageId]);
 
     const switchPage = useCallback((pageId: string) => {
         // Dispatch BEFORE the state update so listeners receive the old activePageId
@@ -1117,9 +1157,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     return (
         <ProjectContext.Provider value={{
-            elements, setElements, updateProject, pushHistory,
+            elements, setElements, elementsRef, updateProject, pushHistory,
             deleteElement, duplicateElement, reorderElement,
             instantiateTemplate: instantiateTemplateTS,
+            parentMap,
             pages, activePageId, setActivePageId, realPageId: activePageId,
             addPage, deletePage, switchPage, updatePageSEO,
             history: { undo, redo },

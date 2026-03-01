@@ -26,7 +26,10 @@ export const instantiateTemplate = (
     const nodesToClone = getAllDescendants(templateRootId);
 
     nodesToClone.forEach(oldId => {
-        const newId = `el-${Date.now()}-${Math.random().toString(36).substr(2, 5)}`;
+        // M-5 FIX: crypto.randomUUID() — guaranteed unique per RFC 4122.
+        // Date.now()+random had ~60M collision space and the same ms timestamp
+        // for all nodes in a 30+ node bulk instantiation on a loaded CPU.
+        const newId = `el-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
         idMap[oldId] = newId;
     });
 

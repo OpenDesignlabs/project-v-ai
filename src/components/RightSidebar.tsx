@@ -67,7 +67,7 @@ const InputUnit = ({ label, icon: Icon, value, onChange, step, unit }: { label: 
 );
 
 export const RightSidebar = () => {
-    const { elements, selectedId, updateProject, previewMode, pages } = useEditor();
+    const { elements, selectedId, updateProject, previewMode, pages, parentMap } = useEditor();
     // Direction A: read activeBreakpoint and setDevice from UIContext
     const { activeBreakpoint, setDevice } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
@@ -148,14 +148,14 @@ export const RightSidebar = () => {
     //   tablet   → writes to node.props.breakpoints.tablet
     //   mobile   → writes to node.props.breakpoints.mobile
     const updateStyle = (key: string, value: any) => {
-        const newElements = { ...elements };
         const unitlessKeys = ['fontWeight', 'opacity', 'zIndex', 'flexGrow', 'scale', 'lineHeight'];
         const finalValue = (typeof value === 'number' && !unitlessKeys.includes(key)) ? `${value}px` : value;
 
         let targetIds = [element.id];
 
         if (animScope === 'all' && key.startsWith('animation')) {
-            const parentId = Object.keys(elements).find(k => elements[k].children?.includes(element.id));
+            // M-7 FIX: O(1) lookup via parentMap instead of O(N) Object.keys().find().
+            const parentId = parentMap.get(element.id);
             if (parentId) {
                 const parent = elements[parentId];
                 if (['webpage', 'canvas', 'page'].includes(parent.type)) {
@@ -164,34 +164,49 @@ export const RightSidebar = () => {
             }
         }
 
+        // C-2 FIX: build the updated element map without mutating any existing reference.
+        // Each node in targetIds is fully cloned along its mutation path.
+        const next = { ...elements };
         targetIds.forEach(id => {
-            const el = newElements[id];
+            const el = next[id];
+            if (!el) return;
             if (activeBreakpoint === 'desktop') {
-                // Base style path — unchanged behaviour
                 const currentStyle = el.props.style || {};
-                let mergeStyle = {};
+                let mergeStyle: Record<string, any> = {};
                 if (key === 'animationName' && value !== 'none' && !currentStyle.animationDuration) {
                     mergeStyle = { animationDuration: '0.5s', animationFillMode: 'both' };
                 }
-                el.props.style = { ...currentStyle, [key]: finalValue, ...mergeStyle };
+                next[id] = {
+                    ...el,
+                    props: {
+                        ...el.props,
+                        style: { ...currentStyle, [key]: finalValue, ...mergeStyle },
+                    },
+                };
             } else {
-                // Breakpoint override path — writes to props.breakpoints[bp]
-                const bp = activeBreakpoint; // 'tablet' | 'mobile'
+                const bp = activeBreakpoint;
                 const currentBpStyle = el.props.breakpoints?.[bp] || {};
-                el.props.breakpoints = {
-                    ...(el.props.breakpoints || {}),
-                    [bp]: { ...currentBpStyle, [key]: finalValue },
+                next[id] = {
+                    ...el,
+                    props: {
+                        ...el.props,
+                        breakpoints: {
+                            ...(el.props.breakpoints || {}),
+                            [bp]: { ...currentBpStyle, [key]: finalValue },
+                        },
+                    },
                 };
             }
         });
 
-        updateProject(newElements);
+        updateProject(next);
     };
 
+    // C-2 FIX: clone the node chain — don't mutate newElements[element.id].props in-place.
     const updateProp = (key: string, value: any) => {
-        const newElements = { ...elements };
-        newElements[element.id].props = { ...newElements[element.id].props, [key]: value };
-        updateProject(newElements);
+        const el = elements[element.id];
+        const updatedNode = { ...el, props: { ...el.props, [key]: value } };
+        updateProject({ ...elements, [element.id]: updatedNode });
     };
 
     const updateFilter = (newBlur: number, newBright: number, newCont: number) => {
