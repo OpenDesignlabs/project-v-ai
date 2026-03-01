@@ -11,7 +11,10 @@ import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 // An 8px invisible hit-target at the bottom edge of each artboard frame.
 // Dragging it live-updates height + minHeight and commits one history entry on release.
 // Lives in the canvas world coordinate space — no coordinate transform needed.
-const ArtboardResizeHandle: React.FC<{ frameId: string; zoom: number }> = ({ frameId, zoom }) => {
+// M-2 FIX: React.memo — ArtboardResizeHandle re-rendered on every Canvas state change
+// (pan, zoom, box-select rect). On a 3-artboard project: 3×60 = 180 wasted renders/sec
+// during wheel gestures. Memoize — only re-render when frameId or zoom changes.
+const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ frameId, zoom }) => {
     const { elements, updateProject, pushHistory, elementsRef } = useProject();
     const frame = elements[frameId];
     if (!frame) return null;
@@ -73,7 +76,7 @@ const ArtboardResizeHandle: React.FC<{ frameId: string; zoom: number }> = ({ fra
             <div className="absolute inset-x-0 top-[3px] h-[2px] bg-blue-500 opacity-0 group-hover:opacity-100 transition-opacity rounded-full" />
         </div>
     );
-};
+});
 
 /**
  * ─── CANVAS ────────────────────────────────────────────────────────────────────

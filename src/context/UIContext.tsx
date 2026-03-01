@@ -246,6 +246,17 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         return () => window.removeEventListener('vectra:open-project', handler);
     }, [setCurrentView]);
 
+    // M-4 FIX: evict deleted page's viewport cache entry so pageViewportCache
+    // doesn't accumulate indefinitely on AI-driven page churn.
+    useEffect(() => {
+        const handler = (e: Event) => {
+            const pageId = (e as CustomEvent<{ pageId: string }>).detail?.pageId;
+            if (pageId) pageViewportCache.current.delete(pageId);
+        };
+        window.addEventListener('vectra:page-deleted', handler);
+        return () => window.removeEventListener('vectra:page-deleted', handler);
+    }, []); // pageViewportCache is a ref — stable, no deps needed
+
     // Clear guides when interaction ends
     useEffect(() => { if (!interaction) setGuides([]); }, [interaction]);
 

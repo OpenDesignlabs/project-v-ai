@@ -141,6 +141,8 @@ export const useEditor = () => {
         switchPage: project.switchPage,
         updatePageSEO: project.updatePageSEO,  // Direction D
         history: project.history,
+        undo: project.undo,   // S-2: flat stable reference
+        redo: project.redo,   // S-2: flat stable reference
         querySnapping: project.querySnapping,
         theme: project.theme,
         updateTheme: project.updateTheme,

@@ -245,17 +245,20 @@ export const useFileSync = () => {
         // SECTION A — COMPONENT FILES
         // custom_code nodes → [componentDir]/[ComponentName].tsx
         // ════════════════════════════════════════════════════════════════
+        // H-3 FIX: the previous 2-level manual loop reached only:
+        //   page-root → webpage/canvas → direct children
+        // Any custom_code node nested inside a container, section, card, etc.
+        // was never added to allChildIds — its file was never written to VFS.
+        // At dev-server start Next.js throws `Module not found` with no editor error.
+        // Replace with a proper recursive walk over the full page subtree.
         const allChildIds = new Set<string>();
+        const walkNode = (id: string) => {
+          if (allChildIds.has(id)) return; // cycle-guard
+          allChildIds.add(id);
+          (elements[id]?.children || []).forEach(walkNode);
+        };
         for (const page of pages) {
-          const pageRoot = elements[page.rootId];
-          if (!pageRoot?.children) continue;
-          for (const childId of pageRoot.children) {
-            allChildIds.add(childId);
-            const child = elements[childId];
-            if (child?.type === 'webpage' && child.children) {
-              for (const fc of child.children) allChildIds.add(fc);
-            }
-          }
+          walkNode(page.rootId);
         }
 
         for (const nodeId of allChildIds) {

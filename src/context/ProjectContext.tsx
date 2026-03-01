@@ -139,7 +139,12 @@ interface ProjectContextType {
     updatePageSEO: (pageId: string, seo: Partial<import('../types').PageSEO>) => void;
 
     // ── History ───────────────────────────────────────────────────────────────
+    /** @deprecated Use flat `undo`/`redo` — `history` object re-creates on every render */
     history: { undo: () => void; redo: () => void };
+    /** Stable identity — safe in useEffect dep arrays */
+    undo: () => void;
+    /** Stable identity — safe in useEffect dep arrays */
+    redo: () => void;
 
     // ── Snapping (Retained-Mode LayoutEngine) ─────────────────────────────────
     /**
@@ -242,6 +247,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const [pages, setPages] = useState<Page[]>([{ id: 'page-home', name: 'Home', slug: '/', rootId: 'page-home' }]);
     const [activePageId, setActivePageId] = useState('page-home');
+    // S-4 / H-2 FIX: stable ref mirroring activePageId so syncLayoutEngine ([] deps)
+    // can read the current page without having activePageId in its dep array.
+    const activePageIdRef = useRef(activePageId);
+    useEffect(() => { activePageIdRef.current = activePageId; }, [activePageId]);
 
     // ── Wasm refs ─────────────────────────────────────────────────────────────
     // Phase 9: HistoryManager moved into history.worker.ts — it now runs entirely
@@ -446,12 +455,19 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             historyWorkerRef.current = worker;
 
             worker.onmessage = (e: MessageEvent) => {
-                const { type, payload } = e.data as { type: string; payload?: string };
+                const { type, payload, index } = e.data as { type: string; payload?: string; index?: number };
                 if (type === 'READY') {
                     // Use elementsRef so we get the IDB-hydrated state if it arrived first
                     worker.postMessage({ type: 'INIT', payload: elementsRef.current });
                 } else if (type === 'UNDO_RESULT' || type === 'REDO_RESULT') {
-                    try { setElements(JSON.parse(payload!)); }
+                    try {
+                        setElements(JSON.parse(payload!));
+                        // S-3 FIX: update historyIndex when worker handles undo/redo.
+                        // Previously historyIndex stayed frozen at 0 for the entire worker
+                        // session. On worker crash the JS fallback started pushHistory at
+                        // slot 0, silently overwriting all session history.
+                        if (typeof index === 'number') setHistoryIndex(index);
+                    }
                     catch (err) { console.error('[ProjectContext] History restore failed:', err); }
                 }
             };
@@ -586,24 +602,36 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (!skipHistory) pushHistory(newElements);
     }, [pushHistory]);
 
+    // H-1 FIX: historyIndex in dep array → new function on every state change.
+    // Rapid Cmd+Z (held key) queued multiple calls but all read the same stale
+    // historyIndex from the render snapshot — undo held at the same slot.
+    // setHistoryIndex(prev => ...) reads the COMMITTED index, not the captured one.
     const undo = useCallback(() => {
         if (historyWorkerRef.current) {
             // Result arrives asynchronously via onmessage → UNDO_RESULT → setElements
             historyWorkerRef.current.postMessage({ type: 'UNDO' });
-        } else if (historyIndex > 0) {
-            setHistoryIndex(p => p - 1);
-            setElements(historyStack[historyIndex - 1]);
+        } else {
+            setHistoryIndex(prev => {
+                if (prev <= 0) return prev;
+                // historyStack is a replace-array (new ref on every push),
+                // so reading it here is safe — it's the one captured at callback creation.
+                setElements(historyStack[prev - 1]);
+                return prev - 1;
+            });
         }
-    }, [historyIndex, historyStack]);
+    }, [historyStack]); // historyIndex removed — read via functional updater
 
     const redo = useCallback(() => {
         if (historyWorkerRef.current) {
             historyWorkerRef.current.postMessage({ type: 'REDO' });
-        } else if (historyIndex < historyStack.length - 1) {
-            setHistoryIndex(p => p + 1);
-            setElements(historyStack[historyIndex + 1]);
+        } else {
+            setHistoryIndex(prev => {
+                if (prev >= historyStack.length - 1) return prev;
+                setElements(historyStack[prev + 1]);
+                return prev + 1;
+            });
         }
-    }, [historyIndex, historyStack]);
+    }, [historyStack]); // historyIndex removed — read via functional updater
 
     // ── Phase 5 + 11: Retained-Mode LayoutEngine ──────────────────────────────
 
@@ -617,12 +645,26 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     const syncLayoutEngine = useCallback((draggedId: string) => {
         if (!layoutEngineRef.current) return;
         const els = elementsRef.current; // stable ref — no closure on elements state
+
+        // H-2 FIX: filter to only active-page descendants.
+        // Previously ALL absolutely-positioned elements across ALL pages were loaded
+        // into the WASM engine during every drag — phantom guide lines from off-page
+        // elements appeared at seemingly random coordinates on multi-page projects.
+        // activePageIdRef (stable ref, [] dep safe) gives us the current page without
+        // adding activePageId to this callback's dep array.
+        const currentPageId = activePageIdRef.current;
+        const pageDescendants = new Set<string>();
+        const walkPage = (id: string) => {
+            if (pageDescendants.has(id)) return; // cycle-guard
+            pageDescendants.add(id);
+            (els[id]?.children || []).forEach(walkPage);
+        };
+        walkPage(currentPageId);
+
         const siblings = Object.values(els)
             .filter(el =>
                 el.id !== draggedId &&
-                el.type !== 'page' &&
-                el.type !== 'webpage' &&
-                el.id !== 'application-root' &&
+                pageDescendants.has(el.id) &&      // H-2: active-page only
                 el.props?.style?.position === 'absolute'
             )
             .map(el => ({
@@ -638,7 +680,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         } catch (e) {
             console.warn('[LayoutEngine] update_rects failed:', e);
         }
-    }, []); // [] — stable identity: reads elements via elementsRef, not closure
+    }, []); // [] — reads elements + activePageId via refs, stable identity
 
     /**
      * Fast 60fps snap query — only 5 scalar args cross the Wasm boundary.
@@ -828,6 +870,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (activePageId === id) {
             setActivePageId(remaining[0]?.id || 'page-home');
         }
+        // M-4 FIX: notify UIContext to evict this page's viewport cache entry.
+        // Without this the pageViewportCache Map grows unboundedly on AI-driven
+        // page churn (each deleted page's ~128-byte entry was never reclaimed).
+        window.dispatchEvent(new CustomEvent('vectra:page-deleted', { detail: { pageId: id } }));
     }, [pages, activePageId]);
 
     const switchPage = useCallback((pageId: string) => {
@@ -1205,7 +1251,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             parentMap,
             pages, activePageId, setActivePageId, realPageId: activePageId,
             addPage, deletePage, switchPage, updatePageSEO,
+            // S-2 FIX: expose undo/redo as flat stable values in addition to
+            // the deprecated `history` shape (kept for back-compat).
+            // `history: { undo, redo }` re-created a new object every render,
+            // causing any useEffect([history]) subscriber to fire unnecessarily.
             history: { undo, redo },
+            undo,
+            redo,
             syncLayoutEngine, querySnapping,
             theme, updateTheme: (u) => setTheme(p => ({ ...p, ...u })),
             dataSources,

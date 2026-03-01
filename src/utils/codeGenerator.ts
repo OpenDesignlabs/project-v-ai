@@ -964,11 +964,13 @@ export const generateRootLayout = (
   theme?: { primary?: string; secondary?: string; accent?: string; font?: string }
 ): string => {
   const hasMultiplePages = pages.length > 1;
+  // C-2 FIX: `< Navbar />` (space after `<`) is invalid JSX — Next.js compiler rejects it.
+  // Also removed the stray ` ` before `\n` in navbarImport.
   const navbarImport = hasMultiplePages
-    ? `import Navbar from '@/components/Navbar'; \n`
+    ? `import Navbar from '@/components/Navbar';\n`
     : '';
   const navbarJsx = hasMultiplePages
-    ? `\n < Navbar /> `
+    ? `\n        <Navbar />`
     : '';
 
   const cssVars = theme
@@ -1046,12 +1048,14 @@ export const deduplicatePageSlugs = (pages: Page[]): Page[] => {
       return page;
     }
 
-    // Collision — find a safe suffix
+    // C-3 FIX: `${slug} -${counter} ` had a literal space before the hyphen and a
+    // trailing space — slugToNextPath would produce `app/about -2 /page.tsx`.
+    // VFS creates directories with spaces; Next.js routing can never resolve them.
     let counter = 2;
-    let candidate = `${slug} -${counter} `;
+    let candidate = `${slug}-${counter}`;
     while (seen.has(candidate)) {
       counter++;
-      candidate = `${slug} -${counter} `;
+      candidate = `${slug}-${counter}`;
     }
 
     console.warn(

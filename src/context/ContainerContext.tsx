@@ -104,13 +104,12 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
     const devServerProcessRef = useRef<any>(null);
     const isInitialized = useRef(false);
 
-    // S-1 FIX: push + truncate instead of spread+slice on every message.
-    // During pnpm install (hundreds of lines/sec) the old pattern created a new
-    // array per log line, generating significant GC pressure.
+    // S-1 FIX (corrected): always 1 new array. Previous "fix" created 2 at the
+    // 100-entry boundary (prev.slice(-99) + spread). Push-then-slice is always 1.
     const log = useCallback((msg: string) => {
         setTerminalOutput(prev => {
-            const next = prev.length >= 100 ? prev.slice(-99) : prev;
-            return [...next, msg];
+            const next = [...prev, msg];
+            return next.length > 100 ? next.slice(-100) : next;
         });
         console.log(`[VFS] ${msg}`);
     }, []);

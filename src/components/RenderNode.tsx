@@ -460,7 +460,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (dragData.type === 'NEW') {
             const conf = componentRegistry[dragData.payload];
             if (conf) {
-                const newId = `el-${Date.now()}`;
+                // M-1 FIX: crypto.randomUUID() — Date.now() collides on same-ms drops
+                const newId = `el-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
                 const isFrame = dragData.payload === 'webpage' || dragData.payload === 'canvas';
                 const defaultW = isFrame ? 1440 : 200;
                 const defaultH = isFrame ? 1080 : 100;
@@ -486,8 +487,17 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     src: conf.src
                 };
 
-                const newElements = { ...elements, [newId]: newNode };
-                newElements[elementId].children = [...(newElements[elementId].children || []), newId];
+                // C-1 FIX: build the final map immutably. The target container node
+                // is cloned in the same spread — never mutated after construction.
+                const currentEl = elements[elementId];
+                const newElements = {
+                    ...elements,
+                    [newId]: newNode,
+                    [elementId]: {
+                        ...currentEl,
+                        children: [...(currentEl.children || []), newId],
+                    },
+                };
                 updateProject(newElements);
                 setSelectedId(newId);
             }
@@ -499,20 +509,36 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 const w = parseFloat(String(newNodes[rootId].props.style?.width || 0));
                 const h = parseFloat(String(newNodes[rootId].props.style?.height || 0));
 
-                newNodes[rootId].props.style = {
+                // C-1 FIX: build new root style immutably (no in-place write)
+                const rootStyle: React.CSSProperties = {
                     ...newNodes[rootId].props.style,
-                    position: element.props.layoutMode === 'flex' ? 'relative' : 'absolute',
+                    position: (element.props.layoutMode === 'flex' ? 'relative' : 'absolute') as React.CSSProperties['position'],
                     left: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropX - w / 2)}px`,
-                    top: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropY - h / 2)}px`
+                    top: element.props.layoutMode === 'flex' ? 'auto' : `${Math.round(dropY - h / 2)}px`,
                 };
+                newNodes[rootId] = { ...newNodes[rootId], props: { ...newNodes[rootId].props, style: rootStyle } };
+
+                const currentEl = elements[elementId];
+                const newChildren = [...(currentEl.children || []), rootId];
 
                 if (isArtboard) {
                     const currentH = parseFloat(String(element.props.style?.height || rect.height / zoom));
                     const bottomEdge = (dropY - h / 2) + h + 50;
                     if (bottomEdge > currentH) {
-                        const newElements = { ...elements, ...newNodes };
-                        newElements[elementId].props.style = { ...newElements[elementId].props.style, height: `${bottomEdge}px` };
-                        newElements[elementId].children = [...(newElements[elementId].children || []), rootId];
+                        // C-1 FIX: TEMPLATE artboard auto-grow path — two separate
+                        // mutations were applied on the same reference. Build atomically.
+                        const newElements = {
+                            ...elements,
+                            ...newNodes,
+                            [elementId]: {
+                                ...currentEl,
+                                props: {
+                                    ...currentEl.props,
+                                    style: { ...currentEl.props.style, height: `${bottomEdge}px` },
+                                },
+                                children: newChildren,
+                            },
+                        };
                         updateProject(newElements);
                         setSelectedId(rootId);
                         setDragData(null);
@@ -520,14 +546,18 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     }
                 }
 
-                const newElements = { ...elements, ...newNodes };
-                newElements[elementId].children = [...(newElements[elementId].children || []), rootId];
+                const newElements = {
+                    ...elements,
+                    ...newNodes,
+                    [elementId]: { ...currentEl, children: newChildren },
+                };
                 updateProject(newElements);
                 setSelectedId(rootId);
             }
         }
         else if (dragData.type === 'ASSET_IMAGE') {
-            const newId = `img-${Date.now()}`;
+            // M-1 FIX: crypto.randomUUID()
+            const newId = `img-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             const imgW = 256;
             const imgH = 192;
             const newNode = {
@@ -543,13 +573,19 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 },
                 src: dragData.payload,
             };
-            const newElements = { ...elements, [newId]: newNode };
-            newElements[elementId].children = [...(newElements[elementId].children || []), newId];
+            // C-1 FIX: immutable container clone
+            const currentEl = elements[elementId];
+            const newElements = {
+                ...elements,
+                [newId]: newNode,
+                [elementId]: { ...currentEl, children: [...(currentEl.children || []), newId] },
+            };
             updateProject(newElements);
             setSelectedId(newId);
         }
         else if (dragData.type === 'ICON') {
-            const newId = `icon-${Date.now()}`;
+            // M-1 FIX: crypto.randomUUID()
+            const newId = `icon-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             const iconSize = 48;
             const newNode = {
                 id: newId, type: 'icon', name: dragData.payload, children: [],
@@ -563,13 +599,19 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     }
                 }
             };
-            const newElements = { ...elements, [newId]: newNode };
-            newElements[elementId].children = [...(newElements[elementId].children || []), newId];
+            // C-1 FIX: immutable container clone
+            const currentEl = elements[elementId];
+            const newElements = {
+                ...elements,
+                [newId]: newNode,
+                [elementId]: { ...currentEl, children: [...(currentEl.children || []), newId] },
+            };
             updateProject(newElements);
             setSelectedId(newId);
         }
         else if (dragData.type === 'DATA_BINDING') {
-            const newId = `data-${Date.now()}`;
+            // M-1 FIX: crypto.randomUUID()
+            const newId = `data-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             const isFlex = element.props.layoutMode === 'flex';
             const newNode: VectraNode = {
                 id: newId, type: 'text', name: dragData.payload, children: [],
@@ -584,8 +626,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 },
                 content: `{{${dragData.payload}}}`
             };
-            const newElements: VectraProject = { ...elements, [newId]: newNode };
-            newElements[elementId].children = [...(newElements[elementId].children || []), newId];
+            // C-1 FIX: immutable container clone
+            const currentEl = elements[elementId];
+            const newElements: VectraProject = {
+                ...elements,
+                [newId]: newNode,
+                [elementId]: { ...currentEl, children: [...(currentEl.children || []), newId] },
+            };
             updateProject(newElements);
             setSelectedId(newId);
         }
