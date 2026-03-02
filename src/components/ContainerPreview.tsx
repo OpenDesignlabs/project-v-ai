@@ -95,7 +95,6 @@ export const ContainerPreview = () => {
     );
 
     if (customEls.length === 0) {
-      // No AI component yet — show the muted placeholder or clear the shell
       if (iframeRef.current?.contentWindow && iframeReady) {
         iframeRef.current.contentWindow.postMessage({ type: 'UPDATE_CODE', code: '' }, '*');
       } else if (iframeRef.current && !iframeReady) {
@@ -106,17 +105,83 @@ export const ContainerPreview = () => {
 
     setIsCompiling(true);
     try {
-      // 1. Strip imports + fix icon aliases (same pass used by the old sandbox)
-      //    then compile TSX → CJS JS via Rust SWC in parallel
+      // Compile all sections in parallel (Rust SWC, ~5ms each)
       const compiledParts = await Promise.all(
         customEls.map(el => compileComponent(stripAndFixCode(el.code as string)))
       );
-      const combinedCode = compiledParts.join('\n\n');
 
-      // 2. Send pre-compiled JS to the shell — it executes via new Function()
+      let finalCode: string;
+
+      if (compiledParts.length === 1) {
+        // ── Single component — pass through unchanged ───────────────────────
+        finalCode = compiledParts[0];
+
+      } else {
+        // ── Fix-B3: exports.default property interceptor ──────────────────
+        //
+        // WHY THE RENAME APPROACH FAILED (Fix-B2):
+        //   SWC sometimes emits `exports.default = function HeroSection(props) {`
+        //   (assignment + inline function in one expression). My rename regex
+        //   matched `exports.default = function` → replaced with
+        //   `exports.default = __section_0` → left `HeroSection(props) {` as a
+        //   bare identifier → SyntaxError: Unexpected identifier 'HeroSection'.
+        //
+        // FIX — Property interceptor:
+        //   Use Object.defineProperty to add a setter on the shared `exports`
+        //   object the shell's new Function provides. Each compiled section's
+        //   `exports.default = SectionFn` goes through the setter, which captures
+        //   the component in __section_captures[] without overwriting anything.
+        //   After all N sections have run, the setter is cleared and VectraPage
+        //   (which renders all captured sections in flex-col) is installed.
+        //   Works for every SWC output format — no renaming, no regex fragility.
+
+        finalCode = `
+// ── Fix-B3: Section interceptor setup ────────────────────────────────────
+var __section_captures = [];
+var __capture_idx = 0;
+
+// Intercept exports.default so each section's component is captured in order
+// rather than overwriting the previous one.
+Object.defineProperty(exports, 'default', {
+  configurable: true,
+  enumerable: true,
+  set: function(__v) {
+    if (typeof __v === 'function') {
+      __section_captures[__capture_idx++] = __v;
+    }
+  },
+  get: function() {
+    return __section_captures[__section_captures.length - 1] || null;
+  }
+});
+
+// ── Compiled sections — each assigns exports.default = SectionComponent ──
+${compiledParts.join('\n\n')}
+
+// ── Restore exports.default and install VectraPage ────────────────────────
+Object.defineProperty(exports, 'default', {
+  configurable: true, enumerable: true, writable: true, value: null
+});
+
+var __valid_sections = __section_captures.filter(function(s) {
+  return typeof s === 'function';
+});
+
+exports['default'] = function VectraPage(props) {
+  return React.createElement(
+    'div',
+    { style: { width: '100%', display: 'flex', flexDirection: 'column', minHeight: '100vh' } },
+    __valid_sections.map(function(Section, i) {
+      return React.createElement(Section, { key: i });
+    })
+  );
+};
+`;
+      }
+
       if (iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.postMessage(
-          { type: 'UPDATE_CODE', code: combinedCode }, '*'
+          { type: 'UPDATE_CODE', code: finalCode }, '*'
         );
       }
     } catch (e) {

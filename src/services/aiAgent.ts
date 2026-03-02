@@ -11,7 +11,7 @@ export const AI_CONFIG = {
 
     // HYBRID MODELS
     primaryModel: 'zai-org/GLM-4.7-Flash:zai-org',                      // GLM-5 via Zhipu (GLM-4.7 provider was offline)
-    debuggerModel: 'deepseek-ai/DeepSeek-V3.1:fireworks-ai',       // DeepSeek-V3.2 via Fireworks AI
+    debuggerModel: 'zai-org/GLM-5:zai-org',       // DeepSeek-V3.2 via Fireworks AI
 
     // DUAL API KEYS — split traffic, double the free quota
     primaryApiKey: import.meta.env.VITE_AI_PRIMARY_KEY || import.meta.env.VITE_AI_HF_TOKEN || '',
@@ -246,47 +246,66 @@ const buildCanvasContext = (
 /**
  * extractSections
  * ───────────────
- * Splits AI-generated code by `// COMPONENT: Name` markers into a Map
- * of componentName → standalone function code.
+ * Splits AI-generated code into independent section functions.
  *
- * WHY MARKERS: The AI can't reliably split multiple export defaults into
- * separate code blocks. A single code block with named markers is parsed
- * deterministically without regex ambiguity.
+ * TIER 1 — Marker-based (preferred):
+ *   Splits by `// COMPONENT: Name` markers. Clean and deterministic.
  *
- * FALLBACK: If no markers exist (simple single-component prompt), the
- * whole code block is returned under the key 'default'.
+ * TIER 2 — Export-boundary-based (fallback when AI ignores markers):
+ *   Splits by `export default function Name` boundaries. Handles the
+ *   common AI failure where it writes multiple exports in one block
+ *   without using any markers.
+ *
+ * TIER 3 — Whole-block fallback:
+ *   Returns the entire rawCode as a single section under 'default'.
  */
 const extractSections = (rawCode: string): Map<string, string> => {
     const sections = new Map<string, string>();
 
-    // Split by the // COMPONENT: marker
+    // ── TIER 1: // COMPONENT: marker split ───────────────────────────────────
     const parts = rawCode.split(/\/\/\s*COMPONENT:\s*(\w+)/);
     // parts = ['preamble', 'Name1', 'code1', 'Name2', 'code2', ...]
 
-    if (parts.length < 3) {
-        // No markers — single component fallback
-        const name = rawCode.match(/export default function\s+(\w+)/)?.[1] ?? 'Component';
-        sections.set(name, rawCode.trim());
-        sections.set('default', rawCode.trim());
-        return sections;
-    }
-
-    for (let i = 1; i < parts.length; i += 2) {
-        const name = parts[i].trim();
-        const code = (parts[i + 1] ?? '').trim();
-        if (name && code) {
-            // Ensure each section has a clean export default
-            const normalized = code.startsWith('export default function')
-                ? code
-                : code.replace(/^function\s+/, 'export default function ');
-            sections.set(name, normalized);
+    if (parts.length >= 3) {
+        for (let i = 1; i < parts.length; i += 2) {
+            const name = parts[i].trim();
+            const code = (parts[i + 1] ?? '').trim();
+            if (name && code) {
+                const normalized = code.startsWith('export default function')
+                    ? code
+                    : code.replace(/^function\s+/, 'export default function ');
+                sections.set(name, normalized);
+            }
+        }
+        if (sections.size > 0) {
+            sections.set('default', sections.values().next().value!);
+            return sections;
         }
     }
 
-    // 'default' always points to the first section for fallback injection
-    const first = sections.values().next().value;
-    if (first) sections.set('default', first);
+    // ── TIER 2: export default function boundary split ───────────────────────
+    // Regex: match each `export default function Name` block by splitting on
+    // the keyword boundary. Each captured block becomes one independent section.
+    const exportMatches = [...rawCode.matchAll(/export\s+default\s+function\s+(\w+)/g)];
+    if (exportMatches.length >= 2) {
+        // Find start positions of each function
+        const positions = exportMatches.map(m => ({ name: m[1], start: m.index! }));
+        positions.forEach((pos, idx) => {
+            const end = positions[idx + 1]?.start ?? rawCode.length;
+            const code = rawCode.slice(pos.start, end).trim();
+            if (code) sections.set(pos.name, code);
+        });
+        if (sections.size > 0) {
+            sections.set('default', sections.values().next().value!);
+            console.log(`🔧 extractSections TIER-2: Split ${sections.size - 1} sections by export boundary`);
+            return sections;
+        }
+    }
 
+    // ── TIER 3: whole-block fallback ─────────────────────────────────────────
+    const name = rawCode.match(/export default function\s+(\w+)/)?.[1] ?? 'Component';
+    sections.set(name, rawCode.trim());
+    sections.set('default', rawCode.trim());
     return sections;
 };
 
@@ -299,78 +318,90 @@ const processCloudLLM = async (
 
     const isPagePrompt = /page|website|portfolio|landing|blog|store|dashboard/i.test(prompt);
 
-    const systemPrompt = `VECTRA UI ENGINE — MULTI-SECTION WEBSITE BUILDER
+    // ── ARCHITECTURE NOTE ────────────────────────────────────────────────────
+    // We use ONE component for EVERYTHING — both full-page and single-element.
+    //
+    // WHY: Previous approach (3 custom_code nodes) broke in two places:
+    //   1. Canvas: LiveComponent compiles each node's el.code via Babel worker
+    //      independently. All nodes ended up with the same code because the AI
+    //      either ignored markers or generated identical section functions.
+    //   2. Preview: Composing 3 CJS modules is impossible cleanly — Babel's
+    //      output uses Object.defineProperty with configurable:false on some
+    //      export assignments, blocking our interceptor.
+    //
+    // FIX: ONE LandingPage component for full-page prompts. All sections live
+    // as named inner functions called inside ONE JSX return. ONE custom_code
+    // node → ONE LiveComponent → ONE Babel compile → zero collision.
+    // PreviewMode (ContainerPreview) also sees 1 element → single-path → works.
 
-You MUST return EXACTLY two code blocks. Nothing else outside them.
+    const systemPrompt = `VECTRA UI ENGINE — REACT COMPONENT GENERATOR
+
+You MUST return EXACTLY two fenced code blocks. NO other text outside them.
 
 ═══════════════════════════════════════════════════════════════════
-BLOCK 1 — Independent React sections (NO import statements)
+BLOCK 1 — One self-contained React component (NO import statements)
 
-For FULL PAGE requests (website/landing/portfolio/dashboard):
-  Generate 3–6 independent sections. Each starts with a marker comment.
-  Each is a COMPLETELY SELF-CONTAINED component — no cross-references.
+${isPagePrompt ? `This is a FULL PAGE request. Generate ONE component named LandingPage.
+Define each visual section as a named inner function, then call them in the return.
 
-  // COMPONENT: HeroSection
-  export default function HeroSection(props) {
+\`\`\`jsx
+export default function LandingPage(props) {
+  // ── Inner section components ──────────────────────────────────────────
+  function HeroSection() {
     return (
-      <section className="w-full min-h-[700px] bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black flex flex-col items-center justify-center px-8 py-20">
-        {/* ... hero content ... */}
+      <section className="w-full min-h-[700px] bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black flex flex-col items-center justify-center px-8 py-20 text-white">
+        {/* hero content */}
       </section>
     );
   }
 
-  // COMPONENT: FeaturesSection
-  export default function FeaturesSection(props) {
+  function FeaturesSection() {
     return (
-      <section className="w-full py-24 bg-slate-950">
-        {/* ... features content ... */}
+      <section className="w-full py-24 bg-slate-950 text-white">
+        {/* features grid */}
       </section>
     );
   }
 
-  // COMPONENT: CTASection
-  export default function CTASection(props) {
+  function CTASection() {
     return (
-      <section className="w-full py-20 bg-gradient-to-r from-blue-900/30 to-indigo-900/30 border-t border-white/10">
-        {/* ... CTA content ... */}
+      <section className="w-full py-20 bg-gradient-to-r from-blue-900/30 to-indigo-900/30 border-t border-white/10 text-white">
+        {/* CTA */}
       </section>
     );
   }
 
-For SINGLE ELEMENT requests (button, card, nav, hero only):
-  ONE component. No // COMPONENT: marker needed.
-
-  export default function HeroSection(props) {
-    return ( ... );
-  }
-═══════════════════════════════════════════════════════════════════
-BLOCK 2 — JSON config
-
-For FULL PAGE — wrapper container + one custom_code child per section:
-\`\`\`json
-{
-  "rootId": "page_wrapper",
-  "elements": {
-    "page_wrapper": {
-      "id": "page_wrapper",
-      "type": "container",
-      "name": "Page",
-      "props": { "className": "w-full flex flex-col", "layoutMode": "flex", "style": { "width": "100%" } },
-      "children": ["hero_1", "feat_1", "cta_1"]
-    },
-    "hero_1": { "id": "hero_1", "type": "custom_code", "name": "HeroSection", "props": {}, "children": [] },
-    "feat_1": { "id": "feat_1", "type": "custom_code", "name": "FeaturesSection", "props": {}, "children": [] },
-    "cta_1": { "id": "cta_1", "type": "custom_code", "name": "CTASection", "props": {}, "children": [] }
-  }
+  // ── Layout: render all sections stacked ────────────────────────────────
+  return (
+    <main className="w-full flex flex-col bg-slate-950 text-white min-h-screen">
+      <HeroSection />
+      <FeaturesSection />
+      <CTASection />
+    </main>
+  );
 }
-\`\`\`
+\`\`\`` : `This is a SINGLE ELEMENT request. Generate ONE self-contained component.
 
-For SINGLE ELEMENT:
+\`\`\`jsx
+export default function ComponentName(props) {
+  return ( /* ... */ );
+}
+\`\`\``}
+
+═══════════════════════════════════════════════════════════════════
+BLOCK 2 — JSON config (ALWAYS a single custom_code node)
+
 \`\`\`json
 {
   "rootId": "custom_1",
   "elements": {
-    "custom_1": { "id": "custom_1", "type": "custom_code", "name": "Component Name", "props": {}, "children": [] }
+    "custom_1": {
+      "id": "custom_1",
+      "type": "custom_code",
+      "name": "${isPagePrompt ? 'LandingPage' : 'Component'}",
+      "props": {},
+      "children": []
+    }
   }
 }
 \`\`\`
@@ -380,27 +411,27 @@ For SINGLE ELEMENT:
 - Signature MUST be: export default function ComponentName(props) { ... }
 - NO import statements. React, motion, Lucide, cn are global.
 - Icons — dot notation ONLY: <Lucide.Sparkles />
-  FATAL ERROR: NEVER write <Icon="Name" /> or <Icon name="Name" /> — invalid JSX, crashes compiler.
+  FATAL ERROR: NEVER write <Icon="Name" /> or <Icon name="Name" /> — invalid JSX.
   FATAL ERROR: NEVER write <Lucide[item.icon] /> — bracket notation in JSX is FORBIDDEN.
   For dynamic icons in loops: const IC = Lucide[item.icon] || Lucide.HelpCircle; then <IC />
 - Tailwind: standard utilities or arbitrary values bg-[#0f172a]. NEVER custom tokens (bg-primary).
-- Framer: ONLY animate opacity/scale/x/y/rotate. NEVER animate Tailwind class strings (crashes).
+- Framer: ONLY animate opacity/scale/x/y/rotate. NEVER animate Tailwind class strings.
   Colors → Tailwind hover: classes. Glow → whileHover={{ boxShadow: '0 0 20px #3b82f6' }}
 - Stagger lists: transition={{ delay: i * 0.1 }}
 - whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} on all cards & buttons.
 
 [LAYOUT RULES — CRITICAL]
-- Each section root: w-full, NO fixed height. Use min-h-[Npx] or py-N for spacing.
-- NEVER position:absolute or position:fixed on any section root.
-- Sections stack vertically via the parent flex-col container. Do NOT try to position them.
-- Each section is rendered independently — it cannot reference variables from other sections.
+- Section root elements: w-full, NO fixed height. Use min-h-[Npx] or py-N for spacing.
+- NEVER position:absolute or position:fixed on section roots.
+- For full pages: wrap everything in a flex-col main tag.
 
 [DESIGN]
 - Dark glassmorphism: bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl
 - Background: bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black
 - Headers: tracking-tight font-bold. Body: text-slate-400 leading-relaxed.
 - Fully responsive: sm: md: lg: prefixes on all layouts.
-- Default for vague prompts: stunning Hero section + Feature grid + CTA footer.
+- For full page prompts: at minimum generate Hero + Features + CTA sections.
+- Make it stunning — dark glassmorphism, gradient text, Framer Motion animations.
 
 ${canvasContext ? `[CURRENT CANVAS STATE — read before generating]
 ${canvasContext}
@@ -412,7 +443,9 @@ Rules for context awareness:
 - Match the existing visual density and color scheme.
 - New sections should visually complement what's already there.` : '[CURRENT CANVAS STATE: empty — generate freely]'}`;
 
+
     let content = '';
+
 
     try {
         console.log('🔑 Calling AI Code Generator...');
@@ -462,22 +495,14 @@ Rules for context awareness:
             throw new Error('Invalid JSON structure (missing elements or rootId)');
         }
 
-        // ── FIX-3: Multi-section code injection ────────────────────────────
-        // extractSections() splits the code block by // COMPONENT: markers.
-        // Each custom_code node in the JSON gets its matching section code.
-        // If names don't match (AI hallucinated a different name), fallback
-        // to the first available section so no node is left without code.
-        const sections = extractSections(rawReactCode);
-        console.log(`🔧 Sections found: [${Array.from(sections.keys()).filter(k => k !== 'default').join(', ')}]`);
-
+        // ── Inject code into custom_code node(s) ──────────────────────────────
+        // New architecture: the prompt always generates ONE custom_code node
+        // (LandingPage for pages, ComponentName for single elements).
+        // Inject rawReactCode directly into every custom_code element found.
         let injectedCount = 0;
         for (const el of Object.values(parsed.elements) as any[]) {
             if (el.type === 'custom_code') {
-                // Match by element name (which equals the component function name)
-                const code = sections.get(el.name)
-                    ?? sections.get('default')
-                    ?? rawReactCode;
-                el.code = code;
+                el.code = rawReactCode;
                 injectedCount++;
             }
         }
@@ -486,16 +511,14 @@ Rules for context awareness:
             throw new Error("AI JSON contained no 'custom_code' elements — cannot inject code");
         }
 
-        console.log(
-            `✅ Generated ${Object.keys(parsed.elements).length} element(s),`,
-            `${injectedCount} code section(s) injected.`
-        );
+
+        console.log(`✅ Generated ${Object.keys(parsed.elements).length} element(s), ${injectedCount} code block(s) injected.`);
 
         return {
             action: 'create',
             elements: parsed.elements,
             rootId: parsed.rootId,
-            message: `Generated ${injectedCount} section${injectedCount > 1 ? 's' : ''} with AI ✨`,
+            message: `Generated with AI ✨`,
         };
 
     } catch (e) {

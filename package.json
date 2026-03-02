@@ -3,6 +3,13 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
+  "packageManager": "pnpm@10.27.0",
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=9.0.0",
+    "npm": "please-use-pnpm",
+    "yarn": "please-use-pnpm"
+  },
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
@@ -46,5 +53,11 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.46.4",
     "vite": "^7.2.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@swc/core",
+      "esbuild"
+    ]
   }
 }
