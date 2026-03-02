@@ -299,8 +299,22 @@ export const Canvas = () => {
 
         // ── Data binding drop ───────────────────────────────────────────────
         if (dragData.type === 'DATA_BINDING') {
+            // C-3 FIX: scope candidate search to active-page descendants only.
+            // Object.values(elements) spans ALL pages — elements from other pages
+            // share the same world coordinate space (same left/top values) and
+            // produce false-positive hits, silently writing {{binding}} to an
+            // off-page element the user cannot see.
+            const pageDescendants = new Set<string>();
+            const walkForBinding = (id: string) => {
+                if (pageDescendants.has(id)) return; // cycle-guard
+                pageDescendants.add(id);
+                (elements[id]?.children || []).forEach(walkForBinding);
+            };
+            walkForBinding(activePageId);
+
             const candidates = Object.values(elements)
                 .filter(el => {
+                    if (!pageDescendants.has(el.id)) return false; // active page only
                     const style = el.props.style;
                     if (!style || !style.left || !style.top) return false;
                     const x = parseFloat(String(style.left));

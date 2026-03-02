@@ -324,14 +324,25 @@ export const useFileSync = () => {
           }
 
           for (const page of safePages) {
-            const pageRoot = elements[page.rootId];
-            const children = pageRoot?.children || [];
-            const structureKey = JSON.stringify(
-              children.map(cid => ({
-                id: cid,
-                ref: elements[cid] ? Object.keys(elements[cid].props || {}).length : 0,
-              }))
-            );
+            // H-1 FIX: the previous structureKey used Object.keys(props).length
+            // per direct child — a count that never changes on text edits, style
+            // value changes, src changes, or mutations to nested nodes.
+            // Result: page file was never re-synced for the most common editor ops.
+            //
+            // Replacement: recursive subtree walk accumulating id + full node JSON.
+            // elements is replaced immutably on every edit, so any descendant change
+            // produces a new object ref → new JSON.stringify → different structureKey.
+            // Cost: JSON.stringify is O(subtree) but paid once per changed page per
+            // 1s debounce tick — never on the 60fps hot path.
+            const collectSubtreeForKey = (id: string, out: string[]) => {
+              const node = elements[id];
+              if (!node) return;
+              out.push(`${id}:${JSON.stringify(node)}`);
+              (node.children || []).forEach(cid => collectSubtreeForKey(cid, out));
+            };
+            const subtreeFragments: string[] = [];
+            collectSubtreeForKey(page.rootId, subtreeFragments);
+            const structureKey = subtreeFragments.join('|');
 
             const filePath = slugToNextPath(page.slug);
             const prevEntry = prevPageStructuresRef.current[page.id];

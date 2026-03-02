@@ -11,7 +11,7 @@ export const AI_CONFIG = {
 
     // HYBRID MODELS
     primaryModel: 'zai-org/GLM-4.7-Flash:zai-org',                      // GLM-5 via Zhipu (GLM-4.7 provider was offline)
-    debuggerModel: 'meta-llama/Llama-3.1-8B-Instruct:scaleway',       // DeepSeek-V3.2 via Fireworks AI
+    debuggerModel: 'deepseek-ai/DeepSeek-V3.1:fireworks-ai',       // DeepSeek-V3.2 via Fireworks AI
 
     // DUAL API KEYS — split traffic, double the free quota
     primaryApiKey: import.meta.env.VITE_AI_PRIMARY_KEY || import.meta.env.VITE_AI_HF_TOKEN || '',

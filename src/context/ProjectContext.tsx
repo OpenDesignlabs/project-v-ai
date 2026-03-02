@@ -1195,7 +1195,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         // ── Worker path (Phase 10) — compilation off main thread ──────────
         if (swcWorkerRef.current) {
             return new Promise<string>((resolve) => {
-                const id = Math.random().toString(36).substring(2, 11);
+                // M-3 FIX: Math.random() collision space ≈ 101B — non-zero for rapid
+                // concurrent compilations. crypto.randomUUID() is collision-proof and
+                // consistent with the project-wide ID generation standard.
+                const id = crypto.randomUUID();
                 pendingCompilesRef.current.set(id, resolve);
                 swcWorkerRef.current!.postMessage({ id, code });
 

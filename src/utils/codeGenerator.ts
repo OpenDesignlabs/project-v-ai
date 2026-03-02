@@ -253,7 +253,7 @@ export default function ${compName}() {
       <style dangerouslySetInnerHTML={{ __html: VECTRA_MOBILE_CSS }} />
       <div
         className="vectra-canvas-frame relative"
-        style={{ width: ${canvasWidth}, minHeight: ${canvasHeight}, margin: '0 auto' }}
+        style={{ width: '${canvasWidth}px', minHeight: '${canvasHeight}px', margin: '0 auto' }}
       >
 ${jsxContent}      </div>
     </div>
@@ -869,20 +869,28 @@ ${jsxContent}
  * generateNextNavbar — responsive Navbar with Next.js <Link>.
  * 'use client' component (uses useState for mobile toggle).
  * Only generated when project has 2+ pages.
+ *
+ * C-1 FIX (fourth pass): The previous template literal had three classes of JSX
+ * syntax errors that caused `next build` to fail for every multi-page export:
+ *   A) `aria - label` — binary subtraction expression, not a JSX attribute.
+ *      JSX hyphenated attrs must be written as a continuous string: aria-label="…"
+ *   B) `< button`, `< div`, `< span` — space after `<` is an invalid open-tag.
+ *      Same class of bug fixed for `< Navbar />` in generateRootLayout (pass 3).
+ *   C) `key= { item.href }`, `href = { item.href }` — spaces inside/around {}
+ *      JSX expression slots. SWC strict-mode rejects them.
  */
 export const generateNextNavbar = (pages: Page[]): string => {
   const navItems = pages
-    .map(p => `  { label: '${p.name}', href: '${p.slug}' } `)
+    .map(p => `  { label: '${p.name}', href: '${p.slug}' }`)
     .join(',\n');
 
   return `'use client';
 
 import React, { useState } from 'react';
 import Link from 'next/link';
-import { cn } from '@/lib/utils';
 
 const NAV_ITEMS = [
-  ${navItems},
+${navItems},
 ];
 
 export default function Navbar({ className }: { className?: string }) {
@@ -890,66 +898,52 @@ export default function Navbar({ className }: { className?: string }) {
 
   return (
     <nav
-      className= {
-      cn(
-        'fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/10',
-        className
-      )
-    }
+      className={\`fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/10\${className ? \` \${className}\` : ''}\`}
     >
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8" >
-      <div className="flex items-center justify-between h-16" >
-        <Link href="/" className = "text-white font-bold text-xl tracking-tight" >
-          Vectra < span className = "text-blue-400" >.</span>
-            </Link>
-
-            < div className = "hidden md:flex items-center gap-8" >
-            {
-              NAV_ITEMS.map((item) => (
-                <Link
-                key= { item.href }
-                href = { item.href }
-                className = "text-zinc-400 hover:text-white transition-colors text-sm font-medium"
-                >
-                { item.label }
-                </Link>
-              ))
-            }
-              </div>
-
-              < button
-  onClick = {() => setIsOpen(!isOpen)
-}
-className = "md:hidden p-2 text-zinc-400 hover:text-white transition-colors"
-aria - label="Toggle menu"
-  >
-  <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
-    <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
-      <div className="w-5 h-0.5 bg-current transition-all" />
-        </button>
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16">
+          <Link href="/" className="text-white font-bold text-xl tracking-tight">
+            Vectra<span className="text-blue-400">.</span>
+          </Link>
+          <div className="hidden md:flex items-center gap-8">
+            {NAV_ITEMS.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                className="text-zinc-400 hover:text-white transition-colors text-sm font-medium"
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
+          <button
+            onClick={() => setIsOpen(!isOpen)}
+            className="md:hidden p-2 text-zinc-400 hover:text-white transition-colors"
+            aria-label="Toggle menu"
+          >
+            <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
+            <div className="w-5 h-0.5 bg-current mb-1 transition-all" />
+            <div className="w-5 h-0.5 bg-current transition-all" />
+          </button>
         </div>
+      </div>
+      {isOpen && (
+        <div className="md:hidden border-t border-white/10 bg-black/95">
+          <div className="px-4 py-4 flex flex-col gap-3">
+            {NAV_ITEMS.map((item) => (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => setIsOpen(false)}
+                className="text-zinc-400 hover:text-white transition-colors text-sm font-medium py-2"
+              >
+                {item.label}
+              </Link>
+            ))}
+          </div>
         </div>
-
-{
-  isOpen && (
-    <div className="md:hidden border-t border-white/10 bg-black/95" >
-      <div className="px-4 py-4 flex flex-col gap-3" >
-      {
-        NAV_ITEMS.map((item) => (
-          <Link
-                key= { item.href }
-                href = { item.href }
-                onClick = {() => setIsOpen(false)}
-  className = "text-zinc-400 hover:text-white transition-colors text-sm font-medium py-2"
-    >
-    { item.label }
-    </Link>
-            ))
-}
-</div>
-  </div>
       )}
-</nav>
+    </nav>
   );
 }
 `;
@@ -958,33 +952,33 @@ aria - label="Toggle menu"
 /**
  * generateRootLayout — app/layout.tsx content.
  * Server component (no 'use client'). Imports Navbar only if 2+ pages.
+ *
+ * C-2 FIX (fourth pass):
+ *   - cssVars was `\nstyle = {{` → leading newline + space-around-= breaks SWC JSX.
+ *   - lang= "en" had a space before the string value.
+ *   - `${navbarImport} import` had a stray space before `import`.
+ *   - `{ children }` was at 2-space indent instead of 8.
  */
 export const generateRootLayout = (
   pages: Page[],
   theme?: { primary?: string; secondary?: string; accent?: string; font?: string }
 ): string => {
   const hasMultiplePages = pages.length > 1;
-  // C-2 FIX: `< Navbar />` (space after `<`) is invalid JSX — Next.js compiler rejects it.
-  // Also removed the stray ` ` before `\n` in navbarImport.
   const navbarImport = hasMultiplePages
     ? `import Navbar from '@/components/Navbar';\n`
     : '';
-  const navbarJsx = hasMultiplePages
-    ? `\n        <Navbar />`
-    : '';
+  const navbarJsx = hasMultiplePages ? '\n        <Navbar />' : '';
 
-  const cssVars = theme
-    ? `
-style = {{
-  '--primary': '${theme.primary || '#3b82f6'}',
-    '--secondary': '${theme.secondary || '#8b5cf6'}',
-      '--accent': '${theme.accent || '#ec4899'}',
-        } as React.CSSProperties}`
+  // C-2 FIX: cssVarsAttr is a single-line attribute starting with a space (not \n).
+  // `style = {{…}}` (space around =) is rejected by SWC; `style={{…}}` is correct.
+  // Inline-style on <body> is valid React — CSS custom properties are supported.
+  const cssVarsAttr = theme
+    ? ` style={{ '--primary': '${theme.primary || '#3b82f6'}', '--secondary': '${theme.secondary || '#8b5cf6'}', '--accent': '${theme.accent || '#ec4899'}' } as React.CSSProperties}`
     : '';
 
   return `import type { Metadata } from 'next';
 import type React from 'react';
-${navbarImport} import './globals.css';
+${navbarImport}import './globals.css';
 /* import './tokens.css'; // Uncomment to use design tokens from ZIP export */
 
 export const metadata: Metadata = {
@@ -998,12 +992,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang= "en" className = "dark" >
+    <html lang="en" className="dark">
       <body
-        className="bg-black text-white antialiased"${cssVars}
-      > ${navbarJsx}
-  { children }
-  </body>
+        className="bg-black text-white antialiased"${cssVarsAttr}
+      >${navbarJsx}
+        {children}
+      </body>
     </html>
   );
 }

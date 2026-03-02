@@ -126,6 +126,12 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     // Item 2: selectedIds tracks the full multi-select set.
     // selectedId is the "anchor" — the last clicked element.
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+    // M-1 FIX: mirror selectedIds into a stable ref so isInMultiSelect can use
+    // [] deps. Previously [selectedIds] caused a new isInMultiSelect identity on
+    // every shift-click → 200 RenderNode useCallback invalidations per click on
+    // a 200-node canvas.
+    const selectedIdsRef = useRef<Set<string>>(new Set());
+    useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
     // setSelectedId is the unified single-select entry point.
     // Wrapping it ensures selectedIds stays in sync as a singleton
@@ -151,7 +157,10 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         setSelectedIds(new Set());
     }, []);
 
-    const isInMultiSelect = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
+    const isInMultiSelect = useCallback(
+        (id: string) => selectedIdsRef.current.has(id),
+        [] // eslint-disable-line react-hooks/exhaustive-deps — reads via stable ref
+    );
     const [activeTool, setActiveTool] = useState<EditorTool>('select');
     const [zoom, setZoom] = useState(0.5);
     const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -282,8 +291,17 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             device === 'tablet' ? 'tablet' : 'desktop';
 
     const addAsset = (file: File) => {
+        // H-2 FIX: generate ID synchronously BEFORE readAsDataURL.
+        // Date.now() inside onload collides on batch drops (3 files dropped at once:
+        // all FileReader.onload callbacks can resolve within the same ms tick).
+        // crypto.randomUUID() is guaranteed unique; generating before the async
+        // call ensures it is captured in the closure before any await boundary.
+        const assetId = `asset-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
         const reader = new FileReader();
-        reader.onload = (e) => setAssets(prev => [...prev, { id: `asset-${Date.now()}`, type: 'image', url: e.target?.result as string, name: file.name }]);
+        reader.onload = (e) => setAssets(prev => [
+            ...prev,
+            { id: assetId, type: 'image', url: e.target?.result as string, name: file.name },
+        ]);
         reader.readAsDataURL(file);
     };
 
