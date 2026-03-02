@@ -242,6 +242,54 @@ const buildCanvasContext = (
     ].join('\n');
 };
 
+// ─── SECTION SPLITTER ────────────────────────────────────────────────────────
+/**
+ * extractSections
+ * ───────────────
+ * Splits AI-generated code by `// COMPONENT: Name` markers into a Map
+ * of componentName → standalone function code.
+ *
+ * WHY MARKERS: The AI can't reliably split multiple export defaults into
+ * separate code blocks. A single code block with named markers is parsed
+ * deterministically without regex ambiguity.
+ *
+ * FALLBACK: If no markers exist (simple single-component prompt), the
+ * whole code block is returned under the key 'default'.
+ */
+const extractSections = (rawCode: string): Map<string, string> => {
+    const sections = new Map<string, string>();
+
+    // Split by the // COMPONENT: marker
+    const parts = rawCode.split(/\/\/\s*COMPONENT:\s*(\w+)/);
+    // parts = ['preamble', 'Name1', 'code1', 'Name2', 'code2', ...]
+
+    if (parts.length < 3) {
+        // No markers — single component fallback
+        const name = rawCode.match(/export default function\s+(\w+)/)?.[1] ?? 'Component';
+        sections.set(name, rawCode.trim());
+        sections.set('default', rawCode.trim());
+        return sections;
+    }
+
+    for (let i = 1; i < parts.length; i += 2) {
+        const name = parts[i].trim();
+        const code = (parts[i + 1] ?? '').trim();
+        if (name && code) {
+            // Ensure each section has a clean export default
+            const normalized = code.startsWith('export default function')
+                ? code
+                : code.replace(/^function\s+/, 'export default function ');
+            sections.set(name, normalized);
+        }
+    }
+
+    // 'default' always points to the first section for fallback injection
+    const first = sections.values().next().value;
+    if (first) sections.set('default', first);
+
+    return sections;
+};
+
 // ─── TIER 2: CLOUD LLM PROCESSOR ─────────────────────────────────────────────
 const processCloudLLM = async (
     prompt: string,
@@ -249,16 +297,75 @@ const processCloudLLM = async (
     canvasContext?: string          // Direction C: pre-built canvas context string
 ): Promise<AIResponse> => {
 
-    const systemPrompt = `VECTRA UI ENGINE — You MUST return EXACTLY two code blocks. Nothing else.
+    const isPagePrompt = /page|website|portfolio|landing|blog|store|dashboard/i.test(prompt);
 
-BLOCK 1 — Raw React code (no imports needed):
-\`\`\`jsx
-export default function ComponentName(props) {
-  // your full component here
+    const systemPrompt = `VECTRA UI ENGINE — MULTI-SECTION WEBSITE BUILDER
+
+You MUST return EXACTLY two code blocks. Nothing else outside them.
+
+═══════════════════════════════════════════════════════════════════
+BLOCK 1 — Independent React sections (NO import statements)
+
+For FULL PAGE requests (website/landing/portfolio/dashboard):
+  Generate 3–6 independent sections. Each starts with a marker comment.
+  Each is a COMPLETELY SELF-CONTAINED component — no cross-references.
+
+  // COMPONENT: HeroSection
+  export default function HeroSection(props) {
+    return (
+      <section className="w-full min-h-[700px] bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black flex flex-col items-center justify-center px-8 py-20">
+        {/* ... hero content ... */}
+      </section>
+    );
+  }
+
+  // COMPONENT: FeaturesSection
+  export default function FeaturesSection(props) {
+    return (
+      <section className="w-full py-24 bg-slate-950">
+        {/* ... features content ... */}
+      </section>
+    );
+  }
+
+  // COMPONENT: CTASection
+  export default function CTASection(props) {
+    return (
+      <section className="w-full py-20 bg-gradient-to-r from-blue-900/30 to-indigo-900/30 border-t border-white/10">
+        {/* ... CTA content ... */}
+      </section>
+    );
+  }
+
+For SINGLE ELEMENT requests (button, card, nav, hero only):
+  ONE component. No // COMPONENT: marker needed.
+
+  export default function HeroSection(props) {
+    return ( ... );
+  }
+═══════════════════════════════════════════════════════════════════
+BLOCK 2 — JSON config
+
+For FULL PAGE — wrapper container + one custom_code child per section:
+\`\`\`json
+{
+  "rootId": "page_wrapper",
+  "elements": {
+    "page_wrapper": {
+      "id": "page_wrapper",
+      "type": "container",
+      "name": "Page",
+      "props": { "className": "w-full flex flex-col", "layoutMode": "flex", "style": { "width": "100%" } },
+      "children": ["hero_1", "feat_1", "cta_1"]
+    },
+    "hero_1": { "id": "hero_1", "type": "custom_code", "name": "HeroSection", "props": {}, "children": [] },
+    "feat_1": { "id": "feat_1", "type": "custom_code", "name": "FeaturesSection", "props": {}, "children": [] },
+    "cta_1": { "id": "cta_1", "type": "custom_code", "name": "CTASection", "props": {}, "children": [] }
+  }
 }
 \`\`\`
 
-BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatically):
+For SINGLE ELEMENT:
 \`\`\`json
 {
   "rootId": "custom_1",
@@ -267,6 +374,7 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
   }
 }
 \`\`\`
+═══════════════════════════════════════════════════════════════════
 
 [REACT RULES — ALL REQUIRED]
 - Signature MUST be: export default function ComponentName(props) { ... }
@@ -281,17 +389,18 @@ BLOCK 2 — Tiny JSON config only (no "code" field — I inject it programmatica
 - Stagger lists: transition={{ delay: i * 0.1 }}
 - whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.98 }} on all cards & buttons.
 
-[LAYOUT RULES]
-- ALWAYS use relative block or flex flow for the outermost container: <main className="w-full min-h-screen flex flex-col">
-- NEVER use position:absolute or position:fixed on the root wrapper — the page will not scroll.
-- Sections stack vertically in normal document flow. Each section: w-full, no fixed height.
+[LAYOUT RULES — CRITICAL]
+- Each section root: w-full, NO fixed height. Use min-h-[Npx] or py-N for spacing.
+- NEVER position:absolute or position:fixed on any section root.
+- Sections stack vertically via the parent flex-col container. Do NOT try to position them.
+- Each section is rendered independently — it cannot reference variables from other sections.
 
 [DESIGN]
 - Dark glassmorphism: bg-white/5 backdrop-blur-xl border border-white/10 shadow-2xl rounded-2xl
-- Background: min-h-screen bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black
+- Background: bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black
 - Headers: tracking-tight font-bold. Body: text-slate-400 leading-relaxed.
 - Fully responsive: sm: md: lg: prefixes on all layouts.
-- Default for vague prompts: stunning Hero section + Feature grid below it.
+- Default for vague prompts: stunning Hero section + Feature grid + CTA footer.
 
 ${canvasContext ? `[CURRENT CANVAS STATE — read before generating]
 ${canvasContext}
@@ -306,8 +415,14 @@ Rules for context awareness:
     let content = '';
 
     try {
-        console.log('🔑 Calling AI Code Generator (primary key)...');
-        content = await callDirectAPI(systemPrompt, `Build: ${prompt}`, AI_CONFIG.primaryModel, 0.6, AI_CONFIG.primaryApiKey);
+        console.log('🔑 Calling AI Code Generator...');
+        content = await callDirectAPI(
+            systemPrompt,
+            `Build: ${prompt}`,
+            AI_CONFIG.primaryModel,
+            0.6,
+            AI_CONFIG.primaryApiKey
+        );
     } catch (e) {
         console.error('❌ AI API call failed:', e);
         return { action: 'error', message: (e as Error).message };
@@ -315,27 +430,27 @@ Rules for context awareness:
 
     // ── Parse: Two-Block Extraction ───────────────────────────────────────────
     try {
-        console.log('🤖 AI Response received. Extracting blocks...');
+        console.log('🤖 AI Response received. Parsing multi-section output...');
 
+        // ── Extract code block ─────────────────────────────────────────────
         const jsxMatch = content.match(/```(?:jsx?|tsx?|javascript|react)?\s*\n([\s\S]*?)\n```/i);
         const rawReactCode = jsxMatch?.[1]?.trim() ?? '';
 
+        // ── Extract JSON block ─────────────────────────────────────────────
         const jsonMatch = content.match(/```json\n([\s\S]*?)\n```/i);
         let rawJson = jsonMatch?.[1]?.trim() ?? '';
-
         if (!rawJson) {
             const firstOpen = content.indexOf('{');
             const lastClose = content.lastIndexOf('}');
-            if (firstOpen !== -1 && lastClose !== -1) {
+            if (firstOpen !== -1 && lastClose !== -1)
                 rawJson = content.substring(firstOpen, lastClose + 1);
-            }
         }
-
         if (!rawJson) throw new Error('No JSON block found in AI response');
         if (!rawReactCode) throw new Error('No JSX code block found in AI response');
 
         console.log(`✅ Extracted JSX (${rawReactCode.length} chars) + JSON config`);
 
+        // ── Parse JSON ─────────────────────────────────────────────────────
         let parsed: any;
         try {
             parsed = JSON.parse(rawJson);
@@ -343,34 +458,44 @@ Rules for context awareness:
             console.warn('🔧 JSON malformed — attempting repairJSON...');
             parsed = JSON.parse(repairJSON(rawJson));
         }
-
         if (!parsed?.elements || !parsed?.rootId) {
             throw new Error('Invalid JSON structure (missing elements or rootId)');
         }
 
-        let injected = false;
-        const rootEl = parsed.elements[parsed.rootId];
-        if (rootEl?.type === 'custom_code') {
-            rootEl.code = rawReactCode;
-            injected = true;
-        } else {
-            for (const el of Object.values(parsed.elements) as any[]) {
-                if (el.type === 'custom_code') {
-                    el.code = rawReactCode;
-                    injected = true;
-                    break;
-                }
+        // ── FIX-3: Multi-section code injection ────────────────────────────
+        // extractSections() splits the code block by // COMPONENT: markers.
+        // Each custom_code node in the JSON gets its matching section code.
+        // If names don't match (AI hallucinated a different name), fallback
+        // to the first available section so no node is left without code.
+        const sections = extractSections(rawReactCode);
+        console.log(`🔧 Sections found: [${Array.from(sections.keys()).filter(k => k !== 'default').join(', ')}]`);
+
+        let injectedCount = 0;
+        for (const el of Object.values(parsed.elements) as any[]) {
+            if (el.type === 'custom_code') {
+                // Match by element name (which equals the component function name)
+                const code = sections.get(el.name)
+                    ?? sections.get('default')
+                    ?? rawReactCode;
+                el.code = code;
+                injectedCount++;
             }
         }
 
-        if (!injected) throw new Error("AI JSON contained no 'custom_code' element — cannot inject code");
+        if (injectedCount === 0) {
+            throw new Error("AI JSON contained no 'custom_code' elements — cannot inject code");
+        }
 
-        console.log(`✅ Generated ${Object.keys(parsed.elements).length} element(s) — code injected safely`);
+        console.log(
+            `✅ Generated ${Object.keys(parsed.elements).length} element(s),`,
+            `${injectedCount} code section(s) injected.`
+        );
+
         return {
             action: 'create',
             elements: parsed.elements,
             rootId: parsed.rootId,
-            message: 'Generated with AI 🔑',
+            message: `Generated ${injectedCount} section${injectedCount > 1 ? 's' : ''} with AI ✨`,
         };
 
     } catch (e) {

@@ -1104,10 +1104,30 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             const currentElements = elementsRef.current;
             const currentPages = pages;          // pages is stable between renders
             const currentPageId = activePageId;  // same
+            const currentPage = currentPages.find(p => p.id === currentPageId);
+            if (!currentPage) return 'No active page';
+
+            // FIX-2: Resolve to the webpage/canvas artboard child, NOT the page root.
+            // Previously: pageRootId = page.rootId (= page-xxx, type:'page')
+            // mergeAIContent then ran page-xxx.children = [aiRoot], evicting the
+            // canvas-xxx (type:'webpage') artboard. AI content rendered without frame,
+            // without height:auto grow, without canvas styling.
+            //
+            // Now: find the webpage/canvas child of the page node. mergeAIContent
+            // targets canvas-xxx.children instead — AI sections are placed INSIDE
+            // the artboard, which provides proper grow + scrolling.
+            const pageNode = currentElements[currentPage.rootId];
+            const canvasNodeId =
+                pageNode?.children?.find(
+                    (cid: string) => {
+                        const t = currentElements[cid]?.type;
+                        return t === 'webpage' || t === 'canvas' || t === 'artboard';
+                    }
+                ) ?? currentPage.rootId; // safe fallback to page root if no artboard found
 
             const result = await generateWithAI(prompt, currentElements, {
-                pageRootId: currentPages.find(p => p.id === currentPageId)?.rootId ?? currentPageId,
-                pageName: currentPages.find(p => p.id === currentPageId)?.name ?? 'Page',
+                pageRootId: canvasNodeId,   // canvas context describes the artboard tree
+                pageName: currentPage.name,
             });
 
             if (result.action === 'error') {
@@ -1116,19 +1136,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
 
             if (result.action === 'create' && result.elements && result.rootId) {
-                const currentPage = currentPages.find(p => p.id === currentPageId);
-                if (!currentPage) return 'No active page';
-
-                const isFullPage = /page|website|portfolio|landing/i.test(prompt);
+                const isFullPage = /page|website|portfolio|landing|blog|store|dashboard/i.test(prompt);
 
                 // Compute merged result BEFORE calling setElements so we can
-                // push it to history immediately after. Using the functional
-                // setElements form still gives us the merged tree via a local var.
+                // push it to history immediately after.
                 let merged: VectraProject;
                 setElements(cur => {
                     merged = mergeAIContent(
                         cur,
-                        currentPage.rootId,
+                        canvasNodeId,         // ← target the artboard, not the page
                         result.elements!,
                         result.rootId!,
                         isFullPage
@@ -1137,9 +1153,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 });
 
                 // Push to history so Cmd+Z can undo AI generation.
-                // Small timeout — lets setElements flush before pushHistory reads
-                // the ref. elementsRef.current is updated synchronously by the
-                // setElements reducer before React schedules the re-render.
                 setTimeout(() => {
                     pushHistory(elementsRef.current);
                     console.log(
@@ -1155,8 +1168,6 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             if (result.action === 'update' && result.elements) {
                 setElements(cur => {
                     const updated = { ...cur, ...result.elements };
-                    // Push history synchronously here — update path is a simple merge
-                    // so elementsRef will be current after this tick.
                     setTimeout(() => pushHistory(elementsRef.current), 0);
                     return updated;
                 });

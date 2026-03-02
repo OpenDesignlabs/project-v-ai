@@ -870,8 +870,6 @@ export const LeftSidebar = () => {
                 <NavButton icon={Box} active={activePanel === 'npm'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('npm'); }} tooltip="NPM Packages" />
                 <NavButton icon={File} active={activePanel === 'pages'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('pages'); }} tooltip="Pages" />
                 <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
-                <NavButton icon={Hexagon} active={activePanel === 'icons'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('icons'); }} tooltip="Icons" />
-                <NavButton icon={Palette} active={activePanel === 'theme'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('theme'); }} tooltip="Global Theme" />
                 <NavButton icon={Database} active={activePanel === 'data'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('data'); }} tooltip="Data Sources" />
                 {framework === 'nextjs' && (
                     <NavButton icon={Server} active={activePanel === 'backend'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('backend'); }} tooltip="Backend (API Routes)" />
