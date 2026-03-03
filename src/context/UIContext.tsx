@@ -43,6 +43,10 @@ interface UIContextType {
     setActiveTool: (tool: EditorTool) => void;
     zoom: number;
     setZoom: React.Dispatch<React.SetStateAction<number>>;
+    // NM-8: stable zoom ref — read zoom in event handlers without subscribing
+    // to zoom state. Eliminates zoom-triggered re-renders in all RenderNodes.
+    // Pattern: same as NH-1 (Canvas.tsx zoomRef), elementsRef (ProjectContext).
+    zoomRef: React.MutableRefObject<number>;
     pan: { x: number; y: number };
     setPan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
     isPanning: boolean;
@@ -165,6 +169,12 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     );
     const [activeTool, setActiveTool] = useState<EditorTool>('select');
     const [zoom, setZoom] = useState(0.5);
+    // NM-8 FIX: mirror zoom into a stable ref. Consumers that only need zoom
+    // inside event handlers (RenderNode pointer/drag math) read zoomRef.current
+    // — eliminates 200×60fps re-renders during wheel zoom on a full canvas.
+    // Same pattern as NH-1 in Canvas.tsx, elementsRef in ProjectContext.
+    const zoomRef = useRef(zoom);
+    useEffect(() => { zoomRef.current = zoom; }, [zoom]);
     const [pan, setPan] = useState({ x: 0, y: 0 });
     const [isPanning, setIsPanning] = useState(false);
     const [dragData, setDragData] = useState<DragData | null>(null);
@@ -327,7 +337,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             // hoveredId/setHoveredId removed — now in HoverContext (isolated for perf).
             // Item 2 multi-select
             selectedIds, addToSelection, removeFromSelection, clearSelection, isInMultiSelect,
-            activeTool, setActiveTool, zoom, setZoom, pan, setPan,
+            activeTool, setActiveTool, zoom, setZoom, zoomRef, pan, setPan,
             isPanning, setIsPanning, dragData, setDragData,
             interaction, setInteraction, guides, setGuides,
             previewMode, setPreviewMode, device, setDevice, activeBreakpoint,
