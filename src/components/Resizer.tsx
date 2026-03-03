@@ -12,7 +12,10 @@ interface ResizerProps {
 
 export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
     const { elements } = useProject();
-    const { setInteraction, zoom } = useUI();
+    // NM-8 FIX: zoomRef instead of zoom — startResize only reads zoom inside a
+    // pointer event handler, not at render time. Subscribing to zoom state caused
+    // Resizer to re-render on every 60fps wheel tick with no visual benefit.
+    const { setInteraction, zoomRef } = useUI();
     const element = elements[elementId];
 
     if (!element) return null;
@@ -40,8 +43,8 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
         const rect = {
             left: parseFloat(String(element.props.style?.left || '0')),
             top: parseFloat(String(element.props.style?.top || '0')),
-            width: domRect.width / zoom,
-            height: domRect.height / zoom
+            width: domRect.width / zoomRef.current,
+            height: domRect.height / zoomRef.current,
         };
 
         setInteraction({

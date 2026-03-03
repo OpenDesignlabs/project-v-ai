@@ -308,7 +308,15 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     const {
         selectedId, setSelectedId,
         previewMode, dragData, setDragData,
-        interaction, setInteraction, zoom, activeTool, setActivePanel,
+        interaction, setInteraction,
+        // NM-8 FIX: zoomRef instead of zoom state.
+        // zoom in UIContext updates at 60fps during wheel events. Destructuring
+        // zoom as state causes every RenderNode to re-render on every wheel tick.
+        // On a 200-node canvas: 200 × 60fps = 12,000 wasted re-renders/sec.
+        // zoomRef.current gives the identical value at event-fire time with zero
+        // re-render cost. Pattern: NH-1 (Canvas zoomRef), elementsRef (ProjectContext).
+        zoomRef,
+        activeTool, setActivePanel,
         device,
         // Item 2 — multi-select
         isInMultiSelect, addToSelection, removeFromSelection,
@@ -405,8 +413,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     const handlePointerMove = (e: React.PointerEvent) => {
         if (interaction?.type === 'MOVE' && interaction.itemId === elementId) {
             e.stopPropagation();
-            const deltaX = (e.clientX - dragStart.current.x) / zoom;
-            const deltaY = (e.clientY - dragStart.current.y) / zoom;
+            const deltaX = (e.clientX - dragStart.current.x) / zoomRef.current;
+            const deltaY = (e.clientY - dragStart.current.y) / zoomRef.current;
             let newLeft = dragStart.current.left + deltaX;
             let newTop = dragStart.current.top + deltaY;
 
@@ -459,8 +467,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         const rect = nodeRef.current?.getBoundingClientRect();
         if (!rect) return;
 
-        const dropX = (e.clientX - rect.left) / zoom;
-        const dropY = (e.clientY - rect.top) / zoom;
+        const dropX = (e.clientX - rect.left) / zoomRef.current;
+        const dropY = (e.clientY - rect.top) / zoomRef.current;
 
         if (dragData.type === 'NEW') {
             const conf = componentRegistry[dragData.payload];
@@ -527,7 +535,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 const newChildren = [...(currentEl.children || []), rootId];
 
                 if (isArtboard) {
-                    const currentH = parseFloat(String(element.props.style?.height || rect.height / zoom));
+                    const currentH = parseFloat(String(element.props.style?.height || rect.height / zoomRef.current));
                     const bottomEdge = (dropY - h / 2) + h + 50;
                     if (bottomEdge > currentH) {
                         // C-1 FIX: TEMPLATE artboard auto-grow path — two separate

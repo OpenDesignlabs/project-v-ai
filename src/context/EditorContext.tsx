@@ -25,6 +25,7 @@
 import React, { useCallback, useMemo, type ReactNode } from 'react';
 import { useProject } from './ProjectContext';
 import { useUI } from './UIContext';
+import { useHover } from './HoverContext';
 import { COMPONENT_TYPES } from '../data/constants';
 
 export type { SidebarPanel, AppView, ViewMode } from './UIContext';
@@ -34,7 +35,12 @@ export type { GlobalTheme, DataSource } from './ProjectContext';
 // Assembled here so ProjectContext and UIContext stay decoupled from each other.
 function useInteractionEngine() {
     const { elementsRef, updateProject, pushHistory, querySnapping, syncLayoutEngine } = useProject();
-    const { interaction, zoom, setGuides, setInteraction } = useUI();
+    // NM-8 FIX: zoomRef instead of zoom — removes zoom from handleInteractionMove
+    // dep array. zoom in deps caused useCallback to be recreated on every wheel
+    // tick (60fps) → Canvas useEffect tore down + reattached pointermove + pointerup
+    // listeners 60×/sec. Two DOM API calls per tick = 120 ops/sec listener churn,
+    // plus a one-frame gap where no handler was attached → drag skip during zoom+drag.
+    const { interaction, zoomRef, setGuides, setInteraction } = useUI();
 
     // ── MOVE / RESIZE — called at 60fps during drag ────────────────────────────
     // • updateProject(next, true) → setElements only, no JSON.stringify per frame
@@ -42,8 +48,8 @@ function useInteractionEngine() {
     const handleInteractionMove = useCallback((e: PointerEvent) => {
         if (!interaction) return;
         const { type, itemId, startX, startY, startRect, handle } = interaction as any;
-        const deltaX = (e.clientX - (startX || 0)) / zoom;
-        const deltaY = (e.clientY - (startY || 0)) / zoom;
+        const deltaX = (e.clientX - (startX || 0)) / zoomRef.current;
+        const deltaY = (e.clientY - (startY || 0)) / zoomRef.current;
         let newRect = startRect ? { ...startRect } : { left: 0, top: 0, width: 0, height: 0 };
 
         if (type === 'MOVE') {
@@ -88,7 +94,9 @@ function useInteractionEngine() {
             },
         };
         updateProject(next, true); // skipHistory=true → no JSON.stringify per frame
-    }, [interaction, zoom, elementsRef, setGuides, updateProject, querySnapping]);
+        // NM-8: zoom removed from deps (now zoomRef — stable ref identity, never changes).
+        // zoomRef retained in deps array for exhaustive-deps lint rule compliance.
+    }, [interaction, zoomRef, elementsRef, setGuides, updateProject, querySnapping]);
 
     // ── DRAG END — called once on pointer-up ──────────────────────────────────
     // H-4 FIX: `elements` removed from deps — reads from elementsRef.current at call
@@ -176,8 +184,10 @@ export const useEditor = () => {
         // ── UI ────────────────────────────────────────────────────────────────
         selectedId: ui.selectedId,
         setSelectedId: ui.setSelectedId,
-        hoveredId: ui.hoveredId,
-        setHoveredId: ui.setHoveredId,
+        // NM-8 / HoverContext fix: hoveredId moved out of UIContext into HoverContext.
+        // Forward from useHover() so existing useEditor().hoveredId consumers don't break.
+        hoveredId: useHover().hoveredId,
+        setHoveredId: useHover().setHoveredId,
         activeTool: ui.activeTool,
         setActiveTool: ui.setActiveTool,
         zoom: ui.zoom,
