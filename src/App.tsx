@@ -2,6 +2,7 @@ import { Suspense, lazy, useEffect, useRef, useState } from 'react';
 import { EditorProvider, useEditor } from './context/EditorContext';
 import { ProjectProvider, useProject } from './context/ProjectContext';
 import { UIProvider, useUI } from './context/UIContext';
+import { HoverProvider } from './context/HoverContext';
 import { ContainerProvider, useContainer } from './context/ContainerContext';
 
 import { useFileSync } from './hooks/useFileSync';
@@ -231,10 +232,14 @@ const App = () => {
   return (
     <ProjectProvider>
       <UIProvider>
-        {/* EditorProvider is now a no-op stub kept for import compatibility */}
-        <EditorProvider>
-          <MainRouter />
-        </EditorProvider>
+        {/* HoverProvider isolated from UIContext: pointer-move only re-renders */}
+        {/* the 2 nodes changing hover state, not all 200 RenderNode instances. */}
+        <HoverProvider>
+          {/* EditorProvider is now a no-op stub kept for import compatibility */}
+          <EditorProvider>
+            <MainRouter />
+          </EditorProvider>
+        </HoverProvider>
       </UIProvider>
     </ProjectProvider>
   );

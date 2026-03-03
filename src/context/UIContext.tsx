@@ -28,8 +28,9 @@ interface UIContextType {
     // ── Selection ─────────────────────────────────────────────────────────────
     selectedId: string | null;
     setSelectedId: (id: string | null) => void;
-    hoveredId: string | null;
-    setHoveredId: (id: string | null) => void;
+    // Note: hoveredId lives in HoverContext (src/context/HoverContext.tsx).
+    // It was extracted to prevent 60fps pointer-move from re-rendering all 200
+    // RenderNode instances via UIContext on every mouse move frame.
     // Item 2 — Multi-select set (always contains selectedId as the anchor)
     selectedIds: Set<string>;
     addToSelection: (id: string) => void;
@@ -122,7 +123,8 @@ const UIContext = createContext<UIContextType | null>(null);
 
 export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [selectedIdRaw, setSelectedIdRaw] = useState<string | null>(null);
-    const [hoveredId, setHoveredId] = useState<string | null>(null);
+    // hoveredId removed from UIContext → now lives in HoverContext.
+    // See src/context/HoverContext.tsx for rationale and implementation.
     // Item 2: selectedIds tracks the full multi-select set.
     // selectedId is the "anchor" — the last clicked element.
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -321,7 +323,8 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
 
     return (
         <UIContext.Provider value={{
-            selectedId, setSelectedId, hoveredId, setHoveredId,
+            selectedId, setSelectedId,
+            // hoveredId/setHoveredId removed — now in HoverContext (isolated for perf).
             // Item 2 multi-select
             selectedIds, addToSelection, removeFromSelection, clearSelection, isInMultiSelect,
             activeTool, setActiveTool, zoom, setZoom, pan, setPan,

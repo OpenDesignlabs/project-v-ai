@@ -2,6 +2,7 @@
 import type { ErrorInfo } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
+import { useHover } from '../context/HoverContext';
 // M-6 FIX: useEditor removed — componentRegistry now comes from useUI() directly.
 import { SANDBOX_BLOCKED_PATTERNS } from '../utils/codeSanitizer';
 import type { VectraProject, VectraNode } from '../types';
@@ -305,7 +306,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     // RenderNode that only uses project data, and vice-versa.
     const { elements, setElements, elementsRef, updateProject, pushHistory, instantiateTemplate, syncLayoutEngine, parentMap } = useProject();
     const {
-        selectedId, setSelectedId, hoveredId, setHoveredId,
+        selectedId, setSelectedId,
         previewMode, dragData, setDragData,
         interaction, setInteraction, zoom, activeTool, setActivePanel,
         device,
@@ -316,6 +317,10 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         // to both ProjectContext AND UIContext for just this one field.
         componentRegistry: rawRegistry,
     } = useUI();
+    // HOVER CONTEXT (perf isolation): hoveredId changes at 60fps pointer-move
+    // frequency. Keeping it in a separate context means only the 2 nodes
+    // changing hover state re-render — not all 200 via UIContext subscription.
+    const { hoveredId, setHoveredId } = useHover();
     // Merge with static COMPONENT_TYPES (module constant, never changes)
     // NM-1 FIX: useMemo so the merged object is stable between renders.
     // Without this, { ...COMPONENT_TYPES, ...rawRegistry } runs on every render of
