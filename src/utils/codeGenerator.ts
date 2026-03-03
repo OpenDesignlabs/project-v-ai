@@ -54,11 +54,49 @@ class ImportManager {
 const cleanClass = (c: string) => c ? c.replace(/\s+/g, ' ').trim() : '';
 const injectBindings = (t: string) => t ? t.replace(/{{([^}]+)}}/g, (_, p) => `{data?.${p.split('.').join('?.')} ?? ''}`) : '';
 
-const serializeStyle = (styleObj: any) => {
+// ─── CSS Unitless Properties Allowlist ───────────────────────────────────────
+// React does NOT append 'px' to these when they are plain numbers at runtime.
+// All OTHER numeric CSS properties require a unit — we inject 'px' here in the
+// generator so the exported standalone code is correct without React's runtime.
+// Source: react-dom/src/shared/CSSProperty.js
+const CSS_UNITLESS_PROPERTIES = new Set([
+  'animationIterationCount', 'aspectRatio', 'borderImageOutset',
+  'borderImageSlice', 'borderImageWidth', 'boxFlex', 'boxFlexGroup',
+  'boxOrdinalGroup', 'columnCount', 'columns', 'flex', 'flexGrow',
+  'flexPositive', 'flexShrink', 'flexNegative', 'flexOrder',
+  'gridArea', 'gridRow', 'gridRowEnd', 'gridRowSpan', 'gridRowStart',
+  'gridColumn', 'gridColumnEnd', 'gridColumnSpan', 'gridColumnStart',
+  'fontWeight', 'lineClamp', 'lineHeight', 'opacity', 'order',
+  'orphans', 'scale', 'tabSize', 'widows', 'zIndex', 'zoom',
+  // SVG
+  'fillOpacity', 'floodOpacity', 'stopOpacity', 'strokeDasharray',
+  'strokeDashoffset', 'strokeMiterlimit', 'strokeOpacity', 'strokeWidth',
+]);
+
+/**
+ * serializeStyle — converts a React CSSProperties object to a JSX style attr.
+ *
+ * UNIT GUARD: numeric values on dimensional CSS properties (width, height,
+ * left, top, fontSize, padding, margin…) are coerced to "${v}px" so the
+ * exported JSX is valid standalone React. Unitless properties (opacity, zIndex,
+ * lineHeight, fontWeight, flexGrow…) are passed through as numbers.
+ * Zero is always exempt — `left: 0` is valid CSS without a unit (spec + React).
+ *
+ * FILTERS: undefined | null | '' | animationName → dropped.
+ */
+const serializeStyle = (styleObj: any): string => {
   if (!styleObj || Object.keys(styleObj).length === 0) return '';
-  const clean: any = {};
-  Object.entries(styleObj).forEach(([k, v]) => { if (v !== undefined && v !== '' && k !== 'animationName') clean[k] = v; });
-  return Object.keys(clean).length ? `style={${JSON.stringify(clean)}}` : '';
+  const clean: Record<string, string | number> = {};
+  Object.entries(styleObj).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === '' || k === 'animationName') return;
+    // Inject 'px' for dimensional numeric values; unitless + zero pass through.
+    if (typeof v === 'number' && v !== 0 && !CSS_UNITLESS_PROPERTIES.has(k)) {
+      clean[k] = `${v}px`;
+    } else {
+      clean[k] = v as string | number;
+    }
+  });
+  return Object.keys(clean).length > 0 ? `style={${JSON.stringify(clean)}}` : '';
 };
 
 const generateMotionProps = (props: any): string[] => {
@@ -155,6 +193,15 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
   const styleStr = serializeStyle(node.props.style);
   if (styleStr) props.push(styleStr);
 
+  // P2-A2 FIX: emit data-vid on every non-marketplace element.
+  // buildBreakpointCSS() generates [data-vid="id"] selectors — without this
+  // attribute on the exported DOM element those selectors have zero targets
+  // and all breakpoint overrides are silently dead in the exported page.
+  // Marketplace components are excluded: their internal DOM is opaque to Vectra.
+  // motion.* elements: Framer Motion forwards unknown props to the DOM element,
+  // so data-vid passes through correctly as a standard HTML data attribute.
+  if (!isComponent) props.push(`data-vid="${node.id}"`);
+
   if (node.type === 'image') props.push(`src="${node.src || 'https://via.placeholder.com/150'}"`);
   if (node.type === 'input') props.push(`placeholder="${node.props.placeholder || ''}"`);
 
@@ -232,6 +279,20 @@ export const generateProjectCode = (
     const mobileCSSString = buildMobileCSS(hasMobileNodes);
     const mobileCSSLiteral = JSON.stringify(mobileCSSString);
 
+    // P2-A2 FIX (Vite path): wire breakpoint CSS — mirrors generateNextPage().
+    // generateNodeCode() now emits data-vid on every element; without injecting
+    // the VECTRA_BP_CSS <style> block those attributes have no CSS rules to match.
+    const allViteNodeIds: string[] = [];
+    const collectViteIds = (id: string, visited = new Set<string>()) => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      allViteNodeIds.push(id);
+      project[id]?.children?.forEach((c: string) => collectViteIds(c, visited));
+    };
+    if (rootFrameId) collectViteIds(rootFrameId);
+    const bpCSSString = buildBreakpointCSS(project, allViteNodeIds);
+    const bpCSSLiteral = bpCSSString.length > 0 ? JSON.stringify(bpCSSString) : 'null';
+
     let jsxContent = '';
     if (rootFrameId) {
       if (project[rootFrameId].children) {
@@ -241,16 +302,18 @@ export const generateProjectCode = (
       jsxContent = `        <div className="text-center p-10">Empty Page</div>`;
     }
 
-    // ── Phase F: Responsive wrapper replaces the old bare <div> wrapper ───
+    // ── Phase F + P2-A2: Responsive wrapper with both mobile + breakpoint CSS ──
     const code = `${imports.generate()}
 
 // Vectra responsive styles — auto-generated, do not edit.
 const VECTRA_MOBILE_CSS = ${mobileCSSLiteral};
+const VECTRA_BP_CSS = ${bpCSSLiteral};
 
 export default function ${compName}() {
   return (
     <div className="w-full min-h-screen bg-white text-slate-900">
       <style dangerouslySetInnerHTML={{ __html: VECTRA_MOBILE_CSS }} />
+      {VECTRA_BP_CSS && <style dangerouslySetInnerHTML={{ __html: VECTRA_BP_CSS }} />}
       <div
         className="vectra-canvas-frame relative"
         style={{ width: '${canvasWidth}px', minHeight: '${canvasHeight}px', margin: '0 auto' }}
@@ -781,7 +844,10 @@ export const generateNextPage = (
         ? ` className="${(baseClass + stackClass).trim()}"`
         : '';
 
-      jsxParts.push(`        <${compName}${classAttr}${styleStr} />`);
+      // P2-A2 FIX: custom_code nodes also need data-vid for breakpoint CSS targeting.
+      const dataVid = ` data-vid="${childId}"`;
+
+      jsxParts.push(`        <${compName}${classAttr}${styleStr}${dataVid} />`);
     } else {
       const inlineJsx = generateNodeCode(childId, project, imports, 4);
       if (inlineJsx.trim()) {

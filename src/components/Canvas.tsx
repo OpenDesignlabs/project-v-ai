@@ -461,33 +461,73 @@ export const Canvas = () => {
                 const selMaxX = Math.max(bs.worldStartX, worldEndX);
                 const selMinY = Math.min(bs.worldStartY, worldEndY);
                 const selMaxY = Math.max(bs.worldStartY, worldEndY);
-                // M-4 FIX: walk the entire visible subtree — not just top-level children.
-                // The original flat filter missed absolutely-positioned nodes inside containers.
-                const collectAbsoluteNodes = (ids: string[]): string[] => {
-                    const result: string[] = [];
+                // M-2 FIX: Accumulate ancestor offsets to get true world-space coords.
+                //
+                // OLD BUG: collectAbsoluteNodes() returned raw style.left/top — LOCAL
+                // to each node's parent container. A button at left:48px inside a 
+                // container at left:600px has world X = 648px, but the old code compared
+                // 48 against world selMinX/selMaxX → always wrong for nested elements.
+                //
+                // FIX: collectAbsoluteNodesWithWorldCoords() threads (offsetX, offsetY)
+                // through the recursive walk. At each absolutely-positioned node, its
+                // world position = accumulated offset + own left/top. That world position
+                // becomes the new offset for its own children. Flex-mode containers do
+                // NOT contribute to offset accumulation (their children are flow-positioned,
+                // not left/top-absolutely-positioned). A visited Set prevents cycles.
+
+                interface WorldNode {
+                    id: string;
+                    worldX: number;
+                    worldY: number;
+                    w: number;
+                    h: number;
+                }
+
+                const collectAbsoluteNodesWithWorldCoords = (
+                    ids: string[],
+                    offsetX: number,
+                    offsetY: number,
+                    visited: Set<string> = new Set()
+                ): WorldNode[] => {
+                    const result: WorldNode[] = [];
                     for (const id of ids) {
+                        if (visited.has(id)) continue;
+                        visited.add(id);
                         const node = elements[id];
                         if (!node) continue;
-                        if (node.props?.style && (node.props.style as any).position === 'absolute') {
-                            result.push(id);
+                        const st = (node.props?.style || {}) as Record<string, any>;
+                        const isAbsolute = st.position === 'absolute';
+                        const localLeft = isAbsolute ? parseFloat(String(st.left ?? '0')) : 0;
+                        const localTop = isAbsolute ? parseFloat(String(st.top ?? '0')) : 0;
+                        const worldX = offsetX + localLeft;
+                        const worldY = offsetY + localTop;
+                        if (isAbsolute) {
+                            const w = parseFloat(String(st.width ?? '0'));
+                            const h = parseFloat(String(st.height ?? '0'));
+                            if (w > 0 || h > 0) result.push({ id, worldX, worldY, w, h });
                         }
-                        if (node.children?.length) result.push(...collectAbsoluteNodes(node.children));
+                        if (node.children?.length) {
+                            // canvas-mode children are offset relative to this node's world pos;
+                            // flex-mode children are flow-positioned — pass parent offset unchanged.
+                            const childOffsetX = isAbsolute ? worldX : offsetX;
+                            const childOffsetY = isAbsolute ? worldY : offsetY;
+                            result.push(...collectAbsoluteNodesWithWorldCoords(
+                                node.children, childOffsetX, childOffsetY, visited
+                            ));
+                        }
                     }
                     return result;
                 };
+
                 const pageRoot = elements[activePageId];
-                const allCandidates = collectAbsoluteNodes(pageRoot?.children || []);
-                const hits = allCandidates.filter(cid => {
-                    const el = elements[cid];
-                    const st = el?.props?.style as Record<string, any> | undefined;
-                    if (!st) return false;
-                    const l = parseFloat(String(st.left ?? '0'));
-                    const t = parseFloat(String(st.top ?? '0'));
-                    const w = parseFloat(String(st.width ?? '0'));
-                    const h = parseFloat(String(st.height ?? '0'));
-                    return l < selMaxX && l + w > selMinX && t < selMaxY && t + h > selMinY;
-                });
-                if (hits.length > 0) { hits.forEach(id => addToSelection(id)); }
+                const allCandidates = collectAbsoluteNodesWithWorldCoords(
+                    pageRoot?.children || [], 0, 0
+                );
+                const hits = allCandidates.filter(({ worldX, worldY, w, h }) =>
+                    worldX < selMaxX && worldX + w > selMinX &&
+                    worldY < selMaxY && worldY + h > selMinY
+                );
+                if (hits.length > 0) { hits.forEach(({ id }) => addToSelection(id)); }
                 setBoxSelectRect(null);
             }}
             onDrop={handleGlobalDrop}
