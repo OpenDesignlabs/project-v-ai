@@ -102,8 +102,55 @@ export const COMPONENT_TYPES: Record<string, ComponentConfig> = {
     },
 
     // --- MARKETPLACE ---
-    hero_geometric: { icon: Sparkles, label: 'Geometric Hero', category: 'sections', defaultProps: {}, defaultContent: '' },
-    feature_hover: { icon: Zap, label: 'Hover Features', category: 'sections', defaultProps: { className: 'w-full relative bg-white', layoutMode: 'canvas' }, defaultContent: '' },
+    // CIS-1 BACKFILL: importMeta added so CIS-1 stamps these correctly at drag time.
+    // Previously conf.importMeta was undefined → no importMeta on node → legacy
+    // codeGenerator hardcoded array handled export. Now importMeta is canonical.
+    // component field is intentionally ABSENT — lazy refs live in RenderNode.
+    hero_geometric: {
+        icon: Sparkles, label: 'Geometric Hero', category: 'sections' as any,
+        defaultProps: {}, defaultContent: '',
+        importMeta: {
+            packageName: '@/components/marketplace/HeroGeometric',
+            exportName: 'HeroGeometric',
+            isDefault: false,
+        },
+    },
+    feature_hover: {
+        icon: Zap, label: 'Hover Features', category: 'sections' as any,
+        defaultProps: { className: 'w-full relative bg-white', layoutMode: 'canvas' }, defaultContent: '',
+        importMeta: {
+            packageName: '@/components/marketplace/FeatureHover',
+            exportName: 'FeatureHover',
+            isDefault: false,
+        },
+    },
+    features_section: {
+        icon: Zap, label: 'Features Section', category: 'sections' as any,
+        defaultProps: { className: 'w-full' }, defaultContent: '',
+        importMeta: {
+            packageName: '@/components/marketplace/FeatureHover',
+            exportName: 'FeaturesSectionWithHoverEffects',
+            isDefault: false,
+        },
+    },
+    geometric_shapes: {
+        icon: Sparkles, label: 'Geometric Shapes', category: 'sections' as any,
+        defaultProps: {}, defaultContent: '',
+        importMeta: {
+            packageName: '@/components/marketplace/GeometricShapes',
+            exportName: 'GeometricShapes',
+            isDefault: false,
+        },
+    },
+    geometric_bg: {
+        icon: Sparkles, label: 'Geometric Background', category: 'sections' as any,
+        defaultProps: {}, defaultContent: '',
+        importMeta: {
+            packageName: '@/components/marketplace/GeometricShapes',
+            exportName: 'GeometricShapesBackground',
+            isDefault: false,
+        },
+    },
 
     // --- PRE-MADE SECTIONS (Fixed: Added layoutMode) ---
     hero: {

@@ -209,6 +209,42 @@ export interface ComponentConfig {
      * Drives correct import statements across all export paths.
      */
     importMeta?: ComponentImportMeta;
+    /**
+     * Phase A — Component-First Canvas
+     * ──────────────────────────────────
+     * Optional reference to the actual React component constructor.
+     * When present, RenderNode renders this component directly on the canvas
+     * instead of the styled-div fallback path.
+     *
+     * WHEN TO SET:
+     *   registerComponent('my_button', { component: MyButton, importMeta: {...} })
+     *   → canvas renders <MyButton /> exactly as it appears in the real codebase.
+     *
+     * WHEN TO OMIT:
+     *   Native HTML elements (text, container, div, p, h1...) — no real component.
+     *   Marketplace items in COMPONENT_TYPES — their lazy refs live in RenderNode.
+     *
+     * ABSENT  → falls through to hardcoded chain or styled-div rendering
+     * PRESENT → RenderNode renders <component {...props} /> inside Suspense
+     */
+    component?: React.ComponentType<any>;
+    /**
+     * Phase B — @vectra/loader source code field.
+     * ─────────────────────────────────────────────
+     * Present when a component was registered via the loader bridge.
+     * Contains the raw JSX/TSX source (no import statements) — the same
+     * format LiveComponent expects.
+     *
+     * RenderNode Phase B routing: fires when element.importMeta is set AND
+     * element.code is absent AND this field is present on the registry entry.
+     *
+     * PHASE-B-3 [PERMANENT]: MUST NOT be set for marketplace items in constants.ts.
+     * The code field is exclusively for @vectra/loader registered components.
+     *
+     * ABSENT  = Phase A path (runtime component ref) or native HTML element
+     * PRESENT = Phase B path (loader-registered, compile-on-demand)
+     */
+    code?: string;
 }
 
 export interface DragData {

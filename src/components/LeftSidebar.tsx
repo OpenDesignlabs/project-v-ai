@@ -6,11 +6,12 @@ import {
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
     Trash2, Hexagon, Palette, Wand2, Database, Globe, Braces,
-    Server, Zap, CheckCircle2, Rocket,
+    Server, Zap, CheckCircle2, Rocket, Link2,
     Send, TerminalSquare, ChevronUp,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
 import { DeployPanel } from './DeployPanel';
+import { LoaderPanel } from './panels/LoaderPanel';
 import { cn } from '../lib/utils';
 import { processImportedCode, generateComponentId } from '../utils/importHelpers';
 import { TEMPLATES, type TemplateConfig } from '../data/templates';
@@ -880,6 +881,13 @@ export const LeftSidebar = () => {
                 <NavButton icon={ImageIcon} active={activePanel === 'assets'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('assets'); }} tooltip="Assets" />
                 <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
                 {/* Gap B2 — Deploy nav button */}
+                {/* Phase B: @vectra/loader — Connect Codebase */}
+                <NavButton
+                    icon={Link2}
+                    active={activePanel === 'loader'}
+                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('loader'); }}
+                    tooltip="Connect Codebase"
+                />
                 <NavButton
                     icon={Rocket}
                     active={activePanel === 'deploy'}
@@ -1691,6 +1699,9 @@ export const LeftSidebar = () => {
                     </div>
                 </div>
             )}
+
+            {/* Phase B: @vectra/loader — Connect Codebase panel */}
+            {activePanel === 'loader' && <LoaderPanel />}
 
             {/* Insert Drawer (Overlay) */}
             <InsertDrawer />

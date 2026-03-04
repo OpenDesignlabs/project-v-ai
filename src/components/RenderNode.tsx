@@ -768,6 +768,43 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             </Suspense>
         );
     }
+    // ── Phase A — Component-First Canvas (runtime component ref) ─────────────
+    // Fires when: node has importMeta AND conf.component is a live constructor.
+    // This is the @vectra/loader path when the developer ships a component ref.
+    else if (element.importMeta && componentRegistry[element.type]?.component) {
+        const Comp = componentRegistry[element.type].component!;
+        content = (
+            <Suspense fallback={<LoadingPlaceholder />}>
+                <Comp {...(element.props as any)} />
+            </Suspense>
+        );
+    }
+    // ── Phase B — @vectra/loader compile-on-demand path ───────────────────────
+    // Fires when: node has importMeta (real component identity) AND no inline
+    // element.code (not AI-generated) AND the registry entry carries source code
+    // from the loader manifest. Renders via LiveComponent — same compile path
+    // as AI-generated components, zero new machinery required.
+    //
+    // PHASE-B-2 [PERMANENT]: all three conditions are REQUIRED.
+    //   - importMeta: confirms real component identity (not a native HTML element)
+    //   - !element.code: guards against AI-generated nodes that happen to match
+    //     a loader-registered type id
+    //   - conf.code: confirms loader registration, not Phase A
+    else if (element.importMeta && !element.code && componentRegistry[element.type]?.code) {
+        const loaderCode = componentRegistry[element.type].code!;
+        content = (
+            <Suspense fallback={<LoadingPlaceholder />}>
+                <LiveComponent
+                    code={loaderCode}
+                    elementId={elementId}
+                    setElements={setElements}
+                    elementsRef={elementsRef}
+                    pushHistory={pushHistory}
+                    {...(element.props as any)}
+                />
+            </Suspense>
+        );
+    }
     else if (element.type === 'geometric_shapes') content = <Suspense fallback={<LoadingPlaceholder />}><GeometricShapes {...(element.props as any)} /></Suspense>;
     else if (element.type === 'geometric_bg') content = <Suspense fallback={<LoadingPlaceholder />}><GeometricShapesBackground {...(element.props as any)} /></Suspense>;
     else if (element.type === 'feature_hover') content = <Suspense fallback={<LoadingPlaceholder />}><FeatureHover {...(element.props as any)} /></Suspense>;
