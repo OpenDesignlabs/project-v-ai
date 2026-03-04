@@ -401,9 +401,16 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (canMove && nodeRef.current) {
             e.currentTarget.setPointerCapture(e.pointerId);
             e.stopPropagation();
-            const style = element.props.style || {};
-            const currentLeft = parseFloat(String(style.left || 0));
-            const currentTop = parseFloat(String(style.top || 0));
+            // P2-B2 FIX: start from the MERGED position (base + active breakpoint override).
+            // Previously read only base style — on a breakpoint where the element was visually
+            // at a different position, the drag started from the wrong origin, causing an
+            // instant jump on the first pointer-move frame.
+            const baseStyle = element.props.style || {};
+            const bpOverride = device !== 'desktop'
+                ? (element.props.breakpoints?.[device as 'mobile' | 'tablet'] || {})
+                : {};
+            const currentLeft = parseFloat(String(bpOverride.left ?? String(baseStyle.left || 0)));
+            const currentTop = parseFloat(String(bpOverride.top ?? String(baseStyle.top || 0)));
             dragStart.current = { x: e.clientX, y: e.clientY, left: currentLeft, top: currentTop };
             setInteraction({ type: 'MOVE', itemId: elementId });
             syncLayoutEngine(elementId);
@@ -432,19 +439,47 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
 
             // C-1 FIX: clone the full node chain — not just the top-level map —
             // so we never mutate the live React state reference in-place.
-            const updatedNode = {
-                ...elements[elementId],
-                props: {
-                    ...elements[elementId].props,
-                    style: {
-                        ...elements[elementId].props.style,
-                        left: `${Math.round(newLeft)}px`,
-                        top: `${Math.round(newTop)}px`,
-                        position: 'absolute' as const,
+            // P2-B2 FIX: breakpoint-aware write for MOVE.
+            // Desktop → props.style (preserved existing behavior).
+            // Tablet/Mobile → props.breakpoints[bp] so the desktop layout is never
+            // clobbered when dragging in a breakpoint view.
+            const bp = device !== 'desktop' ? (device as 'mobile' | 'tablet') : null;
+            if (bp) {
+                const currentEl = elements[elementId];
+                updateProject({
+                    ...elements,
+                    [elementId]: {
+                        ...currentEl,
+                        props: {
+                            ...currentEl.props,
+                            breakpoints: {
+                                ...(currentEl.props.breakpoints || {}),
+                                [bp]: {
+                                    ...(currentEl.props.breakpoints?.[bp] || {}),
+                                    left: `${Math.round(newLeft)}px`,
+                                    top: `${Math.round(newTop)}px`,
+                                    position: 'absolute' as const,
+                                },
+                            },
+                        },
                     },
-                },
-            };
-            updateProject({ ...elements, [elementId]: updatedNode }, true); // skipHistory at 60fps
+                }, true);
+            } else {
+                // Desktop — original C-1-safe clone behavior
+                const updatedNode = {
+                    ...elements[elementId],
+                    props: {
+                        ...elements[elementId].props,
+                        style: {
+                            ...elements[elementId].props.style,
+                            left: `${Math.round(newLeft)}px`,
+                            top: `${Math.round(newTop)}px`,
+                            position: 'absolute' as const,
+                        },
+                    },
+                };
+                updateProject({ ...elements, [elementId]: updatedNode }, true);
+            }
         }
     };
 

@@ -15,7 +15,7 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
     // NM-8 FIX: zoomRef instead of zoom — startResize only reads zoom inside a
     // pointer event handler, not at render time. Subscribing to zoom state caused
     // Resizer to re-render on every 60fps wheel tick with no visual benefit.
-    const { setInteraction, zoomRef } = useUI();
+    const { setInteraction, zoomRef, device } = useUI();
     const element = elements[elementId];
 
     if (!element) return null;
@@ -40,9 +40,18 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
 
         const domRect = parent.getBoundingClientRect();
 
+        // P2-B2 FIX: read left/top from the MERGED style (base + active breakpoint override).
+        // Previously read only from element.props.style (base). When a breakpoint override
+        // had repositioned the element, startRect.left/top were stale — w/n handles computed
+        // a wrong newRect.left/top on first pointer-move, causing a visible snap-jump before
+        // the drag settled. Now reads the visually accurate merged position.
+        const baseStyle = element.props.style || {};
+        const bpOverride = device !== 'desktop'
+            ? (element.props.breakpoints?.[device as 'mobile' | 'tablet'] || {})
+            : {};
         const rect = {
-            left: parseFloat(String(element.props.style?.left || '0')),
-            top: parseFloat(String(element.props.style?.top || '0')),
+            left: parseFloat(String(bpOverride.left ?? baseStyle.left ?? '0')),
+            top: parseFloat(String(bpOverride.top ?? baseStyle.top ?? '0')),
             width: domRect.width / zoomRef.current,
             height: domRect.height / zoomRef.current,
         };

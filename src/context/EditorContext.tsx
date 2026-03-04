@@ -22,7 +22,7 @@
  *   all sibling rects into Wasm ONCE per drag gesture.
  */
 
-import React, { useCallback, useMemo, type ReactNode } from 'react';
+import React, { useCallback, useMemo, useRef, useEffect, type ReactNode } from 'react';
 import { useProject } from './ProjectContext';
 import { useUI } from './UIContext';
 import { useHover } from './HoverContext';
@@ -40,7 +40,14 @@ function useInteractionEngine() {
     // tick (60fps) → Canvas useEffect tore down + reattached pointermove + pointerup
     // listeners 60×/sec. Two DOM API calls per tick = 120 ops/sec listener churn,
     // plus a one-frame gap where no handler was attached → drag skip during zoom+drag.
-    const { interaction, zoomRef, setGuides, setInteraction } = useUI();
+    const { interaction, zoomRef, setGuides, setInteraction, device } = useUI();
+
+    // P2-B2 FIX: mirror device into a stable ref so handleInteractionMove reads
+    // the current breakpoint at 60fps without adding device to its dep array.
+    // device only changes on user click — but ref pattern keeps dep array stable
+    // and consistent with NM-8 (zoomRef) and the project-wide ref-for-60fps rule.
+    const bpRef = useRef<'desktop' | 'tablet' | 'mobile'>(device);
+    useEffect(() => { bpRef.current = device; }, [device]);
 
     // ── MOVE / RESIZE — called at 60fps during drag ────────────────────────────
     // • updateProject(next, true) → setElements only, no JSON.stringify per frame
@@ -77,9 +84,41 @@ function useInteractionEngine() {
         const curElements = elementsRef.current;
         const el = curElements[itemId];
         if (!el) return;
-        const next = {
-            ...curElements,
-            [itemId]: {
+
+        // P2-B2 FIX: breakpoint-aware write destination.
+        // Desktop → write to props.style (existing behaviour).
+        // Tablet/Mobile → write to props.breakpoints[bp] so the base desktop
+        // layout is never clobbered when the user resizes in a breakpoint view.
+        //
+        // WHY bpRef NOT bpState: bpRef.current is read here at 60fps. Adding
+        // `device` state to this dep array would make handleInteractionMove
+        // re-create on every device toggle, forcing Canvas to re-attach the
+        // global pointermove listener — same churn NM-8 solved for zoom.
+        const bp = bpRef.current;
+        const isBreakpointMode = bp !== 'desktop';
+
+        let nextNode: typeof el;
+        if (isBreakpointMode) {
+            const currentBpStyle = el.props.breakpoints?.[bp as 'mobile' | 'tablet'] || {};
+            nextNode = {
+                ...el,
+                props: {
+                    ...el.props,
+                    breakpoints: {
+                        ...(el.props.breakpoints || {}),
+                        [bp]: {
+                            ...currentBpStyle,
+                            left: `${newRect.left}px`,
+                            top: `${newRect.top}px`,
+                            width: `${newRect.width}px`,
+                            height: `${newRect.height}px`,
+                        },
+                    },
+                },
+            };
+        } else {
+            // Desktop — original behavior preserved exactly
+            nextNode = {
                 ...el,
                 props: {
                     ...el.props,
@@ -91,12 +130,15 @@ function useInteractionEngine() {
                         height: `${newRect.height}px`,
                     },
                 },
-            },
-        };
+            };
+        }
+
+        const next = { ...curElements, [itemId]: nextNode };
         updateProject(next, true); // skipHistory=true → no JSON.stringify per frame
-        // NM-8: zoom removed from deps (now zoomRef — stable ref identity, never changes).
-        // zoomRef retained in deps array for exhaustive-deps lint rule compliance.
-    }, [interaction, zoomRef, elementsRef, setGuides, updateProject, querySnapping]);
+        // bpRef is a stable ref — its identity never changes, so it is NOT listed
+        // in deps as a reactive value. Reading bpRef.current inside the callback
+        // always gets the current breakpoint without triggering re-creation.
+    }, [interaction, zoomRef, bpRef, elementsRef, setGuides, updateProject, querySnapping]);
 
     // ── DRAG END — called once on pointer-up ──────────────────────────────────
     // H-4 FIX: `elements` removed from deps — reads from elementsRef.current at call
