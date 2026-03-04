@@ -1,6 +1,12 @@
 import React, { useState } from 'react';
 import { useEditor } from '../context/EditorContext';
-import { processImportedCode, readFileContent, isValidReactComponent, generateComponentId } from '../utils/importHelpers';
+import {
+    processImportedCode,
+    readFileContent,
+    isValidReactComponent,
+    generateComponentId,
+    getDetectionPreview,
+} from '../utils/importHelpers';
 import { X, Upload, FileText, Code, Check, AlertCircle } from 'lucide-react';
 
 interface ImportModalProps {
@@ -98,8 +104,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({ onClose }) => {
                     <button
                         onClick={() => { setMode('upload'); setError(null); }}
                         className={`flex-1 py-2.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${mode === 'upload'
-                                ? 'bg-white shadow-sm text-blue-600 ring-1 ring-slate-200'
-                                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+                            ? 'bg-white shadow-sm text-blue-600 ring-1 ring-slate-200'
+                            : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
                             }`}
                     >
                         <Upload size={14} /> Upload File
@@ -107,8 +113,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({ onClose }) => {
                     <button
                         onClick={() => { setMode('paste'); setError(null); }}
                         className={`flex-1 py-2.5 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 transition-all ${mode === 'paste'
-                                ? 'bg-white shadow-sm text-blue-600 ring-1 ring-slate-200'
-                                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
+                            ? 'bg-white shadow-sm text-blue-600 ring-1 ring-slate-200'
+                            : 'text-slate-500 hover:text-slate-700 hover:bg-slate-100'
                             }`}
                     >
                         <FileText size={14} /> Paste Code
@@ -157,6 +163,45 @@ export const ImportModal: React.FC<ImportModalProps> = ({ onClose }) => {
                         </div>
                     )}
 
+                    {/* ── Detection Preview ────────────────────────────────────── */}
+                    {/* Shows as soon as code is non-empty. Gives the user       */}
+                    {/* confidence about what name + import path Vectra will use. */}
+                    {code.trim() && (() => {
+                        const preview = getDetectionPreview(code, fileName || undefined);
+                        if (!preview) return null;
+                        return (
+                            <div className="mt-4 p-3 bg-slate-50 border border-slate-200 rounded-xl">
+                                <div className="text-[9px] font-bold text-slate-400 uppercase tracking-wider mb-2.5">
+                                    Detection Preview
+                                </div>
+                                <div className="flex flex-col gap-2">
+                                    {/* Name */}
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-[10px] text-slate-400 w-14 shrink-0 font-medium">Name</span>
+                                        <span className="text-xs font-bold text-slate-800">{preview.name}</span>
+                                    </div>
+                                    {/* Export type */}
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-[10px] text-slate-400 w-14 shrink-0 font-medium">Export</span>
+                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${preview.isDefault
+                                                ? 'bg-purple-100 text-purple-700'
+                                                : 'bg-blue-100 text-blue-700'
+                                            }`}>
+                                            {preview.isDefault ? 'default' : 'named'}
+                                        </span>
+                                    </div>
+                                    {/* Import statement */}
+                                    <div className="flex items-start gap-3">
+                                        <span className="text-[10px] text-slate-400 w-14 shrink-0 font-medium mt-0.5">Import</span>
+                                        <code className="text-[10px] font-mono text-slate-600 bg-slate-100 px-2 py-1 rounded-lg leading-relaxed break-all">
+                                            {preview.importStatement}
+                                        </code>
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
+
                     {/* Error Message */}
                     {error && (
                         <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2 text-xs text-red-600">
@@ -182,8 +227,8 @@ export const ImportModal: React.FC<ImportModalProps> = ({ onClose }) => {
                             onClick={handleImport}
                             disabled={!code || isSuccess}
                             className={`px-6 py-2.5 text-xs font-bold text-white rounded-lg flex items-center gap-2 transition-all ${isSuccess
-                                    ? 'bg-green-500'
-                                    : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-600/25'
+                                ? 'bg-green-500'
+                                : 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-blue-600/25'
                                 }`}
                         >
                             {isSuccess ? (
