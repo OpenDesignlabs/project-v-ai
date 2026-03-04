@@ -235,3 +235,31 @@ export function manifestEntryToConfig(entry: VectraLoaderEntry): ComponentConfig
         },
     };
 }
+
+// ─── CONTROL RESOLUTION ───────────────────────────────────────────────────────
+
+/**
+ * resolveControlType
+ * ───────────────────
+ * Maps a VectraLoaderPropSchema entry to a canonical control type string
+ * the RightSidebar PropSchemaEditor renders.
+ *
+ * Rule precedence:
+ *   1. Explicit `control` field on schema → use verbatim
+ *   2. type === 'boolean'  → 'toggle'
+ *   3. type === 'select'   → 'select'
+ *   4. type === 'color'    → 'color'
+ *   5. type === 'number' + min/max defined → 'slider'
+ *   6. type === 'number'   → 'number'
+ *   7. Fallback            → 'text'
+ */
+export function resolveControlType(
+    schema: VectraLoaderPropSchema
+): 'text' | 'textarea' | 'number' | 'slider' | 'toggle' | 'select' | 'color' {
+    if (schema.control) return schema.control;
+    if (schema.type === 'boolean') return 'toggle';
+    if (schema.type === 'select') return 'select';
+    if (schema.type === 'color') return 'color';
+    if (schema.type === 'number') return (schema.min !== undefined && schema.max !== undefined) ? 'slider' : 'number';
+    return 'text';
+}

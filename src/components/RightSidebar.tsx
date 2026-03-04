@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import React from 'react';
 import { useEditor } from '../context/EditorContext';
 import { useUI } from '../context/UIContext';
 import ColorPicker from 'react-best-gradient-color-picker';
@@ -14,12 +15,54 @@ import {
     Smartphone, Tablet, Monitor,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
+import {
+    type VectraLoaderPropSchema,
+    resolveControlType,
+} from '../utils/vectraLoaderBridge';
 
 // --- TYPES ---
-type Tab = 'design' | 'interact' | 'settings';
+type Tab = 'design' | 'interact' | 'settings' | 'props';
 type FillMode = 'solid' | 'gradient' | 'image';
 
 // --- SUB-COMPONENTS ---
+
+/**
+ * AddPropRow — isolated sub-component so useState is called at the correct
+ * hook level. PROPS-TAB-3 [PERMANENT]: hooks must not be called inside
+ * callbacks, conditionals, or IIFEs. Extracting here keeps the parent clean.
+ */
+const AddPropRow: React.FC<{ onAdd: (key: string, value: string) => void }> = ({ onAdd }) => {
+    const [newKey, setNewKey] = React.useState('');
+    const [newVal, setNewVal] = React.useState('');
+    const commit = () => {
+        if (!newKey.trim()) return;
+        onAdd(newKey.trim(), newVal);
+        setNewKey('');
+        setNewVal('');
+    };
+    return (
+        <div className="mt-2 flex gap-1.5">
+            <input
+                type="text" value={newKey}
+                onChange={e => setNewKey(e.target.value)}
+                placeholder="key"
+                className="w-24 bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50 placeholder-[#444]"
+            />
+            <input
+                type="text" value={newVal}
+                onChange={e => setNewVal(e.target.value)}
+                placeholder="value"
+                onKeyDown={e => { if (e.key === 'Enter') commit(); }}
+                className="flex-1 bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50 placeholder-[#444]"
+            />
+            <button
+                onClick={commit}
+                className="px-2 py-1 rounded bg-[#2a2a2d] border border-[#3e3e42] text-[10px] text-[#888] hover:text-white transition-all"
+            >+</button>
+        </div>
+    );
+};
+
 const TabButton = ({ active, onClick, icon: Icon, label }: { active: boolean; onClick: () => void; icon: typeof Layout; label: string }) => (
     <button
         onClick={onClick}
@@ -67,7 +110,7 @@ const InputUnit = ({ label, icon: Icon, value, onChange, step, unit }: { label: 
 );
 
 export const RightSidebar = () => {
-    const { elements, selectedId, updateProject, pushHistory, elementsRef, previewMode, pages, parentMap } = useEditor();
+    const { elements, selectedId, updateProject, pushHistory, elementsRef, previewMode, pages, parentMap, setElements, componentRegistry } = useEditor();
     // Direction A: read activeBreakpoint and setDevice from UIContext
     const { activeBreakpoint, setDevice } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
@@ -298,6 +341,15 @@ export const RightSidebar = () => {
 
             {/* TABS */}
             <div className="flex border-b border-[#252526] bg-[#333333]">
+                {/* Props tab — only visible for loader/imported components (importMeta present) */}
+                {element?.importMeta && (
+                    <TabButton
+                        active={activeTab === 'props'}
+                        onClick={() => setActiveTab('props')}
+                        icon={Box}
+                        label="Props"
+                    />
+                )}
                 <TabButton active={activeTab === 'design'} onClick={() => setActiveTab('design')} icon={Layout} label="Design" />
                 <TabButton active={activeTab === 'interact'} onClick={() => setActiveTab('interact')} icon={MousePointer2} label="Interact" />
                 <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={Settings} label="Settings" />
@@ -342,6 +394,169 @@ export const RightSidebar = () => {
 
             {/* CONTENT AREA */}
             <div className="flex-1 overflow-y-auto custom-scrollbar">
+
+                {/* ════════════════════════════════════════════════════════════
+                    TAB: PROPS
+                    Visible only when element.importMeta is set (loader/imported).
+                    Schema-driven controls when propSchema present;
+                    raw key-value editor fallback otherwise.
+                    PROPS-TAB-1 [PERMANENT]: never shows style/className/breakpoints.
+                    PROPS-TAB-2 [PERMANENT]: writes directly to element.props via
+                      setElements (not updateProject — avoids history thrash at 60fps).
+                    ════════════════════════════════════════════════════════════ */}
+                {activeTab === 'props' && element?.importMeta && (() => {
+                    const conf = componentRegistry[element.type];
+                    const schema: Record<string, VectraLoaderPropSchema> | undefined =
+                        (conf as any)?.propSchema;
+
+                    // Keys owned by Design/Settings tabs — never expose here
+                    const RESERVED = new Set([
+                        'style', 'className', 'breakpoints', 'layoutMode',
+                        'stackOnMobile', 'animation', 'animationDuration',
+                        'animationDelay', 'hoverEffect', 'id',
+                    ]);
+
+                    // PROPS-TAB-2: direct setElements write, NOT updateProject
+                    const updatePropKey = (key: string, value: unknown) => {
+                        setElements(prev => ({
+                            ...prev,
+                            [element.id]: {
+                                ...prev[element.id],
+                                props: { ...prev[element.id].props, [key]: value },
+                            },
+                        }));
+                    };
+
+                    // ── Schema-driven controls ─────────────────────────────────
+                    if (schema && Object.keys(schema).length > 0) {
+                        return (
+                            <div className="p-3 flex flex-col gap-0.5">
+                                <div className="flex items-center justify-between mb-2">
+                                    <span className="text-[9px] font-bold text-[#555] uppercase tracking-wider">Component Props</span>
+                                    {conf?.importMeta && (
+                                        <span className="text-[9px] font-mono text-[#444] bg-[#1e1e1e] px-1.5 py-0.5 rounded truncate max-w-[140px]">
+                                            {conf.importMeta.exportName}
+                                        </span>
+                                    )}
+                                </div>
+
+                                {Object.entries(schema).map(([key, propSchema]) => {
+                                    const currentValue = (element.props as any)[key] ?? propSchema.default ?? '';
+                                    const controlType = resolveControlType(propSchema);
+                                    const label = key.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase());
+
+                                    return (
+                                        <div key={key} className="flex items-center gap-2 py-1 border-b border-[#252526] last:border-0">
+                                            <span className="text-[10px] text-[#777] w-24 shrink-0 truncate" title={key}>{label}</span>
+                                            <div className="flex-1 min-w-0">
+                                                {(controlType === 'text' || controlType === 'textarea') && (
+                                                    controlType === 'textarea'
+                                                        ? <textarea value={String(currentValue)} onChange={e => updatePropKey(key, e.target.value)} rows={2}
+                                                            className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono resize-none outline-none focus:border-blue-500/50" />
+                                                        : <input type="text" value={String(currentValue)} onChange={e => updatePropKey(key, e.target.value)}
+                                                            className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50" />
+                                                )}
+                                                {controlType === 'number' && (
+                                                    <input type="number" value={Number(currentValue)} min={propSchema.min} max={propSchema.max} step={propSchema.step ?? 1}
+                                                        onChange={e => updatePropKey(key, parseFloat(e.target.value))}
+                                                        className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50" />
+                                                )}
+                                                {controlType === 'slider' && (
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="range" value={Number(currentValue)} min={propSchema.min ?? 0} max={propSchema.max ?? 100} step={propSchema.step ?? 1}
+                                                            onChange={e => updatePropKey(key, parseFloat(e.target.value))}
+                                                            className="flex-1 h-1 accent-blue-500" />
+                                                        <span className="text-[10px] text-[#888] w-8 text-right font-mono tabular-nums">{Number(currentValue)}</span>
+                                                    </div>
+                                                )}
+                                                {controlType === 'toggle' && (
+                                                    <button type="button" onClick={() => updatePropKey(key, !currentValue)}
+                                                        className={cn('w-8 h-4 rounded-full flex items-center px-0.5 transition-colors',
+                                                            currentValue ? 'bg-blue-500 justify-end' : 'bg-[#444] justify-start')}>
+                                                        <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                                    </button>
+                                                )}
+                                                {controlType === 'select' && (
+                                                    <select value={String(currentValue)} onChange={e => updatePropKey(key, e.target.value)}
+                                                        className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white outline-none focus:border-blue-500/50">
+                                                        {(propSchema.options ?? []).map(opt => <option key={opt} value={opt}>{opt}</option>)}
+                                                    </select>
+                                                )}
+                                                {controlType === 'color' && (
+                                                    <div className="flex items-center gap-2">
+                                                        <input type="color" value={String(currentValue) || '#000000'} onChange={e => updatePropKey(key, e.target.value)}
+                                                            className="w-7 h-6 rounded cursor-pointer border border-[#3e3e42] bg-transparent" />
+                                                        <input type="text" value={String(currentValue)} onChange={e => updatePropKey(key, e.target.value)}
+                                                            className="flex-1 bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50" />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+
+                                <button
+                                    onClick={() => { Object.entries(schema).forEach(([k, s]) => { if (s.default !== undefined) updatePropKey(k, s.default); }); }}
+                                    className="mt-3 w-full py-1.5 rounded border border-[#3e3e42] text-[10px] text-[#666] hover:text-[#999] hover:border-[#555] transition-all"
+                                >
+                                    Reset to defaults
+                                </button>
+                            </div>
+                        );
+                    }
+
+                    // ── Raw props fallback (no propSchema) ────────────────────
+                    const editableEntries = Object.entries(element.props).filter(
+                        ([k, v]) => !RESERVED.has(k) && typeof v !== 'object'
+                    );
+
+                    return (
+                        <div className="p-3 flex flex-col gap-1">
+                            <div className="flex items-center justify-between mb-2">
+                                <span className="text-[9px] font-bold text-[#555] uppercase tracking-wider">Props</span>
+                                {conf?.importMeta && (
+                                    <span className="text-[9px] font-mono text-[#444] bg-[#1e1e1e] px-1.5 py-0.5 rounded truncate max-w-[140px]">
+                                        {conf.importMeta.exportName}
+                                    </span>
+                                )}
+                            </div>
+
+                            <div className="mb-2 px-2 py-1.5 rounded bg-[#1e1e1e] border border-[#2a2a2a] text-[9px] text-[#555] leading-relaxed">
+                                No prop schema. Add{' '}
+                                <code className="text-[#777]">propSchema</code> to your{' '}
+                                <code className="text-[#777]">vectra.config.ts</code> for typed controls.
+                            </div>
+
+                            {editableEntries.length === 0 && (
+                                <div className="text-[10px] text-[#444] text-center py-4">No editable props found.</div>
+                            )}
+
+                            {editableEntries.map(([key, val]) => (
+                                <div key={key} className="flex items-center gap-2 py-1 border-b border-[#252526] last:border-0">
+                                    <span className="text-[10px] text-[#777] w-24 shrink-0 truncate font-mono" title={key}>{key}</span>
+                                    <div className="flex-1 min-w-0">
+                                        {typeof val === 'boolean' ? (
+                                            <button type="button" onClick={() => updatePropKey(key, !val)}
+                                                className={cn('w-8 h-4 rounded-full flex items-center px-0.5 transition-colors',
+                                                    val ? 'bg-blue-500 justify-end' : 'bg-[#444] justify-start')}>
+                                                <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                            </button>
+                                        ) : typeof val === 'number' ? (
+                                            <input type="number" value={val} onChange={e => updatePropKey(key, parseFloat(e.target.value))}
+                                                className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50" />
+                                        ) : (
+                                            <input type="text" value={String(val ?? '')} onChange={e => updatePropKey(key, e.target.value)}
+                                                className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-white font-mono outline-none focus:border-blue-500/50" />
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
+
+                            {/* PROPS-TAB-3: AddPropRow extracted as named component — hooks-safe */}
+                            <AddPropRow onAdd={(key, val) => updatePropKey(key, val)} />
+                        </div>
+                    );
+                })()}
 
                 {/* --- TAB: DESIGN --- */}
                 {activeTab === 'design' && (
