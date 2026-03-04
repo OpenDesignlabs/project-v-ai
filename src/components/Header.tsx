@@ -529,7 +529,7 @@ export const Header = () => {
     return (
         <>
             {/* TOP BAR: VS Code Theme Match (#333333) */}
-            <div className="h-[50px] bg-[#333333] border-b border-[#252526] flex items-center justify-between px-4 shrink-0 z-50 text-[#cccccc]">
+            <div className="h-[50px] bg-[#333333] border-b border-[#252526] grid grid-cols-[1fr_auto_1fr] items-center px-4 shrink-0 z-50 text-[#cccccc]">
 
                 {/* LEFT: Branding & Reset */}
                 <div className="flex items-center gap-4">
@@ -577,8 +577,8 @@ export const Header = () => {
                     </div>
                 </div>
 
-                {/* CENTER: View Switcher & Device Toggles */}
-                <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-4">
+                {/* CENTER: View Switcher — flex justify-center, no absolute needed */}
+                <div className="flex items-center justify-center gap-4">
 
                     {/* View Mode (Layout | Design)  */}
                     <div className="flex items-center bg-[#252526] rounded-md p-0.5 border border-[#3e3e42]">
@@ -603,8 +603,8 @@ export const Header = () => {
                     </div>
                 </div>
 
-                {/* RIGHT: Actions */}
-                <div className="flex items-center gap-2">
+                {/* RIGHT: Actions — justify-self-end so it hugs the right edge */}
+                <div className="flex items-center gap-2 justify-self-end">
                     {/* History & Zoom */}
                     <div className="flex items-center gap-0.5 opacity-80">
                         <button onClick={history.undo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Undo"><Undo size={14} /></button>

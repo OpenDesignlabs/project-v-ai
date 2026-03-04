@@ -51,6 +51,7 @@ import {
     migrateFromLegacyStorage,
     type FullProjectSave,
 } from '../utils/db';
+import { generateLayoutThumbnail } from '../utils/generateThumbnail';
 
 /** localStorage key that remembers which project was last open. */
 const ACTIVE_PROJECT_ID_KEY = 'vectra_active_id';
@@ -63,6 +64,9 @@ const generateProjectId = (): string => `proj_${crypto.randomUUID().replace(/-/g
 
 /** Per-project localStorage snap key (fast-boot cache). */
 const snapKey = (id: string) => `vectra_snap_${id}`;
+/** Per-project localStorage key for the SVG wireframe thumbnail.
+ *  NM-THUMB: canonical key — mirrors snapKey, cleaned up together in purgeProjectData. */
+const thumbKey = (id: string) => `vectra_thumb_${id}`;
 
 export type { VectraProject, Page };
 
@@ -942,9 +946,18 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const exitProject = useCallback(() => {
         if (confirm('Exit to dashboard? Your project is auto-saved.')) {
+            // NM-THUMB: Generate + store wireframe thumbnail before leaving.
+            // Done here so the thumbnail always reflects the final saved state.
+            // elementsRef.current has the latest elements without stale closure issues.
+            try {
+                if (projectId) {
+                    const svg = generateLayoutThumbnail(elementsRef.current, pages);
+                    localStorage.setItem(thumbKey(projectId), svg);
+                }
+            } catch { /* localStorage unavailable — non-fatal */ }
             window.dispatchEvent(new CustomEvent('vectra:exit-project'));
         }
-    }, []);
+    }, [projectId, pages, elementsRef]);
 
     // ── Phase H: Open existing project ───────────────────────────────────────
     const loadProject = useCallback(async (meta: ProjectMeta) => {
@@ -1071,6 +1084,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     const purgeProjectData = useCallback(async (id: string) => {
         await deleteProjectDataFromDB2(id).catch(() => { });
         localStorage.removeItem(snapKey(id));
+        localStorage.removeItem(thumbKey(id));   // NM-THUMB: clean up wireframe alongside snap
         console.log('[Vectra] Project permanently purged:', id);
     }, []);
 

@@ -176,6 +176,15 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
         if (isRenaming) renameInputRef.current?.select();
     }, [isRenaming]);
 
+    // ── Wireframe thumbnail ───────────────────────────────────────────────
+    const [thumbSvg, setThumbSvg] = useState<string | null>(null);
+    useEffect(() => {
+        try {
+            const stored = localStorage.getItem(`vectra_thumb_${meta.id}`);
+            if (stored) setThumbSvg(stored);
+        } catch { /* storage unavailable */ }
+    }, [meta.id]);
+
     const fw = FW_META[meta.framework] ?? FW_META['nextjs'];
 
     const startRename = () => {
@@ -206,8 +215,33 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
         >
             {/* Active indicator */}
             {isActive && (
-                <div className="absolute top-3 left-3 w-1.5 h-1.5 rounded-full bg-[#007acc] shadow-[0_0_6px_#007acc80]" />
+                <div className="absolute top-3 left-3 z-10 w-1.5 h-1.5 rounded-full bg-[#007acc] shadow-[0_0_6px_#007acc80]" />
             )}
+
+            {/* ── Wireframe Thumbnail ─────────────────────────────────────── */}
+            <div className="w-full h-[140px] rounded-lg overflow-hidden mb-4 bg-[#0a0a0b] border border-white/5 flex items-center justify-center shrink-0 relative">
+                {thumbSvg ? (
+                    <img
+                        src={`data:image/svg+xml,${encodeURIComponent(thumbSvg)}`}
+                        alt={`${meta.name} layout preview`}
+                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        draggable={false}
+                    />
+                ) : (
+                    // Placeholder — project has never been exited after creation
+                    <div className="flex flex-col items-center gap-2 text-zinc-800 pointer-events-none select-none">
+                        <div className="grid grid-cols-3 gap-1 w-24 opacity-60">
+                            <div className="h-2 bg-current rounded-sm col-span-3 opacity-40" />
+                            <div className="h-8 bg-current rounded-sm col-span-2" />
+                            <div className="h-8 bg-current rounded-sm" />
+                            <div className="h-1.5 bg-current rounded-sm col-span-3 opacity-30" />
+                        </div>
+                    </div>
+                )}
+                {/* Bottom fade gradient — blends thumbnail into card background */}
+                <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#121214] to-transparent pointer-events-none" />
+            </div>
 
             {/* Card top row */}
             <div className="flex items-start justify-between mb-4">
