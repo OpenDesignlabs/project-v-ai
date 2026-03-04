@@ -34,6 +34,14 @@ export interface VectraNode {
     events?: { onClick?: ActionType; };
     // --- LIVE COMPILER: Stores raw React code for AI-generated custom components ---
     code?: string;
+    /**
+     * CIS-1 — Component import identity.
+     * Present on nodes that represent real React components (marketplace, npm,
+     * user-registered). Absent on nodes that map to native HTML elements.
+     * Drives import statement generation in all export paths.
+     * Never present on: div, p, h1, img, input, button, icon, canvas, webpage.
+     */
+    importMeta?: ComponentImportMeta;
     props: {
         className?: string;
         style?: React.CSSProperties;
@@ -75,6 +83,55 @@ export interface BreakpointMap {
     mobile?: Partial<React.CSSProperties>;
     /** Applied at max-width: 1024px (tablets) */
     tablet?: Partial<React.CSSProperties>;
+}
+
+/**
+ * CIS-1 — Component Identity System
+ * ─────────────────────────────────
+ * Carries the import identity for any registered component that is NOT a
+ * raw HTML element (div, p, h1, etc.). Set on VectraNode at creation time
+ * by copying it from ComponentConfig.importMeta.
+ *
+ * This is the single source of truth that drives:
+ *   1. codeGenerator.ts — correct import statement in exported JSX
+ *   2. GitHub publish    — correct import in pushed repo files
+ *   3. @vectra/loader    — bidirectional component registration
+ *
+ * ABSENT  = the node is a native HTML element (p, div, h1, img, etc.)
+ * PRESENT = the node is a real React component from a package or local path
+ */
+export interface ComponentImportMeta {
+    /**
+     * npm package name or project-relative path.
+     * npm package:    '@acme/ui'  | 'framer-motion' | 'recharts'
+     * relative path:  './components/Button' | '../shared/Card'
+     * Vectra internal: '../components/marketplace/HeroGeometric'
+     */
+    packageName: string;
+
+    /**
+     * The exported identifier, used verbatim as the JSX tag name.
+     * Default export: the local binding name  →  'HeroGeometric'
+     * Named export:   the exact export name   →  'Button' | 'LineChart'
+     *
+     * This value IS the JSX tag: <HeroGeometric /> <Button /> <LineChart />
+     */
+    exportName: string;
+
+    /**
+     * true  → default import:  import HeroGeometric from '../components/marketplace/HeroGeometric'
+     * false → named import:    import { Button } from '@acme/ui'
+     * @default false
+     */
+    isDefault?: boolean;
+
+    /**
+     * Semver version range — written into package.json dependencies when
+     * packageName is an npm package (not a relative path starting with '.').
+     * Example: '^2.0.0' | '~1.5.3'
+     * Omit for relative paths or when version pinning is not required.
+     */
+    version?: string;
 }
 
 /**
@@ -146,6 +203,12 @@ export interface ComponentConfig {
     defaultProps: any;
     defaultContent?: string;
     src?: string;
+    /**
+     * CIS-1 — If set, nodes created from this config are real React components.
+     * Copied onto VectraNode.importMeta at drop/instantiation time.
+     * Drives correct import statements across all export paths.
+     */
+    importMeta?: ComponentImportMeta;
 }
 
 export interface DragData {

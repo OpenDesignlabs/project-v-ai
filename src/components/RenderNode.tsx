@@ -484,6 +484,10 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     type: dragData.payload,
                     name: conf.label,
                     children: [],
+                    // CIS-1: stamp component identity at birth so codeGenerator always
+                    // knows the correct import path without hardcoded type string lookups.
+                    // Undefined if conf has no importMeta (raw HTML element: div, p, etc.)
+                    ...(conf.importMeta ? { importMeta: conf.importMeta } : {}),
                     props: {
                         ...conf.defaultProps,
                         style: {

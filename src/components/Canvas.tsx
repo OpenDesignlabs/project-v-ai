@@ -374,6 +374,10 @@ export const Canvas = () => {
             h = dragData.payload === 'webpage' ? 1080 : 100;
             newNodes[newRootId] = {
                 id: newRootId, type: dragData.payload, name: conf.label, children: [],
+                // CIS-1: stamp component identity at birth — mirrors RenderNode.handleDrop.
+                // Both creation paths must stamp importMeta so no node escapes without its
+                // identity regardless of whether it was dropped onto a canvas frame or artboard.
+                ...(conf.importMeta ? { importMeta: conf.importMeta } : {}),
                 props: {
                     ...conf.defaultProps,
                     style: {
@@ -385,6 +389,7 @@ export const Canvas = () => {
                 },
                 content: conf.defaultContent, src: conf.src
             };
+
         }
 
         if (newNodes[newRootId]) {

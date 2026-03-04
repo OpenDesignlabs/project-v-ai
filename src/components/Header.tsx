@@ -9,8 +9,14 @@ import {
     Play, Undo, Redo, Code, Grid,
     Check, X, Copy, Trash2,
     Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck,
-    Cpu, Maximize
+    Cpu, Maximize, Github, ExternalLink, Eye, EyeOff
 } from 'lucide-react';
+import {
+    publishToGitHub,
+    type GitHubPublishConfig,
+    type GitHubPublishResult,
+    type GitHubPublishProgress,
+} from '../utils/githubPublisher';
 
 import { cn } from '../lib/utils';
 
@@ -95,6 +101,37 @@ export const Header = () => {
     const [copied, setCopied] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [exportDone, setExportDone] = useState(false);
+
+    // ── GitHub Publish state ───────────────────────────────────────────────────
+    const GH_CONFIG_KEY = 'vectra_gh_config';
+    const loadedConfig = (() => {
+        try { return JSON.parse(localStorage.getItem(GH_CONFIG_KEY) || '{}'); }
+        catch { return {}; }
+    })();
+    const [showGitHubModal, setShowGitHubModal] = useState(false);
+    const [ghPat, setGhPat] = useState('');
+    const [ghShowPat, setGhShowPat] = useState(false);
+    const [ghOwner, setGhOwner] = useState<string>(loadedConfig.owner ?? '');
+    const [ghRepo, setGhRepo] = useState<string>(loadedConfig.repo ?? '');
+    const [ghBranch, setGhBranch] = useState<string>(loadedConfig.branch ?? 'main');
+    const [ghMessage, setGhMessage] = useState<string>(loadedConfig.message ?? 'Publish from Vectra Visual Builder');
+    const [ghRemember, setGhRemember] = useState<boolean>(loadedConfig.remember ?? false);
+    const [isPublishing, setIsPublishing] = useState(false);
+    const [publishProgress, setPublishProgress] = useState<GitHubPublishProgress | null>(null);
+    const [publishResult, setPublishResult] = useState<GitHubPublishResult | null>(null);
+    const [publishError, setPublishError] = useState<string | null>(null);
+
+    // Restore PAT from sessionStorage if user had ghRemember=true
+    useEffect(() => {
+        if (loadedConfig.remember) {
+            try {
+                const saved = sessionStorage.getItem('vectra_gh_pat') || '';
+                if (saved) setGhPat(saved);
+            } catch { /* sessionStorage unavailable */ }
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // ── Phase F2: Grid converter state ──────────────────────────────────────
     // ── Item 3: Multi-page grid results ─────────────────────────────────────────
     interface GridPageResult {
@@ -291,6 +328,60 @@ export const Header = () => {
             return updated;
         });
     }; // reset — code changed
+
+    // ── GitHub Publish handler ─────────────────────────────────────────────────
+    const handlePublishToGitHub = async () => {
+        if (!ghPat.trim() || !ghOwner.trim() || !ghRepo.trim()) return;
+        setIsPublishing(true);
+        setPublishProgress(null);
+        setPublishResult(null);
+        setPublishError(null);
+
+        // Persist config — owner/repo/branch/message to localStorage, PAT to sessionStorage only
+        try {
+            localStorage.setItem(GH_CONFIG_KEY, JSON.stringify({
+                owner: ghOwner.trim(), repo: ghRepo.trim(),
+                branch: ghBranch.trim() || 'main',
+                message: ghMessage.trim(), remember: ghRemember,
+            }));
+            if (ghRemember) sessionStorage.setItem('vectra_gh_pat', ghPat);
+            else sessionStorage.removeItem('vectra_gh_pat');
+        } catch { /* storage unavailable */ }
+
+        try {
+            // GH-PUB-3: generate fresh from codeGenerator, NOT from VFS (may lag by 600ms)
+            let files: Record<string, string>;
+            if (framework === 'nextjs') {
+                const { files: f } = generateNextProjectCode(elements, pages, dataSources || []);
+                files = f;
+            } else {
+                const { files: f } = generateProjectCode(elements, pages, dataSources || []);
+                files = f;
+            }
+            files['tokens.css'] = buildTokensCSS(theme);
+
+            const ghConfig: GitHubPublishConfig = {
+                pat: ghPat.trim(),
+                owner: ghOwner.trim(),
+                repo: ghRepo.trim(),
+                branch: ghBranch.trim() || 'main',
+                commitMessage: ghMessage.trim() || 'Publish from Vectra Visual Builder',
+            };
+
+            const result = await publishToGitHub(files, ghConfig, setPublishProgress);
+            setPublishResult(result);
+            console.log(
+                `[Vectra] ✅ Published ${result.filesPublished} files → ` +
+                `${ghConfig.owner}/${ghConfig.repo}@${ghConfig.branch} — ${result.commitUrl}`
+            );
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            setPublishError(msg);
+            console.error('[Vectra] ❌ GitHub publish failed:', err);
+        } finally {
+            setIsPublishing(false);
+        }
+    };
 
     const handleExportZip = async () => {
         if (!instance || status !== 'ready') {
@@ -583,6 +674,19 @@ export const Header = () => {
                         }
                     </button>
 
+                    {/* ── Push to GitHub Button ─────────────────────────── */}
+                    <button
+                        onClick={() => { setPublishResult(null); setPublishError(null); setShowGitHubModal(true); }}
+                        className={cn(
+                            'flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-bold transition-all border',
+                            'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-white hover:border-[#6e40c9]'
+                        )}
+                        title="Publish project to a GitHub repository"
+                    >
+                        <Github size={12} />
+                        <span>Push to GitHub</span>
+                    </button>
+
                     {/* ── Download ZIP Button ────────────────────────────── */}
                     <button
                         onClick={handleExportZip}
@@ -799,6 +903,173 @@ export const Header = () => {
                             <span className="ml-auto text-[9px] text-[#444] font-mono">
                                 Phase F2 — Rust WASM Grid Engine
                             </span>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── GitHub Publish Modal ──────────────────────────────────────── */}
+            {showGitHubModal && (
+                <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[200] p-4">
+                    <div className="bg-[#1e1e1e] border border-[#3e3e42] rounded-lg w-full max-w-md shadow-2xl flex flex-col overflow-hidden">
+
+                        {/* Header */}
+                        <div className="flex items-center justify-between px-4 py-3 border-b border-[#3e3e42]">
+                            <div className="flex items-center gap-2 text-sm font-bold text-white">
+                                <Github size={14} className="text-purple-400" />
+                                Push to GitHub
+                            </div>
+                            <button onClick={() => setShowGitHubModal(false)} className="p-1 hover:bg-[#3e3e42] rounded text-[#858585] transition-colors">
+                                <X size={14} />
+                            </button>
+                        </div>
+
+                        {/* Success */}
+                        {publishResult && (
+                            <div className="m-4 p-3 bg-green-500/10 border border-green-500/30 rounded-md">
+                                <div className="flex items-center gap-2 text-green-400 text-xs font-bold mb-2">
+                                    <Check size={13} />
+                                    {publishResult.branchCreated
+                                        ? `Branch created + ${publishResult.filesPublished} files published`
+                                        : `${publishResult.filesPublished} files published`}
+                                </div>
+                                <a href={publishResult.commitUrl} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 text-xs text-blue-400 hover:text-blue-300 transition-colors font-mono truncate">
+                                    <ExternalLink size={11} />{publishResult.commitUrl}
+                                </a>
+                                <a href={publishResult.repoUrl} target="_blank" rel="noopener noreferrer"
+                                    className="flex items-center gap-1.5 text-xs text-purple-400 hover:text-purple-300 transition-colors mt-1">
+                                    <Github size={11} />View branch on GitHub
+                                </a>
+                            </div>
+                        )}
+
+                        {/* Error */}
+                        {publishError && (
+                            <div className="mx-4 mt-4 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
+                                <div className="text-red-400 text-xs font-bold mb-1">Publish failed</div>
+                                <div className="text-red-300 text-xs font-mono break-words">{publishError}</div>
+                            </div>
+                        )}
+
+                        {/* Form — hidden after success */}
+                        {!publishResult && (
+                            <div className="p-4 flex flex-col gap-3">
+
+                                {/* PAT */}
+                                <div>
+                                    <label className="block text-[10px] font-bold text-[#858585] uppercase tracking-wider mb-1">Personal Access Token *</label>
+                                    <div className="relative">
+                                        <input
+                                            type={ghShowPat ? 'text' : 'password'}
+                                            value={ghPat}
+                                            onChange={e => setGhPat(e.target.value)}
+                                            placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                                            className="w-full bg-[#252526] border border-[#3e3e42] rounded px-2.5 py-1.5 text-xs text-white font-mono placeholder-[#555] focus:outline-none focus:border-purple-500/60 pr-8"
+                                            autoComplete="off"
+                                        />
+                                        <button type="button" onClick={() => setGhShowPat(p => !p)}
+                                            className="absolute right-2 top-1/2 -translate-y-1/2 text-[#555] hover:text-[#858585]">
+                                            {ghShowPat ? <EyeOff size={12} /> : <Eye size={12} />}
+                                        </button>
+                                    </div>
+                                    <p className="text-[10px] text-[#555] mt-1">
+                                        Fine-grained PAT: <span className="text-[#858585]">Contents: Read &amp; Write</span> on target repo only.{' '}
+                                        <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer" className="text-purple-400 hover:text-purple-300">Create one ↗</a>
+                                    </p>
+                                </div>
+
+                                {/* Owner + Repo */}
+                                <div className="grid grid-cols-2 gap-2">
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-[#858585] uppercase tracking-wider mb-1">Owner *</label>
+                                        <input type="text" value={ghOwner} onChange={e => setGhOwner(e.target.value)} placeholder="username"
+                                            className="w-full bg-[#252526] border border-[#3e3e42] rounded px-2.5 py-1.5 text-xs text-white placeholder-[#555] focus:outline-none focus:border-purple-500/60" />
+                                    </div>
+                                    <div>
+                                        <label className="block text-[10px] font-bold text-[#858585] uppercase tracking-wider mb-1">Repository *</label>
+                                        <input type="text" value={ghRepo} onChange={e => setGhRepo(e.target.value)} placeholder="my-project"
+                                            className="w-full bg-[#252526] border border-[#3e3e42] rounded px-2.5 py-1.5 text-xs text-white placeholder-[#555] focus:outline-none focus:border-purple-500/60" />
+                                    </div>
+                                </div>
+
+                                {/* Branch */}
+                                <div>
+                                    <label className="block text-[10px] font-bold text-[#858585] uppercase tracking-wider mb-1">Branch</label>
+                                    <input type="text" value={ghBranch} onChange={e => setGhBranch(e.target.value)} placeholder="main"
+                                        className="w-full bg-[#252526] border border-[#3e3e42] rounded px-2.5 py-1.5 text-xs text-white placeholder-[#555] focus:outline-none focus:border-purple-500/60" />
+                                    <p className="text-[10px] text-[#555] mt-1">Created from default branch if it doesn't exist.</p>
+                                </div>
+
+                                {/* Commit message */}
+                                <div>
+                                    <label className="block text-[10px] font-bold text-[#858585] uppercase tracking-wider mb-1">Commit Message</label>
+                                    <input type="text" value={ghMessage} onChange={e => setGhMessage(e.target.value)} placeholder="Publish from Vectra Visual Builder"
+                                        className="w-full bg-[#252526] border border-[#3e3e42] rounded px-2.5 py-1.5 text-xs text-white placeholder-[#555] focus:outline-none focus:border-purple-500/60" />
+                                </div>
+
+                                {/* Remember toggle */}
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                    <button type="button" onClick={() => setGhRemember(p => !p)}
+                                        className={cn('w-8 h-4 rounded-full flex items-center transition-colors px-0.5',
+                                            ghRemember ? 'bg-purple-600 justify-end' : 'bg-[#444] justify-start')}>
+                                        <span className="w-3 h-3 rounded-full bg-white shadow-sm" />
+                                    </button>
+                                    <span className="text-[10px] text-[#858585]">
+                                        Remember token in this session
+                                        <span className="text-[#555]"> (cleared on tab close)</span>
+                                    </span>
+                                </label>
+                            </div>
+                        )}
+
+                        {/* Progress */}
+                        {isPublishing && publishProgress && (
+                            <div className="px-4 pb-3">
+                                <div className="flex items-center gap-2 text-xs text-purple-400">
+                                    <Loader2 size={11} className="animate-spin" />
+                                    {publishProgress.phase === 'blobs' && `Uploading files… (${publishProgress.blobsDone ?? 0}/${publishProgress.blobsTotal ?? 0})`}
+                                    {publishProgress.phase === 'tree' && 'Building commit tree…'}
+                                    {publishProgress.phase === 'commit' && 'Creating commit…'}
+                                    {publishProgress.phase === 'ref' && 'Updating branch…'}
+                                </div>
+                                {publishProgress.phase === 'blobs' && publishProgress.blobsTotal && (
+                                    <div className="mt-1.5 w-full bg-[#3e3e42] rounded-full h-1">
+                                        <div className="bg-purple-500 h-1 rounded-full transition-all duration-200"
+                                            style={{ width: `${Math.round(((publishProgress.blobsDone ?? 0) / publishProgress.blobsTotal) * 100)}%` }} />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Actions */}
+                        <div className="px-4 pb-4 flex justify-end gap-2">
+                            {publishResult ? (
+                                <button onClick={() => setShowGitHubModal(false)}
+                                    className="px-3 py-1.5 bg-[#252526] border border-[#3e3e42] text-[#cccccc] text-xs font-bold rounded hover:border-[#555] transition-colors">
+                                    Close
+                                </button>
+                            ) : (
+                                <>
+                                    <button onClick={() => setShowGitHubModal(false)} disabled={isPublishing}
+                                        className="px-3 py-1.5 bg-[#252526] border border-[#3e3e42] text-[#858585] text-xs font-bold rounded hover:border-[#555] transition-colors disabled:opacity-40">
+                                        Cancel
+                                    </button>
+                                    <button onClick={handlePublishToGitHub}
+                                        disabled={isPublishing || !ghPat.trim() || !ghOwner.trim() || !ghRepo.trim()}
+                                        className={cn(
+                                            'flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all',
+                                            isPublishing
+                                                ? 'bg-purple-700 text-purple-200 cursor-wait'
+                                                : 'bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-40 disabled:cursor-not-allowed'
+                                        )}>
+                                        {isPublishing
+                                            ? <><Loader2 size={11} className="animate-spin" />Publishing…</>
+                                            : <><Github size={11} />Publish</>
+                                        }
+                                    </button>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>

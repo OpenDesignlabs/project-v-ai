@@ -153,10 +153,39 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
 
   let tagName = 'div';
   let content = '';
-  const isComponent = ['hero_geometric', 'feature_hover', 'geometric_shapes'].includes(node.type);
 
-  if (isComponent) {
-    const name = node.type.split('_').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join('');
+  // \u2500\u2500 CIS-1: Component Identity System \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  // importMeta present  \u2192 general path: any npm package or relative component.
+  // Legacy fallback     \u2192 hardcoded marketplace array for nodes saved before CIS-1.
+  //                       Keeps all existing projects working with zero migration.
+  //                       FROZEN \u2014 do NOT add new entries to the legacy array.
+  // Neither             \u2192 raw HTML element path (switch below).
+  const importMeta = node.importMeta;
+  const isLegacyMarketplace = !importMeta &&
+    ['hero_geometric', 'feature_hover', 'geometric_shapes'].includes(node.type);
+  const isComponent = !!importMeta || isLegacyMarketplace;
+
+  if (importMeta) {
+    // \u2500\u2500 General component path (CIS-1) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    tagName = importMeta.exportName;
+    if (importMeta.isDefault) {
+      imports.add(importMeta.packageName, `default:${importMeta.exportName}`);
+    } else {
+      imports.add(importMeta.packageName, importMeta.exportName);
+    }
+    // Register npm dependency (non-relative paths only)
+    if (importMeta.version && !importMeta.packageName.startsWith('.')) {
+      imports.dependencies.add(importMeta.packageName);
+    }
+  } else if (isLegacyMarketplace) {
+    // \u2500\u2500 Legacy backward-compat path \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    // Nodes created before CIS-1 have no importMeta. Map type string \u2192
+    // PascalCase and emit the hardcoded marketplace relative import.
+    // This block drains naturally as projects re-save nodes with importMeta.
+    const name = node.type
+      .split('_')
+      .map(s => s.charAt(0).toUpperCase() + s.slice(1))
+      .join('');
     tagName = name;
     imports.add(`../components/marketplace/${name}`, `default:${name}`);
   } else {
@@ -640,7 +669,7 @@ export const generateGridPage = (
   const canvasFrame = canvasFrameId ? project[canvasFrameId] : null;
   const childIds: string[] = canvasFrame?.children || [];
 
-  // ── Canvas wrapper dimensions ────────────────────────────────────────────
+  // ── Canvas wrapper dimensions ────────────────────────────────────────
   const canvasWidth = parseFloat(String((canvasFrame?.props?.style as any)?.width || 1440)) || 1440;
   const canvasHeight = parseFloat(String((canvasFrame?.props?.style as any)?.height || 900)) || 900;
 
