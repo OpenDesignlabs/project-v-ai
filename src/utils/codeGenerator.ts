@@ -1,4 +1,4 @@
-import type { VectraProject, Page, DataSource, ApiRoute } from '../types';
+import type { VectraProject, VectraNode, Page, DataSource, ApiRoute } from '../types';
 
 export interface GeneratedFileMap {
   files: Record<string, string>;
@@ -791,6 +791,70 @@ const toPascalCaseGen = (raw: string): string => {
   return /^[A-Z]/.test(cleaned) ? cleaned : 'Component' + cleaned;
 };
 
+// ─── SECTION-FIRST EXPORT HELPERS ────────────────────────────────────────────
+/**
+ * collectCustomCodeNodes
+ * ──────────────────────
+ * DFS walk from `rootId` that returns every `custom_code` node in the subtree,
+ * in document order. Does NOT recurse into custom_code children (they have none).
+ *
+ * EXPORT-1 FIX: Section-first AI generation wraps sections inside a `container`
+ * node (PageWrapper / Wrapper). The old canvasChildren loop only saw depth-1
+ * children; sections at depth-2+ were silently dropped from the export.
+ */
+interface CustomCodeEntry {
+  node: VectraNode;
+  parentContainerId: string | null;
+}
+
+const collectCustomCodeNodes = (
+  project: VectraProject,
+  rootId: string
+): CustomCodeEntry[] => {
+  const results: CustomCodeEntry[] = [];
+  const visited = new Set<string>();
+
+  const walk = (id: string, parentContainerId: string | null): void => {
+    if (visited.has(id)) return;
+    visited.add(id);
+    const node = project[id];
+    if (!node) return;
+
+    if (node.type === 'custom_code') {
+      results.push({ node, parentContainerId });
+      return; // custom_code has no canvas children to recurse into
+    }
+
+    for (const childId of (node.children ?? [])) {
+      const ctype = project[childId]?.type ?? '';
+      const isContainer = ['container', 'section', 'webpage', 'canvas', 'artboard'].includes(ctype);
+      walk(childId, isContainer ? childId : parentContainerId);
+    }
+  };
+
+  walk(rootId, null);
+  return results;
+};
+
+/**
+ * buildSectionWrapperStyle
+ * ─────────────────────────
+ * Produces a JSX style prop string for a PageWrapper container so the
+ * generated page file reproduces the flex-column layout correctly.
+ */
+const buildSectionWrapperStyle = (node: VectraNode | undefined): string => {
+  if (!node) return '';
+  const s: Record<string, string> = {};
+  if (node.props?.layoutMode === 'flex') {
+    s['display'] = 'flex';
+    s['flexDirection'] = (node.props?.style as any)?.flexDirection ?? 'column';
+  }
+  if ((node.props?.style as any)?.width) s['width'] = (node.props.style as any).width;
+  const entries = Object.entries(s);
+  if (entries.length === 0) return '';
+  return ` style={{ ${entries.map(([k, v]) => `${k}: '${v}'`).join(', ')} }}`;
+};
+
 /**
  * generateNextPage — generates a single app/[slug]/page.tsx file.
  * Page-level files are SERVER components (no 'use client') that import
@@ -834,8 +898,6 @@ export const generateNextPage = (
   const mobileCSSLiteral = JSON.stringify(mobileCSSString);
 
   // ── Direction A: Collect all descendant node IDs for breakpoint CSS ─────
-  // Walk the full subtree once to gather IDs. buildBreakpointCSS filters
-  // to only those nodes with props.breakpoints populated — O(N), N < ~200.
   const allPageNodeIds: string[] = [];
   const collectPageIds = (id: string, visited = new Set<string>()) => {
     if (visited.has(id)) return;
@@ -850,12 +912,76 @@ export const generateNextPage = (
   const breakpointCSSLiteral = breakpointCSSString.length > 0
     ? JSON.stringify(breakpointCSSString)
     : 'null';
+
   let jsxParts: string[] = [];
+
+  // EXPORT-1 FIX: Section-first architecture places custom_code nodes inside
+  // a PageWrapper container (not as direct artboard children). The old loop
+  // only checked canvasChildren (depth 1). We now walk the full subtree.
+  //
+  // CASE A — Container wrapping sections (PageWrapper / Wrapper):
+  //   Renders as a flex <div> with each section as a component JSX call.
+  //   Import statements are emitted for each section individually.
+  //
+  // CASE B — custom_code as direct canvas child (legacy / manually placed):
+  //   Rendered exactly as before — backward compat preserved.
+  //
+  // CASE C — Non-custom_code direct child (container, text, image, etc.):
+  //   Falls through to generateNodeCode() — existing behaviour unchanged.
 
   for (const childId of canvasChildren) {
     const child = project[childId];
     if (!child) continue;
 
+    // ── CASE A: Container wrapping section custom_code nodes ─────────────
+    if (
+      child.type === 'container' &&
+      child.children &&
+      child.children.some(cid => project[cid]?.type === 'custom_code')
+    ) {
+      const sectionEntries = collectCustomCodeNodes(project, childId);
+
+      if (sectionEntries.length > 0) {
+        for (const { node: sectionNode } of sectionEntries) {
+          const compName = toPascalCaseGen(sectionNode.name?.trim() || sectionNode.id);
+          if (!importedComponents.has(compName)) {
+            importedComponents.add(compName);
+            imports.add(`@/components/${compName}`, `default:${compName}`);
+          }
+        }
+
+        const wrapperStyle = buildSectionWrapperStyle(child);
+        const wrapperClass = cleanClass(child.props?.className || '');
+        const wrapperClassAttr = wrapperClass ? ` className="${wrapperClass}"` : '';
+        const wrapperDataVid = ` data-vid="${childId}"`;
+
+        const sectionJsx = sectionEntries.map(({ node: sectionNode }) => {
+          const compName = toPascalCaseGen(sectionNode.name?.trim() || sectionNode.id);
+          const baseClass = cleanClass(sectionNode.props?.className || '');
+          const stackClass = sectionNode.props?.stackOnMobile ? ' vectra-stack-mobile' : '';
+          const classAttr = (baseClass + stackClass).trim()
+            ? ` className="${(baseClass + stackClass).trim()}"`
+            : '';
+          // EXPORT-2 [PERMANENT]: Strip position/left/top from section styles.
+          // These are canvas-editor-only geometry values. In the live Next.js
+          // page, sections are in-flow flex children — absolute positioning breaks layout.
+          const rawStyle = (sectionNode.props?.style ?? {}) as Record<string, unknown>;
+          const { position: _p, left: _l, top: _t, ...inFlowStyle } = rawStyle;
+          const styleStr = Object.keys(inFlowStyle).length > 0
+            ? ` style={${JSON.stringify(inFlowStyle)}}`
+            : '';
+          const dataVid = ` data-vid="${sectionNode.id}"`;
+          return `          <${compName}${classAttr}${styleStr}${dataVid} />`;
+        }).join('\n');
+
+        jsxParts.push(
+          `        <div${wrapperClassAttr}${wrapperStyle}${wrapperDataVid}>\n${sectionJsx}\n        </div>`
+        );
+        continue;
+      }
+    }
+
+    // ── CASE B: Direct custom_code child (legacy / manually placed) ───────
     if (child.type === 'custom_code') {
       const compName = toPascalCaseGen(child.name?.trim() || child.id);
 
@@ -872,18 +998,19 @@ export const generateNextPage = (
       const classAttr = (baseClass + stackClass).trim()
         ? ` className="${(baseClass + stackClass).trim()}"`
         : '';
-
       // P2-A2 FIX: custom_code nodes also need data-vid for breakpoint CSS targeting.
       const dataVid = ` data-vid="${childId}"`;
-
       jsxParts.push(`        <${compName}${classAttr}${styleStr}${dataVid} />`);
-    } else {
-      const inlineJsx = generateNodeCode(childId, project, imports, 4);
-      if (inlineJsx.trim()) {
-        jsxParts.push(inlineJsx.trimEnd());
-      }
+      continue;
+    }
+
+    // ── CASE C: Non-custom_code node — inline JSX via generateNodeCode ────
+    const inlineJsx = generateNodeCode(childId, project, imports, 4);
+    if (inlineJsx.trim()) {
+      jsxParts.push(inlineJsx.trimEnd());
     }
   }
+
 
   const jsxContent = jsxParts.length > 0
     ? jsxParts.join('\n')

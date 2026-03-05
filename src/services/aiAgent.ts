@@ -10,8 +10,8 @@ export const AI_CONFIG = {
     endpoint: 'https://router.huggingface.co/v1/chat/completions',
 
     // HYBRID MODELS
-    primaryModel: 'openai/gpt-oss-20b:groq',      //'zai-org/GLM-5:zai-org',         // GLM-5 via Zhipu (GLM-4.7 provider was offline)
-    debuggerModel: 'zai-org/GLM-5:zai-org',       // DeepSeek-V3.2 via Fireworks AI
+    primaryModel: 'deepseek-ai/DeepSeek-R1-0528:together', //'zai-org/GLM-5:zai-org',         // GLM-5 via Zhipu (GLM-4.7 provider was offline)
+    debuggerModel: 'deepseek-ai/DeepSeek-R1-0528:together',       // DeepSeek-V3.2 via Fireworks AI
 
     // DUAL API KEYS — split traffic, double the free quota
     primaryApiKey: import.meta.env.VITE_AI_PRIMARY_KEY || import.meta.env.VITE_AI_HF_TOKEN || '',
@@ -546,9 +546,21 @@ ${canvasContext}
         catch { console.warn('🔧 JSON malformed — attempting repairJSON...'); parsed = JSON.parse(repairJSON(rawJson)); }
         if (!parsed?.elements || !parsed?.rootId) throw new Error('Invalid JSON structure (missing elements or rootId)');
 
-        // Inject section code into matching custom_code nodes
+        // Inject section code into matching custom_code nodes.
+        // SHARED-CODE-REF [PERMANENT]: deep-clone each element BEFORE assigning
+        // .code. The injection loop mutates el.code in-place. If mergeAIContent
+        // (or sanitizeAIElements) is ever called twice on the same result object
+        // (StrictMode, retry, double-click), shallow-cloned nodes all end up
+        // pointing at the last-written code string. Deep-clone breaks the alias.
         let injectedCount = 0;
         const hasMultipleSections = sectionMap.size > 2;
+
+        // Replace parsed.elements with deep-cloned copies so mutations are isolated.
+        const clonedElements: Record<string, any> = {};
+        for (const [k, v] of Object.entries(parsed.elements)) {
+            clonedElements[k] = { ...(v as any), props: { ...((v as any).props || {}) } };
+        }
+        parsed.elements = clonedElements;
 
         for (const el of Object.values(parsed.elements) as any[]) {
             if (el.type !== 'custom_code') continue;
@@ -583,7 +595,14 @@ ${canvasContext}
         }
 
         console.log(`✅ [Generator] ${Object.keys(parsed.elements).length} node(s), ${injectedCount} section(s) injected.`);
-        return { action: 'create', elements: parsed.elements, rootId: parsed.rootId, message: `Generated ${injectedCount} section${injectedCount > 1 ? 's' : ''} ✨` };
+        // SHARED-CODE-REF [PERMANENT]: return a final shallow-clone of elements
+        // so the caller cannot mutate the result between sanitize passes.
+        return {
+            action: 'create',
+            elements: { ...parsed.elements },
+            rootId: parsed.rootId,
+            message: `Generated ${injectedCount} section${injectedCount > 1 ? 's' : ''} ✨`
+        };
 
     } catch (e) {
         console.error('❌ [Generator] Parse Error:', e);

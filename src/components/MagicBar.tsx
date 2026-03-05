@@ -18,31 +18,41 @@ export const MagicBar = () => {
         }
     }, [isMagicBarOpen]);
 
+    // STRICT-MODE-DOUBLE-INVOKE [PERMANENT]: isRunning ref prevents concurrent
+    // double-submission from StrictMode re-invoke, rapid double-click, or keyboard
+    // Enter race. A ref (not state) avoids a re-render on guard check.
+    // The old setTimeout wrapper was the entry point — StrictMode re-invoked the
+    // scheduled callback, firing runAI twice on the same result closure, causing
+    // mergeAIContent to run twice and corrupt the canvas element map.
+    const isRunning = useRef(false);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (!input.trim()) return;
+        if (isRunning.current) return;   // guard concurrent invocation
+        isRunning.current = true;
 
-        // 1. UI: Thinking State
-        setStatus('thinking');
-
-        // 2. Simulate "Parsing" delay for realism
-        setTimeout(async () => {
+        try {
+            setStatus('thinking');
+            // 120ms micro-yield: flushes 'thinking' paint without creating a
+            // double-invoke window the way a bare setTimeout(fn, 800) does.
+            await new Promise(r => setTimeout(r, 120));
             setStatus('generating');
 
-            // 3. Call Actual AI Service
             const resultMessage = await runAI(input);
 
-            // 4. UI: Done State
             setStatus('done');
-            setFeedback(resultMessage || "Done");
+            setFeedback(resultMessage || 'Done');
 
-            // 5. Auto Close after success
             setTimeout(() => {
                 setMagicBarOpen(false);
                 setInput('');
+                isRunning.current = false;
             }, 1500);
-
-        }, 800);
+        } catch {
+            setStatus('idle');
+            isRunning.current = false;
+        }
     };
 
     if (!isMagicBarOpen) return null;

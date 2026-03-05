@@ -208,6 +208,12 @@ export const useFileSync = () => {
   // Phase D: API route dirty-check. Value format: "updatedAt::vfsPath"
   const prevApiRoutesRef = useRef<Record<string, string>>({});
 
+  // VFS-STALE-1: tracks id → PascalName for every custom_code node written to VFS.
+  // When a node is renamed, the old file path is computed from the previous name
+  // and deleted before the new one is written. Without this, renaming Navbar to
+  // NavbarV2 leaves components/Navbar.tsx on disk indefinitely.
+  const prevCodeNodeNamesRef = useRef<Map<string, string>>(new Map());
+
   const syncedFiles = useRef<Map<string, string>>(new Map());
   const isSyncing = useRef<boolean>(false);
   // NS-7 FIX: interaction in the dep array caused the sync effect to re-run at 60fps
@@ -273,6 +279,24 @@ export const useFileSync = () => {
           ) {
             const componentName = toPascalCase(currentNode.name?.trim() || currentNode.id);
             const filePath = `${componentDir}/${componentName}.tsx`;
+
+            // VFS-STALE-1 FIX: detect renames and evict the old file.
+            // If this node existed before under a DIFFERENT PascalName,
+            // the old file is now orphaned on disk. Remove it first.
+            const prevName = prevCodeNodeNamesRef.current.get(nodeId);
+            if (prevName && prevName !== componentName) {
+              const stalePath = `${componentDir}/${prevName}.tsx`;
+              try {
+                await removeFile(stalePath);
+                syncedFiles.current.delete(stalePath);
+                console.log(`🗑️ [Vectra] Stale component evicted → ${stalePath}`);
+              } catch {
+                // File may not exist yet — safe to ignore
+              }
+            }
+            // Update name tracking regardless of dirty-check below.
+            prevCodeNodeNamesRef.current.set(nodeId, componentName);
+
             const content = isNext
               ? wrapWithImportsNext(currentNode.code)
               : wrapWithImportsVite(currentNode.code);
@@ -281,6 +305,23 @@ export const useFileSync = () => {
               await writeFile(filePath, content);
               syncedFiles.current.set(filePath, content);
               console.log(`📦 [Vectra] Component → ${filePath}`);
+            }
+          }
+
+          // VFS-STALE-1: handle deletion — node was custom_code, now gone or type-changed.
+          if (
+            prevNode?.type === 'custom_code' &&
+            (currentNode === undefined || currentNode?.type !== 'custom_code')
+          ) {
+            const prevName = prevCodeNodeNamesRef.current.get(nodeId);
+            if (prevName) {
+              const stalePath = `${componentDir}/${prevName}.tsx`;
+              try {
+                await removeFile(stalePath);
+                syncedFiles.current.delete(stalePath);
+                console.log(`🗑️ [Vectra] Deleted component evicted → ${stalePath}`);
+              } catch { /* already gone — safe */ }
+              prevCodeNodeNamesRef.current.delete(nodeId);
             }
           }
         }
