@@ -574,7 +574,15 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 const newChildren = [...(currentEl.children || []), rootId];
 
                 if (isArtboard) {
-                    const currentH = parseFloat(String(element.props.style?.height || rect.height / zoomRef.current));
+                    // FRAME-2 [PERMANENT]: Read minHeight, not height.
+                    // The artboard renders with height:'auto' (overridden in RenderNode
+                    // for all webpage-type artboards). parseFloat('auto') === NaN, so
+                    // the old `height` read caused `bottomEdge > NaN` = false always —
+                    // auto-grow never fired on any drop. minHeight is the stored boundary.
+                    // Fall back to DOM rect height as measured at drop time.
+                    const storedMin = parseFloat(String(element.props.style?.minHeight ?? '0'));
+                    const domH = rect.height / zoomRef.current;
+                    const currentH = (storedMin > 0 ? storedMin : domH) || 1080;
                     const bottomEdge = (dropY - h / 2) + h + 50;
                     if (bottomEdge > currentH) {
                         // C-1 FIX: TEMPLATE artboard auto-grow path — two separate
@@ -586,7 +594,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 ...currentEl,
                                 props: {
                                     ...currentEl.props,
-                                    style: { ...currentEl.props.style, height: `${bottomEdge}px` },
+                                    style: {
+                                        ...currentEl.props.style,
+                                        // Write minHeight, not height — artboard renders height:auto always.
+                                        // minHeight is what RenderNode reads to set the rendered floor.
+                                        height: 'auto',
+                                        minHeight: `${bottomEdge}px`,
+                                    },
                                 },
                                 children: newChildren,
                             },
@@ -774,8 +788,20 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     }
 
     if (isParentCanvas && !isMobileMirror && !isArtboard) {
-        finalStyle.position = 'absolute'; finalStyle.left = finalStyle.left || '0px'; finalStyle.top = finalStyle.top || '0px';
-        finalClass = finalClass.replace(/relative|fixed|sticky/g, '');
+        // FRAME-1 [PERMANENT]: Only force absolute positioning if the element does NOT
+        // explicitly declare position:relative (or static/sticky).
+        // Elements with position:relative are intentionally in-flow — they are
+        // the AI section wrapper and section nodes that must expand the artboard.
+        // Overriding them to absolute breaks artboard height:auto growth because
+        // absolutely-positioned children never contribute to parent height.
+        const explicitPos = element.props.style?.position;
+        if (!explicitPos || explicitPos === 'absolute') {
+            finalStyle.position = 'absolute';
+            finalStyle.left = finalStyle.left || '0px';
+            finalStyle.top = finalStyle.top || '0px';
+            finalClass = finalClass.replace(/\brelative\b|\bfixed\b|\bsticky\b/g, '');
+        }
+        // position:relative / static → preserved as-is; element is an in-flow child
     }
 
     if (isMobileMirror) {
