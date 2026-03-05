@@ -573,7 +573,7 @@ ${canvasContext}
         for (const el of Object.values(parsed.elements) as any[]) {
             if (el.type === 'custom_code') {
                 el.props = el.props || {};
-                el.props.style = { position: 'relative', width: '100%', ...el.props.style, position: 'relative', width: '100%' };
+                el.props.style = { ...el.props.style, position: 'relative', width: '100%' };
             }
             if (el.type === 'container' && (el.name === 'PageWrapper' || el.name === 'Wrapper')) {
                 el.props = el.props || {};
@@ -590,106 +590,108 @@ ${canvasContext}
         console.error('Raw output (600 chars):', content.substring(0, 600));
         return { action: 'error', message: 'Failed to parse AI response. Please try again.' };
     }
+};
 
 
 
-    // ─── TIER 3: TEMPLATE FALLBACKS ───────────────────────────────────────────────
-    const processTemplates = async (prompt: string): Promise<AIResponse> => {
-        const p = prompt.toLowerCase();
-        const rootId = uid();
-        await new Promise(r => setTimeout(r, 1200));
 
-        if (p.includes('hero')) {
-            return {
-                action: 'create', rootId,
-                message: 'Template Fallback: Hero Section',
-                elements: {
-                    [rootId]: {
-                        id: rootId, type: 'hero_geometric', name: 'Hero',
-                        props: { badge: 'VECTRA', title1: 'Build Faster', title2: 'Ship Today' },
-                        children: [],
-                    },
-                },
-            };
-        }
+// ─── TIER 3: TEMPLATE FALLBACKS ───────────────────────────────────────────────
+const processTemplates = async (prompt: string): Promise<AIResponse> => {
+    const p = prompt.toLowerCase();
+    const rootId = uid();
+    await new Promise(r => setTimeout(r, 1200));
 
-        if (p.includes('pricing')) {
-            const c1 = uid(), c2 = uid();
-            return {
-                action: 'create', rootId,
-                message: 'Template Fallback: Pricing',
-                elements: {
-                    [rootId]: {
-                        id: rootId, type: 'container', name: 'Pricing',
-                        props: { className: 'grid grid-cols-2 gap-4 p-10 bg-zinc-900', layoutMode: 'grid' },
-                        children: [c1, c2],
-                    },
-                    [c1]: {
-                        id: c1, type: 'container', name: 'Basic',
-                        props: { className: 'p-6 bg-black border border-white/10 rounded-xl' },
-                        children: [],
-                    },
-                    [c2]: {
-                        id: c2, type: 'container', name: 'Pro',
-                        props: { className: 'p-6 bg-blue-900/20 border border-blue-500 rounded-xl' },
-                        children: [],
-                    },
-                },
-            };
-        }
-
-        if (p.includes('landing') || p.includes('website')) {
-            const navId = uid(), heroId = uid(), featId = uid();
-            return {
-                action: 'create', rootId,
-                message: 'Template Fallback: Landing Page',
-                elements: {
-                    [rootId]: {
-                        id: rootId, type: 'container', name: 'Landing Page',
-                        props: { className: 'bg-black min-h-screen text-white flex flex-col' },
-                        children: [navId, heroId, featId],
-                    },
-                    [navId]: {
-                        id: navId, type: 'container', name: 'Navbar',
-                        props: { className: 'flex items-center justify-between p-6 border-b border-white/10' },
-                        children: [],
-                    },
-                    [heroId]: {
-                        id: heroId, type: 'hero_geometric', name: 'Hero',
-                        props: { badge: 'VECTRA', title1: 'Welcome', title2: 'to Vectra' },
-                        children: [],
-                    },
-                    [featId]: {
-                        id: featId, type: 'container', name: 'Features',
-                        props: { className: 'grid grid-cols-3 gap-8 p-20' },
-                        children: [],
-                    },
-                },
-            };
-        }
-
+    if (p.includes('hero')) {
         return {
-            action: 'error',
-            message: AI_CONFIG.primaryApiKey
-                ? "I couldn't process that. Try: 'hero', 'pricing', or 'landing page'."
-                : 'Add VITE_AI_PRIMARY_KEY to your .env file to enable AI generation.',
+            action: 'create', rootId,
+            message: 'Template Fallback: Hero Section',
+            elements: {
+                [rootId]: {
+                    id: rootId, type: 'hero_geometric', name: 'Hero',
+                    props: { badge: 'VECTRA', title1: 'Build Faster', title2: 'Ship Today' },
+                    children: [],
+                },
+            },
         };
+    }
+
+    if (p.includes('pricing')) {
+        const c1 = uid(), c2 = uid();
+        return {
+            action: 'create', rootId,
+            message: 'Template Fallback: Pricing',
+            elements: {
+                [rootId]: {
+                    id: rootId, type: 'container', name: 'Pricing',
+                    props: { className: 'grid grid-cols-2 gap-4 p-10 bg-zinc-900', layoutMode: 'grid' },
+                    children: [c1, c2],
+                },
+                [c1]: {
+                    id: c1, type: 'container', name: 'Basic',
+                    props: { className: 'p-6 bg-black border border-white/10 rounded-xl' },
+                    children: [],
+                },
+                [c2]: {
+                    id: c2, type: 'container', name: 'Pro',
+                    props: { className: 'p-6 bg-blue-900/20 border border-blue-500 rounded-xl' },
+                    children: [],
+                },
+            },
+        };
+    }
+
+    if (p.includes('landing') || p.includes('website')) {
+        const navId = uid(), heroId = uid(), featId = uid();
+        return {
+            action: 'create', rootId,
+            message: 'Template Fallback: Landing Page',
+            elements: {
+                [rootId]: {
+                    id: rootId, type: 'container', name: 'Landing Page',
+                    props: { className: 'bg-black min-h-screen text-white flex flex-col' },
+                    children: [navId, heroId, featId],
+                },
+                [navId]: {
+                    id: navId, type: 'container', name: 'Navbar',
+                    props: { className: 'flex items-center justify-between p-6 border-b border-white/10' },
+                    children: [],
+                },
+                [heroId]: {
+                    id: heroId, type: 'hero_geometric', name: 'Hero',
+                    props: { badge: 'VECTRA', title1: 'Welcome', title2: 'to Vectra' },
+                    children: [],
+                },
+                [featId]: {
+                    id: featId, type: 'container', name: 'Features',
+                    props: { className: 'grid grid-cols-3 gap-8 p-20' },
+                    children: [],
+                },
+            },
+        };
+    }
+
+    return {
+        action: 'error',
+        message: AI_CONFIG.primaryApiKey
+            ? "I couldn't process that. Try: 'hero', 'pricing', or 'landing page'."
+            : 'Add VITE_AI_PRIMARY_KEY to your .env file to enable AI generation.',
     };
+};
 
-    // ─── DEBUGGER AGENT (CRITIC / AUTO-FIX) ──────────────────────────────────────
-    // Autonomous SRE Agent — silently powers the self-healing loop.
-    // Uses debuggerApiKey + DeepSeek-V3 (405B class) for surgical, precise fixes.
-    // The SRE mindset (Root Cause Analysis, Surgical Precision, Safe Fallbacks) runs
-    // internally — no explanatory text is emitted to save tokens/latency.
-    export const fixComponentError = async (
-        brokenCode: string,
-        errorMessage: string,
-        passedApiKey?: string
-    ): Promise<string> => {
-        // Debugger key takes priority; fall back to primary or any passed key
-        const activeKey = AI_CONFIG.debuggerApiKey || passedApiKey || AI_CONFIG.primaryApiKey;
+// ─── DEBUGGER AGENT (CRITIC / AUTO-FIX) ──────────────────────────────────────
+// Autonomous SRE Agent — silently powers the self-healing loop.
+// Uses debuggerApiKey + DeepSeek-V3 (405B class) for surgical, precise fixes.
+// The SRE mindset (Root Cause Analysis, Surgical Precision, Safe Fallbacks) runs
+// internally — no explanatory text is emitted to save tokens/latency.
+export const fixComponentError = async (
+    brokenCode: string,
+    errorMessage: string,
+    passedApiKey?: string
+): Promise<string> => {
+    // Debugger key takes priority; fall back to primary or any passed key
+    const activeKey = AI_CONFIG.debuggerApiKey || passedApiKey || AI_CONFIG.primaryApiKey;
 
-        const SYSTEM_PROMPT = `VECTRA SECTION DEBUGGER — AUTONOMOUS REPAIR AGENT
+    const SYSTEM_PROMPT = `VECTRA SECTION DEBUGGER — AUTONOMOUS REPAIR AGENT
 
 You are an expert SRE powering the self-healing loop of the Vectra canvas.
 Your ONLY job: return fixed code. Zero explanation. Zero apology.
@@ -765,52 +767,52 @@ Return ONLY the fixed code inside a single \`\`\`jsx block.
 ZERO conversational text. ZERO diagnosis text. ZERO apologies.
 The output is consumed directly by a Babel compiler — any non-code text causes a parse failure.`;
 
-        const USER_PROMPT = `ERROR MESSAGE:\n${errorMessage}\n\nBROKEN CODE:\n\`\`\`jsx\n${brokenCode}\n\`\`\``;
+    const USER_PROMPT = `ERROR MESSAGE:\n${errorMessage}\n\nBROKEN CODE:\n\`\`\`jsx\n${brokenCode}\n\`\`\``;
 
-        try {
-            console.log('🛠️ [SRE Agent] DeepSeek-V3.2 (Fireworks) autonomous diagnosis running...');
-            // temperature=0.1 → deterministic, no creative hallucination during a fix
-            const content = await callDirectAPI(SYSTEM_PROMPT, USER_PROMPT, AI_CONFIG.debuggerModel, 0.1, activeKey);
+    try {
+        console.log('🛠️ [SRE Agent] DeepSeek-V3.2 (Fireworks) autonomous diagnosis running...');
+        // temperature=0.1 → deterministic, no creative hallucination during a fix
+        const content = await callDirectAPI(SYSTEM_PROMPT, USER_PROMPT, AI_CONFIG.debuggerModel, 0.1, activeKey);
 
-            const match = content.match(/```(?:jsx?|tsx?|javascript|js|react)?\s*\n([\s\S]*?)\n```/i);
-            const fixed = match ? match[1].trim() : content.trim();
+        const match = content.match(/```(?:jsx?|tsx?|javascript|js|react)?\s*\n([\s\S]*?)\n```/i);
+        const fixed = match ? match[1].trim() : content.trim();
 
-            if (!fixed) throw new Error('SRE Agent returned an empty response.');
-            console.log('✅ [SRE Agent] Fix received — recompiling canvas...');
-            return fixed;
+        if (!fixed) throw new Error('SRE Agent returned an empty response.');
+        console.log('✅ [SRE Agent] Fix received — recompiling canvas...');
+        return fixed;
 
-        } catch (err: any) {
-            console.error('🔴 [SRE Agent] Failed to produce a fix:', err);
-            throw new Error('Debugger AI failed to process the fix.');
-        }
-    };
+    } catch (err: any) {
+        console.error('🔴 [SRE Agent] Failed to produce a fix:', err);
+        throw new Error('Debugger AI failed to process the fix.');
+    }
+};
 
-    // ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
-    export const generateWithAI = async (
-        prompt: string,
-        currentElements: VectraProject,
-        pageContext?: { pageRootId: string; pageName: string }   // Direction C
-    ): Promise<AIResponse> => {
+// ─── MAIN EXPORT ──────────────────────────────────────────────────────────────
+export const generateWithAI = async (
+    prompt: string,
+    currentElements: VectraProject,
+    pageContext?: { pageRootId: string; pageName: string }   // Direction C
+): Promise<AIResponse> => {
 
-        // Tier 1: Local heuristics (instant, zero-cost)
-        if (AI_CONFIG.useLocalHeuristics) {
-            const local = processLocalIntent(prompt, currentElements);
-            if (local) return local;
-        }
+    // Tier 1: Local heuristics (instant, zero-cost)
+    if (AI_CONFIG.useLocalHeuristics) {
+        const local = processLocalIntent(prompt, currentElements);
+        if (local) return local;
+    }
 
-        // Direction C: build canvas context string so LLM knows what's on screen
-        const canvasContext = pageContext
-            ? buildCanvasContext(currentElements, pageContext.pageRootId, pageContext.pageName)
-            : undefined;
+    // Direction C: build canvas context string so LLM knows what's on screen
+    const canvasContext = pageContext
+        ? buildCanvasContext(currentElements, pageContext.pageRootId, pageContext.pageName)
+        : undefined;
 
-        // Tier 2: Cloud LLM generation
-        const cloudResult = await processCloudLLM(prompt, currentElements, canvasContext);
+    // Tier 2: Cloud LLM generation
+    const cloudResult = await processCloudLLM(prompt, currentElements, canvasContext);
 
-        // Tier 3: Template fallback if cloud fails
-        if (cloudResult.action === 'error') {
-            console.warn('Cloud failed, falling back to templates...');
-            return await processTemplates(prompt);
-        }
+    // Tier 3: Template fallback if cloud fails
+    if (cloudResult.action === 'error') {
+        console.warn('Cloud failed, falling back to templates...');
+        return await processTemplates(prompt);
+    }
 
-        return cloudResult;
-    };
+    return cloudResult;
+};

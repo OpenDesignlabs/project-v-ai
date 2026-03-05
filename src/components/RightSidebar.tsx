@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import React from 'react';
 import { useEditor } from '../context/EditorContext';
 import { useUI } from '../context/UIContext';
@@ -13,7 +13,9 @@ import {
     MoveHorizontal, MoveVertical, Droplets, Sun, Move,
     CornerUpLeft, CornerUpRight, CornerDownLeft, CornerDownRight, Layers,
     Smartphone, Tablet, Monitor,
+    Code2, Wand2, Clipboard, ClipboardCheck, TerminalSquare, Loader2,
 } from 'lucide-react';
+import { fixComponentError } from '../services/aiAgent';
 import { cn } from '../lib/utils';
 import {
     type VectraLoaderPropSchema,
@@ -21,7 +23,9 @@ import {
 } from '../utils/vectraLoaderBridge';
 
 // --- TYPES ---
-type Tab = 'design' | 'interact' | 'settings' | 'props';
+// CODE-TAB-1 [PERMANENT]: 'code' tab is only shown/active for custom_code nodes.
+// It is never the default tab for structural elements (containers, text, images).
+type Tab = 'design' | 'interact' | 'settings' | 'props' | 'code';
 type FillMode = 'solid' | 'gradient' | 'image';
 
 // --- SUB-COMPONENTS ---
@@ -110,7 +114,7 @@ const InputUnit = ({ label, icon: Icon, value, onChange, step, unit }: { label: 
 );
 
 export const RightSidebar = () => {
-    const { elements, selectedId, updateProject, pushHistory, elementsRef, previewMode, pages, parentMap, setElements, componentRegistry } = useEditor();
+    const { elements, selectedId, updateProject, pushHistory, elementsRef, previewMode, pages, parentMap, setElements, componentRegistry, setMagicBarOpen } = useEditor();
     // Direction A: read activeBreakpoint and setDevice from UIContext
     const { activeBreakpoint, setDevice } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
@@ -140,6 +144,24 @@ export const RightSidebar = () => {
 
     // Get element
     const element = selectedId ? elements[selectedId] : null;
+
+    // ── Code Tab: isCodeNode ──────────────────────────────────────────────────
+    // True for AI-generated and manually-imported custom_code nodes that carry
+    // inline source. Loader-registered components (importMeta path) do NOT set
+    // element.code — they render via the registry. Mutually exclusive with Props tab.
+    const isCodeNode = !!(
+        (element?.type === 'custom_code' || element?.type === 'custom_component') &&
+        element?.code
+    );
+
+    // Local textarea buffer — avoids calling setElements on every keystroke.
+    // CODE-TAB-2 [PERMANENT]: write to elements only on blur or Cmd+Enter,
+    // same pattern as PROPS-TAB-2. Keystroke-level setElements at 60wpm would
+    // push ~8 state updates/sec and thrash the Babel worker queue.
+    const [localCode, setLocalCode] = useState<string>('');
+    const [isAiFixing, setIsAiFixing] = useState(false);
+    const [codeCopied, setCodeCopied] = useState(false);
+    const prevElementIdRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!element) return;
@@ -185,6 +207,24 @@ export const RightSidebar = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     ]);
 
+    // ── Code Tab: sync localCode when element or its code changes ─────────────
+    // Deps: element.id (selection change) + element.code (external fix applied
+    // by ComponentErrorBoundary auto-fix loop). Both cases must reset localCode.
+    useEffect(() => {
+        setLocalCode(element?.code ?? '');
+    }, [element?.id, element?.code]);
+
+    // ── Code Tab: auto-switch to 'code' tab when a code node is selected ──────
+    // Only fires on selection change (element.id), not on every code update.
+    // Does NOT auto-switch away — user's manual tab choice is respected.
+    useEffect(() => {
+        if (!element) return;
+        if (element.id === prevElementIdRef.current) return;
+        prevElementIdRef.current = element.id;
+        const isCode = (element.type === 'custom_code' || element.type === 'custom_component') && !!element.code;
+        if (isCode) setActiveTab('code');
+    }, [element?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
     if (previewMode) return null;
 
     // --- EMPTY STATE (Simplified) ---
@@ -204,6 +244,48 @@ export const RightSidebar = () => {
     //   desktop  → writes to node.props.style (unchanged behaviour)
     //   tablet   → writes to node.props.breakpoints.tablet
     //   mobile   → writes to node.props.breakpoints.mobile
+    // ── Code Tab: commitCode ──────────────────────────────────────────────────
+    // Called on textarea blur or Cmd+Enter. Writes localCode → elements + history.
+    // CODE-TAB-2 [PERMANENT]: setElements direct (not updateProject) — no JSON.stringify.
+    const commitCode = useCallback(() => {
+        if (!element) return;
+        const code = localCode;
+        setElements(prev => ({
+            ...prev,
+            [element.id]: { ...prev[element.id], code },
+        }));
+        setTimeout(() => pushHistory(elementsRef.current), 0);
+    }, [element, localCode, setElements, pushHistory, elementsRef]);
+
+    // ── Code Tab: handleAiFix ─────────────────────────────────────────────────
+    // User-initiated hardening pass via the SRE debugger agent.
+    const handleAiFix = useCallback(async () => {
+        if (!element || !localCode || isAiFixing) return;
+        setIsAiFixing(true);
+        try {
+            const fixed = await fixComponentError(
+                localCode,
+                [
+                    'Ensure this component renders without errors in the Vectra sandbox.',
+                    'Fix: icon bracket notation (use const IC = Lucide[name]; not <Lucide[name]/>),',
+                    'hook-outside-function violations, missing export default, invalid JSX syntax,',
+                    'undefined .map() calls (add ?? []), and multiple root elements (wrap in <>).',
+                    'Preserve ALL visual design intent — only fix what is broken.',
+                ].join(' ')
+            );
+            setLocalCode(fixed);
+            setElements(prev => ({
+                ...prev,
+                [element.id]: { ...prev[element.id], code: fixed },
+            }));
+            setTimeout(() => pushHistory(elementsRef.current), 0);
+        } catch (err) {
+            console.error('[CodeTab] AI Fix failed:', err);
+        } finally {
+            setIsAiFixing(false);
+        }
+    }, [element, localCode, isAiFixing, setElements, pushHistory, elementsRef]);
+
     const updateStyle = (key: string, value: any) => {
         const unitlessKeys = ['fontWeight', 'opacity', 'zIndex', 'flexGrow', 'scale', 'lineHeight'];
         const finalValue = (typeof value === 'number' && !unitlessKeys.includes(key)) ? `${value}px` : value;
@@ -341,7 +423,16 @@ export const RightSidebar = () => {
 
             {/* TABS */}
             <div className="flex border-b border-[#252526] bg-[#333333]">
-                {/* Props tab — only visible for loader/imported components (importMeta present) */}
+                {/* Code tab — AI-generated / custom_code elements only */}
+                {isCodeNode && (
+                    <TabButton
+                        active={activeTab === 'code'}
+                        onClick={() => setActiveTab('code')}
+                        icon={Code2}
+                        label="Code"
+                    />
+                )}
+                {/* Props tab — loader/imported components (importMeta present) */}
                 {element?.importMeta && (
                     <TabButton
                         active={activeTab === 'props'}
@@ -355,8 +446,8 @@ export const RightSidebar = () => {
                 <TabButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={Settings} label="Settings" />
             </div>
 
-            {/* Direction A: Breakpoint selector — shown only when an element is selected */}
-            <div className="flex items-center gap-0.5 px-2 pt-2 pb-1 border-b border-[#2a2a2c]">
+            {/* Direction A: Breakpoint selector — hidden on code tab (sections own their responsive CSS) */}
+            {activeTab !== 'code' && <div className="flex items-center gap-0.5 px-2 pt-2 pb-1 border-b border-[#2a2a2c]">
                 {([
                     { bp: 'desktop', icon: Monitor, label: 'Desktop' },
                     { bp: 'tablet', icon: Tablet, label: 'Tablet' },
@@ -380,7 +471,7 @@ export const RightSidebar = () => {
                         {label}
                     </button>
                 ))}
-            </div>
+            </div>}
 
             {/* Breakpoint edit banner — only shown when NOT on desktop */}
             {activeBreakpoint !== 'desktop' && (
@@ -393,7 +484,118 @@ export const RightSidebar = () => {
             )}
 
             {/* CONTENT AREA */}
-            <div className="flex-1 overflow-y-auto custom-scrollbar">
+            {/* CODE-TAB-3: overflow:hidden when on code tab so textarea fills the
+                pane without a double-scrollbar. overflow-y:auto for all other tabs. */}
+            <div className={cn(
+                'flex-1 custom-scrollbar',
+                activeTab === 'code' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
+            )}>
+
+                {/* ════════════════════════════════════════════════════════════
+                    TAB: CODE
+                    Visible only for custom_code / AI-generated section nodes.
+                    Inline editor: view, edit, Tab-indent, Cmd+Enter live commit,
+                    blur commit, copy, AI Fix, Regenerate via MagicBar.
+                    CODE-TAB-1 [PERMANENT]: never shown for importMeta nodes.
+                    CODE-TAB-2 [PERMANENT]: writes via setElements on commit only.
+                    CODE-TAB-3 [PERMANENT]: outer div is overflow:hidden so the
+                      absolute-fill textarea has no double-scrollbar.
+                    ════════════════════════════════════════════════════════════ */}
+                {activeTab === 'code' && isCodeNode && (() => {
+                    const fnName =
+                        element.code?.match(/export\s+default\s+function\s+(\w+)/)?.[1]
+                        ?? element.name
+                        ?? 'Component';
+                    const lineCount = (localCode || '').split('\n').length;
+                    return (
+                        <div className="flex flex-col h-full">
+                            {/* Toolbar */}
+                            <div className="flex items-center justify-between px-3 py-2 border-b border-[#1e1e1e] bg-[#111] shrink-0">
+                                <div className="flex items-center gap-2">
+                                    <Code2 size={10} className="text-blue-400" />
+                                    <span className="text-[10px] font-bold font-mono text-blue-300 truncate max-w-[140px]">{fnName}</span>
+                                    <span className="text-[9px] text-[#444] font-mono">{lineCount}L</span>
+                                </div>
+                                <button
+                                    title="Copy code to clipboard"
+                                    onClick={() => {
+                                        navigator.clipboard.writeText(localCode).catch(() => { });
+                                        setCodeCopied(true);
+                                        setTimeout(() => setCodeCopied(false), 1500);
+                                    }}
+                                    className="p-1 rounded hover:bg-[#2a2a2c] text-[#555] hover:text-[#ccc] transition-colors"
+                                >
+                                    {codeCopied
+                                        ? <ClipboardCheck size={12} className="text-green-400" />
+                                        : <Clipboard size={12} />}
+                                </button>
+                            </div>
+                            {/* Editor textarea */}
+                            <div className="flex-1 relative min-h-0">
+                                <textarea
+                                    className="absolute inset-0 w-full h-full bg-[#0d0d0f] text-[11px] text-[#d4d4d4] font-mono resize-none outline-none p-3 leading-[1.65] custom-scrollbar selection:bg-blue-500/30 placeholder-[#333]"
+                                    value={localCode}
+                                    onChange={(e) => setLocalCode(e.target.value)}
+                                    onBlur={commitCode}
+                                    onKeyDown={(e) => {
+                                        if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                                            e.preventDefault();
+                                            commitCode();
+                                        }
+                                        if (e.key === 'Tab') {
+                                            e.preventDefault();
+                                            const ta = e.currentTarget;
+                                            const start = ta.selectionStart;
+                                            const end = ta.selectionEnd;
+                                            const next = localCode.substring(0, start) + '  ' + localCode.substring(end);
+                                            setLocalCode(next);
+                                            requestAnimationFrame(() => {
+                                                ta.selectionStart = start + 2;
+                                                ta.selectionEnd = start + 2;
+                                            });
+                                        }
+                                    }}
+                                    spellCheck={false}
+                                    autoCorrect="off"
+                                    autoCapitalize="off"
+                                    autoComplete="off"
+                                    placeholder={`export default function ${fnName}(props) {\n  return (\n    <div className="w-full">\n      {/* content */}\n    </div>\n  );\n}`}
+                                />
+                            </div>
+                            {/* Hint bar */}
+                            <div className="px-3 py-1.5 bg-[#111] border-t border-[#1e1e1e] flex items-center gap-2 shrink-0">
+                                <span className="text-[9px] text-[#3a3a3a] font-mono">
+                                    <span className="text-[#444]">⌘↵</span> commit · <span className="text-[#444]">Tab</span> indent · blur saves
+                                </span>
+                            </div>
+                            {/* Action bar */}
+                            <div className="flex items-center gap-2 px-3 py-2.5 border-t border-[#252526] bg-[#1e1e1e] shrink-0">
+                                <button
+                                    onClick={handleAiFix}
+                                    disabled={isAiFixing}
+                                    title="Ask the SRE AI agent to fix syntax errors, icon issues, and hook violations"
+                                    className={cn(
+                                        'flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold transition-all flex-1 justify-center',
+                                        isAiFixing
+                                            ? 'bg-[#1a1a1c] text-[#444] cursor-not-allowed border border-[#2a2a2c]'
+                                            : 'bg-blue-600/15 border border-blue-500/25 text-blue-300 hover:bg-blue-600/25 hover:border-blue-500/40 active:scale-95'
+                                    )}
+                                >
+                                    {isAiFixing
+                                        ? <><Loader2 size={10} className="animate-spin" /><span>Fixing…</span></>
+                                        : <><Wand2 size={10} /><span>AI Fix</span></>}
+                                </button>
+                                <button
+                                    onClick={() => setMagicBarOpen(true)}
+                                    title="Open AI bar to regenerate or refine this section"
+                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded text-[10px] font-bold transition-all border border-[#3a3a3a] text-[#666] hover:text-[#aaa] hover:border-[#555] active:scale-95 flex-1 justify-center"
+                                >
+                                    <TerminalSquare size={10} /><span>Regenerate</span>
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })()}
 
                 {/* ════════════════════════════════════════════════════════════
                     TAB: PROPS
