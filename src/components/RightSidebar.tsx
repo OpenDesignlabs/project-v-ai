@@ -225,28 +225,12 @@ export const RightSidebar = () => {
         if (isCode) setActiveTab('code');
     }, [element?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    if (previewMode) return null;
-
-    // --- EMPTY STATE (Simplified) ---
-    if (!element) {
-        return (
-            <div className="w-[320px] bg-[#333333] border-l border-[#252526] h-full flex flex-col items-center justify-center text-center p-6 text-[#666]">
-                <MousePointer2 size={48} className="mb-4 opacity-20" />
-                <h3 className="text-sm font-bold text-[#888] mb-2">No Selection</h3>
-                <p className="text-xs max-w-[200px]">Select an element to edit properties, or use the AI Agent to generate new content.</p>
-            </div>
-        );
-    }
-
-    // --- HELPERS ---
-
-    // Direction A: updateStyle routes to the correct target based on activeBreakpoint.
-    //   desktop  → writes to node.props.style (unchanged behaviour)
-    //   tablet   → writes to node.props.breakpoints.tablet
-    //   mobile   → writes to node.props.breakpoints.mobile
     // ── Code Tab: commitCode ──────────────────────────────────────────────────
-    // Called on textarea blur or Cmd+Enter. Writes localCode → elements + history.
-    // CODE-TAB-2 [PERMANENT]: setElements direct (not updateProject) — no JSON.stringify.
+    // HOOKS-ORDER-1 [PERMANENT]: declared HERE, before ALL early returns.
+    // useCallback must never appear after an early return — React counts hooks
+    // in render order; a conditional early-return that skips a hook causes
+    // "Rendered more hooks than during the previous render" crash.
+    // Internal `if (!element) return` guards the null case safely.
     const commitCode = useCallback(() => {
         if (!element) return;
         const code = localCode;
@@ -258,7 +242,7 @@ export const RightSidebar = () => {
     }, [element, localCode, setElements, pushHistory, elementsRef]);
 
     // ── Code Tab: handleAiFix ─────────────────────────────────────────────────
-    // User-initiated hardening pass via the SRE debugger agent.
+    // HOOKS-ORDER-1 [PERMANENT]: same constraint — before all early returns.
     const handleAiFix = useCallback(async () => {
         if (!element || !localCode || isAiFixing) return;
         setIsAiFixing(true);
@@ -285,6 +269,19 @@ export const RightSidebar = () => {
             setIsAiFixing(false);
         }
     }, [element, localCode, isAiFixing, setElements, pushHistory, elementsRef]);
+
+    if (previewMode) return null;
+
+    // --- EMPTY STATE (Simplified) ---
+    if (!element) {
+        return (
+            <div className="w-[320px] bg-[#333333] border-l border-[#252526] h-full flex flex-col items-center justify-center text-center p-6 text-[#666]">
+                <MousePointer2 size={48} className="mb-4 opacity-20" />
+                <h3 className="text-sm font-bold text-[#888] mb-2">No Selection</h3>
+                <p className="text-xs max-w-[200px]">Select an element to edit properties, or use the AI Agent to generate new content.</p>
+            </div>
+        );
+    }
 
     const updateStyle = (key: string, value: any) => {
         const unitlessKeys = ['fontWeight', 'opacity', 'zIndex', 'flexGrow', 'scale', 'lineHeight'];
