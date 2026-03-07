@@ -171,3 +171,99 @@ export const SHELL_HTML = `<!DOCTYPE html>
   </script>
 </body>
 </html>`;
+
+// ─── MOBILE MIRROR SHELL ──────────────────────────────────────────────────────
+// MIRROR-MEDIA-QUERY-1 [PERMANENT]:
+//   Identical to SHELL_HTML but with two critical differences:
+//   1. Background is transparent — the canvas frame provides the bg colour.
+//   2. Sends 'MOBILE_SHELL_READY' instead of 'SHELL_READY' so ContainerPreview
+//      can track both iframes independently.
+//
+//   WHY AN IFRAME IS THE ONLY CORRECT SOLUTION:
+//   Tailwind md: = @media (min-width: 768px). This fires against the BROWSER's
+//   window.innerWidth — always ~1400px in Vectra. A <div> at 390px does NOT
+//   create a new viewport. An <iframe> has its own Window object, and its
+//   window.innerWidth equals its CSS width (390px). All md: breakpoints
+//   evaluate to FALSE. Sections fully reflow to single-column mobile layout.
+//   This is the same approach used by Plasmic, Framer, and Webflow.
+export const MOBILE_SHELL_HTML = `<!DOCTYPE html>
+<html class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/tailwind.js"></script>
+  <script>tailwind.config={darkMode:'class',theme:{extend:{}}}</script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js" crossorigin="anonymous"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box}
+    html,body{
+      margin:0;padding:0;
+      background:transparent;
+      color:#fff;font-family:system-ui,sans-serif;
+      overflow-x:hidden;width:100%;
+    }
+    ::-webkit-scrollbar{width:4px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:#27272a;border-radius:3px}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    var _root = null;
+    function runCode(src) {
+      if (!src || !src.trim()) return;
+      try {
+        var fakeExports = {};
+        var fakeModule  = { exports: fakeExports };
+        var Motion = window.Motion || {};
+        var _cn = function() { return Array.prototype.filter.call(arguments, Boolean).join(' '); };
+        var _Lucide = new Proxy(window.lucide || {}, {
+          get: function(t, p) {
+            var e = t[p];
+            if (typeof e === 'function' || (e && e.$$typeof)) return e;
+            if (Array.isArray(e)) {
+              return function LI(pr) {
+                var s=(pr&&pr.size)||24, c=(pr&&pr.color)||'currentColor', sw=(pr&&pr.strokeWidth)||2;
+                var toEl=function(n){return Array.isArray(n)?React.createElement(n[0],n[1],(n[2]||[]).map(toEl)):null;};
+                return React.createElement('svg',{xmlns:'http://www.w3.org/2000/svg',width:s,height:s,viewBox:'0 0 24 24',fill:'none',stroke:c,strokeWidth:sw,strokeLinecap:'round',strokeLinejoin:'round'},((e[2]||[])).map(toEl));
+              };
+            }
+            return function(){return React.createElement('svg',{width:24,height:24});};
+          }
+        });
+        var _DynamicIcon = function(pr) {
+          var Comp = _Lucide[pr.name] || _Lucide.HelpCircle || function(){return null;};
+          return React.createElement(typeof Comp==='function'?Comp:function(){return null;}, pr);
+        };
+        var preamble = [
+          'const {useState,useEffect,useRef,useCallback,useMemo,useLayoutEffect,useReducer,useContext,Fragment}=React;',
+          'const {motion,AnimatePresence,useAnimation,useInView,useMotionValue,useTransform}=_Motion;',
+          'const cn=_cn, Lucide=_Lucide, DynamicIcon=_DynamicIcon;',
+        ].join('');
+        new Function('React','ReactDOM','_Motion','_cn','_Lucide','_DynamicIcon','exports','module','require', preamble+src)(
+          React, ReactDOM, Motion, _cn, _Lucide, _DynamicIcon, fakeExports, fakeModule,
+          function(){throw new Error('require() not available in mobile shell');}
+        );
+        var Comp = fakeExports['default'] || fakeModule.exports['default'] ||
+          Object.values(fakeExports).find(function(v){return typeof v==='function';});
+        if (!Comp) return;
+        if (!_root) _root = ReactDOM.createRoot(document.getElementById('root'));
+        _root.render(React.createElement(Comp, null));
+      } catch(err) {
+        document.getElementById('root').innerHTML =
+          '<div style="color:#f87171;padding:1rem;font-family:monospace;font-size:11px">' +
+          (err.message||err) + '</div>';
+      }
+    }
+    window.addEventListener('message', function(ev) {
+      if (!ev.data || ev.data.type !== 'UPDATE_CODE') return;
+      runCode(ev.data.code);
+    });
+    window.parent.postMessage({ type: 'MOBILE_SHELL_READY' }, '*');
+  </script>
+</body>
+</html>`;

@@ -337,6 +337,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         // instead of going through useEditor(), which double-subscribes RenderNode
         // to both ProjectContext AND UIContext for just this one field.
         componentRegistry: rawRegistry,
+        mobileIframeRef,
     } = useUI();
     // HOVER CONTEXT (perf isolation): hoveredId changes at 60fps pointer-move
     // frequency. Keeping it in a separate context means only the 2 nodes
@@ -963,66 +964,65 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
 
-                {/* ── Mobile Mirror Frame ─────────────────────────────────────
-                    MIRROR-OVERFLOW-1 + MIRROR-POSITION-2 [PERMANENT]:
-                    left = desktopWidth + GAP  (artboard-local space)
-                    The artboard motion.div is already at desktopLeft in canvas space.
-                    Any absolute child at left=desktopWidth+GAP lands correctly at
-                    canvas position desktopLeft + desktopWidth + GAP. Adding desktopLeft
-                    again would double-count it and embed the mirror inside the frame.
+                {/* ── Mobile Mirror Iframe ─────────────────────────────────
+                    MIRROR-MEDIA-QUERY-1 [PERMANENT]:
+                    Uses an <iframe> not a <div>. The iframe has its own
+                    browsing context — window.innerWidth = 390px inside it.
+                    Tailwind md: (min-width:768px) evaluates FALSE → full
+                    responsive reflow. Sections stack to single column,
+                    navbars collapse, grids go 1-col. Same approach as Plasmic.
+                    The iframe renders via ContainerPreview's buildAndInject
+                    postMessage — no extra compilation, same finalCode.
                 ─────────────────────────────────────────────────────────────── */}
                 {element.type === 'webpage' && !isMobileMirror && !previewMode && (() => {
                     const desktopWidth = parseFloat(String(element.props.style?.width || 1440));
-                    const MIRROR_WIDTH = 390;
+                    const MIRROR_W = 390;
                     const GAP = 80;
-                    const mirrorLeft = desktopWidth + GAP;
 
                     return (
                         <div
                             style={{
                                 position: 'absolute',
-                                left: `${mirrorLeft}px`,
+                                left: `${desktopWidth + GAP}px`,
                                 top: 0,
-                                width: `${MIRROR_WIDTH}px`,
+                                width: `${MIRROR_W}px`,
                                 minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
-                                backgroundColor: '#ffffff',
-                                overflow: 'hidden',
-                                boxShadow: '0 8px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.10)',
                                 borderRadius: '16px',
-                                border: '1px solid rgba(0,0,0,0.07)',
+                                overflow: 'hidden',
+                                boxShadow: '0 8px 48px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.14)',
+                                border: '1px solid rgba(255,255,255,0.07)',
+                                backgroundColor: '#0a0a0a',
                                 pointerEvents: 'none',
+                                flexShrink: 0,
                             }}
                         >
-                            {/* Mirror label */}
+                            {/* Label */}
                             <div style={{
                                 position: 'absolute', top: 0, left: 0, zIndex: 20,
-                                background: 'rgba(0,0,0,0.55)', color: '#fff',
-                                fontSize: '9px', padding: '2px 7px',
-                                borderBottomRightRadius: '6px',
+                                background: 'rgba(0,0,0,0.7)',
+                                backdropFilter: 'blur(8px)',
+                                color: '#a1a1aa',
+                                fontSize: '9px', padding: '3px 8px',
+                                borderBottomRightRadius: '8px',
                                 fontFamily: 'monospace', textTransform: 'uppercase',
-                                letterSpacing: '0.08em', pointerEvents: 'none',
-                                backdropFilter: 'blur(4px)',
+                                letterSpacing: '0.1em', pointerEvents: 'none',
                             }}>
-                                Mobile · {MIRROR_WIDTH}px
+                                Mobile · {MIRROR_W}px
                             </div>
-                            {/* Sections at mobile width — their Tailwind responsive classes handle reflow */}
-                            <div style={{
-                                width: `${MIRROR_WIDTH}px`,
-                                minHeight: '812px',
-                                position: 'relative',
-                                display: 'flex',
-                                flexDirection: 'column',
-                                overflowX: 'hidden',
-                                overflowY: 'visible',
-                            }}>
-                                {element.children?.map(childId => (
-                                    <RenderNode
-                                        key={`${childId}-mirror`}
-                                        elementId={childId}
-                                        isMobileMirror={true}
-                                    />
-                                ))}
-                            </div>
+                            {/* THE IFRAME: window.innerWidth = 390px inside → md: = FALSE → reflow */}
+                            <iframe
+                                ref={mobileIframeRef}
+                                style={{
+                                    width: '100%',
+                                    height: '100%',
+                                    minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
+                                    border: 'none',
+                                    display: 'block',
+                                    pointerEvents: 'none',
+                                }}
+                                title="Mobile Preview"
+                                sandbox="allow-scripts allow-same-origin"
+                            />
                         </div>
                     );
                 })()}

@@ -7,7 +7,7 @@ import {
   Maximize2, Minimize2, RefreshCw, X,
   Loader2, Zap, Monitor, Tablet, Smartphone,
 } from 'lucide-react';
-import { SHELL_HTML } from './shellHtml';
+import { SHELL_HTML, MOBILE_SHELL_HTML } from './shellHtml';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 
@@ -63,16 +63,19 @@ const stripAndFixCode = (code: string): string =>
 
 export const ContainerPreview = () => {
   const { elements, compileComponent } = useProject();
-  const { previewMode, setPreviewMode, device, setDevice } = useUI();
+  const { previewMode, setPreviewMode, device, setDevice, mobileIframeRef } = useUI();
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [isCompiling, setIsCompiling] = useState(false);
   const [iframeReady, setIframeReady] = useState(false);
+  const [mobileIframeReady, setMobileIframeReady] = useState(false);
 
   // ── Listen for SHELL_READY signal from the iframe ─────────────────────────
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
       if (ev.data?.type === 'SHELL_READY') setIframeReady(true);
+      // MIRROR-MEDIA-QUERY-1: separate ready signal from the mobile shell
+      if (ev.data?.type === 'MOBILE_SHELL_READY') setMobileIframeReady(true);
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
@@ -80,10 +83,10 @@ export const ContainerPreview = () => {
 
   // ── Boot: set the shell HTML once ─────────────────────────────────────────
   useEffect(() => {
-    if (iframeRef.current) {
-      iframeRef.current.srcdoc = SHELL_HTML;
-    }
-  }, []);
+    if (iframeRef.current) iframeRef.current.srcdoc = SHELL_HTML;
+    // MIRROR-MEDIA-QUERY-1: boot mobile mirror iframe with its own shell
+    if (mobileIframeRef.current) mobileIframeRef.current.srcdoc = MOBILE_SHELL_HTML;
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Hot-reload: Compile (Rust SWC) → Send to shell ───────────────────────
   // Phase 6: Compilation happens HERE (host side, ~5ms via Rust) instead of
@@ -179,8 +182,17 @@ exports['default'] = function VectraPage(props) {
 `;
       }
 
+      // Post to desktop preview iframe
       if (iframeRef.current?.contentWindow) {
         iframeRef.current.contentWindow.postMessage(
+          { type: 'UPDATE_CODE', code: finalCode }, '*'
+        );
+      }
+      // MIRROR-MEDIA-QUERY-1 [PERMANENT]: post same compiled code to mobile mirror.
+      // The mobile iframe has window.innerWidth = 390px — all Tailwind md: breakpoints
+      // evaluate to FALSE. Sections reflow to mobile layout. Zero extra compilation cost.
+      if (mobileIframeRef.current?.contentWindow && mobileIframeReady) {
+        mobileIframeRef.current.contentWindow.postMessage(
           { type: 'UPDATE_CODE', code: finalCode }, '*'
         );
       }
@@ -189,12 +201,16 @@ exports['default'] = function VectraPage(props) {
     } finally {
       setTimeout(() => setIsCompiling(false), 300);
     }
-  }, [elements, iframeReady, compileComponent]);
+  }, [elements, iframeReady, mobileIframeReady, compileComponent, mobileIframeRef]);
 
-  // Fire hot-reload whenever elements change OR after the iframe signals ready
   useEffect(() => {
     if (iframeReady) buildAndInject();
   }, [buildAndInject, iframeReady]);
+
+  // Also fire when mobile shell becomes ready
+  useEffect(() => {
+    if (mobileIframeReady) buildAndInject();
+  }, [buildAndInject, mobileIframeReady]);
 
   // ── Toolbar ───────────────────────────────────────────────────────────────
   const DeviceButton = ({
