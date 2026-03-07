@@ -194,23 +194,28 @@ export const COMPONENT_TYPES: Record<string, ComponentConfig> = {
     },
 };
 
+// MOBILE-ARCH-1 [PERMANENT]:
+// frame-mobile is NOT a sibling of frame-desktop in the element tree.
+// It is a read-only mirror frame auto-rendered by RenderNode alongside
+// frame-desktop. It never receives AI content — it clones frame-desktop.children
+// rendered at 375px with isMobileMirror=true, so section CSS handles reflow.
+// Removing frame-mobile from INITIAL_DATA prevents runAI from accidentally
+// targeting it as a content injection node.
 export const INITIAL_DATA: VectraProject = {
     'application-root': { id: 'application-root', type: 'app', name: 'App', children: ['page-home'], props: {} },
-    'page-home': { id: 'page-home', type: 'page', name: 'Home', children: ['frame-desktop', 'frame-mobile'], props: { layoutMode: 'canvas' } },
+    'page-home': {
+        id: 'page-home', type: 'page', name: 'Home', children: ['frame-desktop'],
+        props: { layoutMode: 'canvas' }
+    },
     'frame-desktop': {
         id: 'frame-desktop', type: 'webpage', name: 'Desktop', children: [],
         props: {
             layoutMode: 'canvas',
             className: 'shadow-lg overflow-hidden',
-            style: { position: 'absolute', left: '100px', top: '100px', width: '1200px', height: '1200px', backgroundColor: '#f2f0ef' }
+            style: {
+                position: 'absolute', left: '100px', top: '100px',
+                width: '1440px', minHeight: '1080px', backgroundColor: '#ffffff'
+            }
         }
     },
-    'frame-mobile': {
-        id: 'frame-mobile', type: 'canvas', name: 'Mobile', children: [],
-        props: {
-            layoutMode: 'canvas',
-            className: 'shadow-lg overflow-hidden border border-slate-200',
-            style: { position: 'absolute', left: '1400px', top: '100px', width: '375px', height: '812px', backgroundColor: '#f2f0ef' }
-        }
-    }
 };

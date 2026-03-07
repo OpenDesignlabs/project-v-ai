@@ -912,16 +912,72 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         content = <IconComp className="w-full h-full" strokeWidth={1.5} />;
     }
     else {
+        // ── MOBILE MIRROR FRAME ───────────────────────────────────────────────
+        // MOBILE-ARCH-1 [PERMANENT]: type==='webpage' artboards auto-render a
+        // companion 375px mobile mirror to their right. The mirror is NOT a data
+        // node — it is a derived read-only render of the desktop frame's children
+        // at 375px, with isMobileMirror=true so each section's own responsive
+        // CSS handles the reflow (md:flex-row→flex-col, etc.).
+        //
+        // WHY NOT A SEPARATE NODE:
+        //   A separate 'canvas' node in the tree is targeted by runAI's canvasNodeId
+        //   search — AI content would inject into the mobile frame instead of desktop.
+        //   A derived render has zero data-model footprint and can never be selected.
+        const isMasterDesktopFrame = element.type === 'webpage' && !isMobileMirror;
+
         content = (
             <>
+                {/* Desktop / artboard label */}
                 {(element.type === 'canvas' || element.type === 'webpage') && !previewMode && !isMobileMirror && (
-                    <div className="absolute top-0 left-0 bg-white text-slate-500 text-[10px] px-2 py-0.5 rounded-br border-b border-r border-slate-200 pointer-events-none z-10 font-medium">
-                        {element.name}
+                    <div className="absolute top-0 left-0 bg-black/60 text-white text-[9px] px-2 py-0.5 rounded-br pointer-events-none z-10 font-mono tracking-wider uppercase">
+                        {element.name} · {Math.round(parseFloat(String(element.props.style?.width || 1440)))}px
                     </div>
                 )}
                 {element.children?.map(childId => (
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
+
+                {/* ── Mobile Mirror Frame — auto-generated companion ──────── */}
+                {isMasterDesktopFrame && !previewMode && (() => {
+                    const desktopLeft = parseFloat(String(element.props.style?.left || 100));
+                    const desktopTop = parseFloat(String(element.props.style?.top || 100));
+                    const desktopWidth = parseFloat(String(element.props.style?.width || 1440));
+                    const mirrorLeft = desktopLeft + desktopWidth + 80; // 80px gap between frames
+
+                    return (
+                        <div
+                            style={{
+                                position: 'absolute',
+                                left: `${mirrorLeft}px`,
+                                top: `${desktopTop}px`,
+                                width: '375px',
+                                minHeight: '812px',
+                                backgroundColor: '#ffffff',
+                                overflow: 'hidden',
+                                boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
+                                borderRadius: '12px',
+                                border: '1px solid rgba(0,0,0,0.08)',
+                            }}
+                            onPointerDown={(e) => e.stopPropagation()}
+                        >
+                            {/* Mirror label */}
+                            <div className="absolute top-0 left-0 bg-black/60 text-white text-[9px] px-2 py-0.5 rounded-br pointer-events-none font-mono tracking-wider uppercase" style={{ zIndex: 20 }}>
+                                Mobile · 375px
+                            </div>
+                            {/* Desktop children re-rendered at 375px — sections reflow via their own CSS */}
+                            <div style={{ width: '375px', minHeight: '812px', position: 'relative', overflowX: 'hidden', overflowY: 'auto' }}>
+                                {element.children?.map(childId => (
+                                    <RenderNode
+                                        key={`${childId}-mobile-mirror`}
+                                        elementId={childId}
+                                        isMobileMirror={true}
+                                    />
+                                ))}
+                            </div>
+                        </div>
+                    );
+                })()}
+
                 {isContainer && !isArtboard && !element.children?.length && !previewMode && !element.props['data-custom-code'] && (
                     <div
                         onClick={(e) => { e.stopPropagation(); setSelectedId(elementId); setActivePanel('add'); }}

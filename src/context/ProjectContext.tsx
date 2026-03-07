@@ -1121,23 +1121,20 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             const currentPage = currentPages.find(p => p.id === currentPageId);
             if (!currentPage) return 'No active page';
 
-            // FIX-2: Resolve to the webpage/canvas artboard child, NOT the page root.
-            // Previously: pageRootId = page.rootId (= page-xxx, type:'page')
-            // mergeAIContent then ran page-xxx.children = [aiRoot], evicting the
-            // canvas-xxx (type:'webpage') artboard. AI content rendered without frame,
-            // without height:auto grow, without canvas styling.
-            //
-            // Now: find the webpage/canvas child of the page node. mergeAIContent
-            // targets canvas-xxx.children instead — AI sections are placed INSIDE
-            // the artboard, which provides proper grow + scrolling.
+            // MOBILE-ARCH-1 [PERMANENT]: target ONLY the 'webpage' (desktop) artboard.
+            // The 'canvas' type was the old mobile mirror node — it is now a derived
+            // read-only view rendered by RenderNode and has no data-model entry.
+            // Belt-and-suspenders for legacy projects loaded from IDB that may still
+            // carry a 'canvas' frame-mobile node: we explicitly exclude it here.
             const pageNode = currentElements[currentPage.rootId];
             const canvasNodeId =
                 pageNode?.children?.find(
-                    (cid: string) => {
-                        const t = currentElements[cid]?.type;
-                        return t === 'webpage' || t === 'canvas' || t === 'artboard';
-                    }
-                ) ?? currentPage.rootId; // safe fallback to page root if no artboard found
+                    (cid: string) => currentElements[cid]?.type === 'webpage'
+                )
+                ?? pageNode?.children?.find(
+                    (cid: string) => currentElements[cid]?.type === 'artboard'
+                )
+                ?? currentPage.rootId;
 
             const result = await generateWithAI(prompt, currentElements, {
                 pageRootId: canvasNodeId,   // canvas context describes the artboard tree
