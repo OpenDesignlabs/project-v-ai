@@ -37,6 +37,15 @@ const compilerWorker = new Worker(
     { type: 'classic' }
 );
 
+// WORKER-ID-COLLISION [PERMANENT]: module-level counter shared across ALL
+// LiveComponent instances. Per-component reqId.current starts at 0 and
+// increments to 1 on first compile — every simultaneously-mounted section
+// sends id:1. The singleton worker's response (id:1) passes every component's
+// `if (e.data.id !== currentReqId)` guard simultaneously, so all sections
+// render the first compiled result (always Navbar — the first to finish).
+// A global counter gives each request a unique ID regardless of mount order.
+let _globalCompileId = 0;
+
 // ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
 // Upgraded to catch BOTH compile-time errors (from LiveComponent's useEffect try/catch)
 // AND runtime errors (React render-phase errors like ReferenceError: Heart is not defined).
@@ -174,7 +183,11 @@ const LiveComponent = ({
         }
 
         // ── Offload Babel + import-stripping to background worker ─────────────
-        const currentReqId = ++reqId.current;
+        // WORKER-ID-COLLISION FIX: use globally unique ID, not per-component counter.
+        // ++reqId.current across N simultaneously-mounted components all start at 0
+        // and ALL produce id:1 — the entire gang accepts the first worker response.
+        const currentReqId = ++_globalCompileId;
+        reqId.current = currentReqId; // keep in sync for any stale-result guards
 
         const handleWorkerMessage = (e: MessageEvent) => {
             // Discard stale results from a previous code version

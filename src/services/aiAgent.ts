@@ -10,7 +10,7 @@ export const AI_CONFIG = {
     endpoint: 'https://router.huggingface.co/v1/chat/completions',
 
     // HYBRID MODELS
-    primaryModel: 'deepseek-ai/DeepSeek-R1-0528:together', //'zai-org/GLM-5:zai-org',         // GLM-5 via Zhipu (GLM-4.7 provider was offline)
+    primaryModel: 'zai-org/GLM-5:zai-org',         // GLM-5 via Zhipu (GLM-4.7 provider was offline)
     debuggerModel: 'deepseek-ai/DeepSeek-R1-0528:together',       // DeepSeek-V3.2 via Fireworks AI
 
     // DUAL API KEYS — split traffic, double the free quota
