@@ -355,6 +355,20 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
 
     const element = elements[elementId];
     const nodeRef = useRef<HTMLDivElement>(null);
+
+    // MIRROR-HEIGHT-1 [PERMANENT]: ResizeObserver tracks the desktop frame's
+    // actual rendered height so the mobile mirror auto-matches it as AI sections
+    // are added. The stored minHeight prop is a floor — not the rendered height.
+    const desktopHeightRef = useRef<number>(812);
+    useEffect(() => {
+        if (element.type !== 'webpage' || isMobileMirror || !nodeRef.current) return;
+        const ro = new ResizeObserver(entries => {
+            const h = entries[0]?.contentRect.height;
+            if (h && h > 0) desktopHeightRef.current = h;
+        });
+        ro.observe(nodeRef.current);
+        return () => ro.disconnect();
+    }, [element.type, isMobileMirror]);
     const [isEditing, setIsEditing] = useState(false);
     const [isVisualHover, setIsVisualHover] = useState(false);
     const [animKey, setAnimKey] = useState(0);
@@ -818,7 +832,25 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     }
 
     if (isMobileMirror) {
-        finalStyle = { ...finalStyle, position: 'relative', left: 'auto', top: 'auto', width: '100%', height: 'auto', transform: 'none' };
+        // MIRROR-OVERFLOW-1 [PERMANENT]: all nodes in mirror mode are in-flow.
+        // position:relative + width:100% ensures sections stack vertically inside
+        // the 390px container without bleeding outside its bounds.
+        // maxWidth:100% + overflowX:hidden prevent any wide internal element from
+        // blowing out the mirror frame horizontally.
+        finalStyle = {
+            ...finalStyle,
+            position: 'relative',
+            left: 'auto',
+            top: 'auto',
+            right: 'auto',
+            bottom: 'auto',
+            width: '100%',
+            maxWidth: '100%',
+            height: 'auto',
+            minHeight: 'auto',
+            transform: 'none',
+            overflowX: 'hidden',
+        };
     }
 
     let content = null;
@@ -912,18 +944,12 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         content = <IconComp className="w-full h-full" strokeWidth={1.5} />;
     }
     else {
-        // ── MOBILE MIRROR FRAME ───────────────────────────────────────────────
-        // MOBILE-ARCH-1 [PERMANENT]: type==='webpage' artboards auto-render a
-        // companion 375px mobile mirror to their right. The mirror is NOT a data
-        // node — it is a derived read-only render of the desktop frame's children
-        // at 375px, with isMobileMirror=true so each section's own responsive
-        // CSS handles the reflow (md:flex-row→flex-col, etc.).
-        //
-        // WHY NOT A SEPARATE NODE:
-        //   A separate 'canvas' node in the tree is targeted by runAI's canvasNodeId
-        //   search — AI content would inject into the mobile frame instead of desktop.
-        //   A derived render has zero data-model footprint and can never be selected.
-        const isMasterDesktopFrame = element.type === 'webpage' && !isMobileMirror;
+        // MIRROR-OVERFLOW-1 + MIRROR-POSITION-2 [PERMANENT]:
+        // Mirror is rendered INSIDE the artboard motion.div.
+        // left = desktopWidth + GAP  →  canvas position = desktopLeft + desktopWidth + GAP ✅
+        // The old bug used desktopLeft + desktopWidth + GAP which double-counted desktopLeft
+        // (the artboard is already positioned at desktopLeft in canvas space), misplacing
+        // the mirror inside the desktop frame's bounds.
 
         content = (
             <>
@@ -937,38 +963,61 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
 
-                {/* ── Mobile Mirror Frame — auto-generated companion ──────── */}
-                {isMasterDesktopFrame && !previewMode && (() => {
-                    const desktopLeft = parseFloat(String(element.props.style?.left || 100));
-                    const desktopTop = parseFloat(String(element.props.style?.top || 100));
+                {/* ── Mobile Mirror Frame ─────────────────────────────────────
+                    MIRROR-OVERFLOW-1 + MIRROR-POSITION-2 [PERMANENT]:
+                    left = desktopWidth + GAP  (artboard-local space)
+                    The artboard motion.div is already at desktopLeft in canvas space.
+                    Any absolute child at left=desktopWidth+GAP lands correctly at
+                    canvas position desktopLeft + desktopWidth + GAP. Adding desktopLeft
+                    again would double-count it and embed the mirror inside the frame.
+                ─────────────────────────────────────────────────────────────── */}
+                {element.type === 'webpage' && !isMobileMirror && !previewMode && (() => {
                     const desktopWidth = parseFloat(String(element.props.style?.width || 1440));
-                    const mirrorLeft = desktopLeft + desktopWidth + 80; // 80px gap between frames
+                    const MIRROR_WIDTH = 390;
+                    const GAP = 80;
+                    const mirrorLeft = desktopWidth + GAP;
 
                     return (
                         <div
                             style={{
                                 position: 'absolute',
                                 left: `${mirrorLeft}px`,
-                                top: `${desktopTop}px`,
-                                width: '375px',
-                                minHeight: '812px',
+                                top: 0,
+                                width: `${MIRROR_WIDTH}px`,
+                                minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
                                 backgroundColor: '#ffffff',
                                 overflow: 'hidden',
-                                boxShadow: '0 20px 60px rgba(0,0,0,0.15)',
-                                borderRadius: '12px',
-                                border: '1px solid rgba(0,0,0,0.08)',
+                                boxShadow: '0 8px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.10)',
+                                borderRadius: '16px',
+                                border: '1px solid rgba(0,0,0,0.07)',
+                                pointerEvents: 'none',
                             }}
-                            onPointerDown={(e) => e.stopPropagation()}
                         >
                             {/* Mirror label */}
-                            <div className="absolute top-0 left-0 bg-black/60 text-white text-[9px] px-2 py-0.5 rounded-br pointer-events-none font-mono tracking-wider uppercase" style={{ zIndex: 20 }}>
-                                Mobile · 375px
+                            <div style={{
+                                position: 'absolute', top: 0, left: 0, zIndex: 20,
+                                background: 'rgba(0,0,0,0.55)', color: '#fff',
+                                fontSize: '9px', padding: '2px 7px',
+                                borderBottomRightRadius: '6px',
+                                fontFamily: 'monospace', textTransform: 'uppercase',
+                                letterSpacing: '0.08em', pointerEvents: 'none',
+                                backdropFilter: 'blur(4px)',
+                            }}>
+                                Mobile · {MIRROR_WIDTH}px
                             </div>
-                            {/* Desktop children re-rendered at 375px — sections reflow via their own CSS */}
-                            <div style={{ width: '375px', minHeight: '812px', position: 'relative', overflowX: 'hidden', overflowY: 'auto' }}>
+                            {/* Sections at mobile width — their Tailwind responsive classes handle reflow */}
+                            <div style={{
+                                width: `${MIRROR_WIDTH}px`,
+                                minHeight: '812px',
+                                position: 'relative',
+                                display: 'flex',
+                                flexDirection: 'column',
+                                overflowX: 'hidden',
+                                overflowY: 'visible',
+                            }}>
                                 {element.children?.map(childId => (
                                     <RenderNode
-                                        key={`${childId}-mobile-mirror`}
+                                        key={`${childId}-mirror`}
                                         elementId={childId}
                                         isMobileMirror={true}
                                     />
