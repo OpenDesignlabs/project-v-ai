@@ -28,6 +28,61 @@ const HeroGeometric = lazy(() => import('./marketplace/HeroGeometric').then(m =>
 import { SmartAccordion, SmartCarousel, SmartTable } from './smart/SmartComponents';
 import * as LucideAll from 'lucide-react';
 
+// ── MOBILE MIRROR CSS INJECTION ──────────────────────────────────────────────────
+// Injected once at module load. Scoped to [data-vectra-mobile-mirror] so it
+// never affects the desktop frame or the rest of the app.
+//
+// WHY CSS INJECTION (not iframe):
+//   An iframe isolates the browsing context (good for media queries) but breaks
+//   editor interactivity — you can’t select, drag, or edit elements inside it.
+//   Instead, we inject CSS overrides that force single-column layout within the
+//   mirror container. This lets RenderNode render real, selectable elements while
+//   the CSS ensures they stack as they would on a 390px mobile screen.
+//
+// WHAT IT COVERS:
+//   • Tailwind grid classes: grid-cols-2/3/4 → 1fr
+//   • Tailwind responsive grids: md:grid-cols-* → 1fr
+//   • Tailwind responsive flex: md:flex-row → column
+//   • Inline-style flex-row containers → column
+//   • All elements: max-width:100% + overflow-x:hidden
+//   • Images: fill width naturally
+(() => {
+    const id = 'vectra-mobile-mirror-css';
+    if (document.getElementById(id)) return;
+    const style = document.createElement('style');
+    style.id = id;
+    style.textContent = `
+/* ── Vectra Mobile Mirror — layout overrides ─────────────────────────── */
+[data-vectra-mobile-mirror] { overflow-x: hidden !important; }
+[data-vectra-mobile-mirror] * { max-width: 100% !important; box-sizing: border-box; }
+
+/* Grid: collapse all multi-column layouts to single column */
+[data-vectra-mobile-mirror] .grid-cols-2,
+[data-vectra-mobile-mirror] .grid-cols-3,
+[data-vectra-mobile-mirror] .grid-cols-4,
+[data-vectra-mobile-mirror] .grid-cols-5,
+[data-vectra-mobile-mirror] .grid-cols-6 { grid-template-columns: 1fr !important; }
+
+/* Tailwind md: responsive overrides (escaped colon in CSS selector) */
+[data-vectra-mobile-mirror] .md\:grid-cols-2,
+[data-vectra-mobile-mirror] .md\:grid-cols-3,
+[data-vectra-mobile-mirror] .md\:grid-cols-4 { grid-template-columns: 1fr !important; }
+[data-vectra-mobile-mirror] .md\:flex-row { flex-direction: column !important; }
+[data-vectra-mobile-mirror] .md\:flex-row-reverse { flex-direction: column-reverse !important; }
+[data-vectra-mobile-mirror] .lg\:grid-cols-2,
+[data-vectra-mobile-mirror] .lg\:grid-cols-3,
+[data-vectra-mobile-mirror] .lg\:grid-cols-4 { grid-template-columns: 1fr !important; }
+[data-vectra-mobile-mirror] .lg\:flex-row { flex-direction: column !important; }
+
+/* Flex containers: force wrap so items don't overflow horizontally */
+[data-vectra-mobile-mirror] .flex { flex-wrap: wrap !important; }
+
+/* Images: natural width fill */
+[data-vectra-mobile-mirror] img { width: 100% !important; height: auto !important; object-fit: cover; }
+`;
+    document.head.appendChild(style);
+})();
+
 // ─── COMPILER WORKER (Singleton) ─────────────────────────────────────────────
 // Created ONCE at module level so Babel isn’t re-loaded on every component mount.
 // Classic worker mode: the worker uses importScripts('/babel.min.js') internally.
@@ -963,14 +1018,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
 
-                {/* ── Mobile Mirror Shell (visual chrome only) ────────────────
-                    MIRROR-BOOT-TIMING-1 [PERMANENT]:
-                    This div provides the visual frame chrome (border, shadow,
-                    label, background). The actual <iframe> is rendered and owned
-                    by ContainerPreview, which positions it over this element via
-                    getBoundingClientRect(). RenderNode must NOT own the iframe
-                    because ContainerPreview mounts before RenderNode renders the
-                    canvas — the boot srcdoc assignment would fire with ref=null.
+                {/* ── Mobile Mirror ───────────────────────────────────────────────────────
+                    Renders the same RenderNode children at 390px width.
+                    Elements are selectable and editable just like the desktop
+                    frame (isMobileMirror lets nodes suppress selection rings).
+                    The module-level CSS injection handles layout stacking:
+                    grids collapse to 1-column, md:flex-row → column, etc.
+                    No iframe — full editor interactivity preserved.
                 ─────────────────────────────────────────────────────────────── */}
                 {element.type === 'webpage' && !isMobileMirror && !previewMode && (() => {
                     const desktopWidth = parseFloat(String(element.props.style?.width || 1440));
@@ -979,7 +1033,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
 
                     return (
                         <div
-                            data-vectra-mirror-shell="true"
+                            data-vectra-mobile-mirror="true"
                             style={{
                                 position: 'absolute',
                                 left: `${desktopWidth + GAP}px`,
@@ -990,16 +1044,15 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 overflow: 'hidden',
                                 boxShadow: '0 8px 48px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.14)',
                                 border: '1px solid rgba(255,255,255,0.07)',
-                                backgroundColor: '#0a0a0a',
-                                pointerEvents: 'none',
+                                backgroundColor: '#ffffff',
                             }}
                         >
-                            {/* Label badge */}
+                            {/* Frame label */}
                             <div style={{
                                 position: 'absolute', top: 0, left: 0, zIndex: 20,
-                                background: 'rgba(0,0,0,0.75)',
+                                background: 'rgba(0,0,0,0.65)',
                                 backdropFilter: 'blur(8px)',
-                                color: '#71717a',
+                                color: '#a1a1aa',
                                 fontSize: '9px', padding: '3px 8px',
                                 borderBottomRightRadius: '8px',
                                 fontFamily: 'monospace', textTransform: 'uppercase',
@@ -1007,7 +1060,24 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                             }}>
                                 Mobile · {MIRROR_W}px
                             </div>
-                            {/* iframe is overlaid here by ContainerPreview via position:fixed */}
+
+                            {/* Sections stack via display:flex+column + module CSS overrides */}
+                            <div style={{
+                                width: '100%',
+                                minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
+                                display: 'flex',
+                                flexDirection: 'column',
+                                overflowX: 'hidden',
+                                paddingTop: '20px', // clear the label badge
+                            }}>
+                                {element.children?.map(childId => (
+                                    <RenderNode
+                                        key={`${childId}-mirror`}
+                                        elementId={childId}
+                                        isMobileMirror={true}
+                                    />
+                                ))}
+                            </div>
                         </div>
                     );
                 })()}

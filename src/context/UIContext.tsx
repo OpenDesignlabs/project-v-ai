@@ -117,14 +117,6 @@ interface UIContextType {
     registerComponent: (id: string, config: any) => void;
     recentComponents: string[];
     addRecentComponent: (id: string) => void;
-
-    // ── Mobile mirror iframe ref ──────────────────────────────────────────────
-    // MIRROR-MEDIA-QUERY-1 [PERMANENT]: the mobile mirror frame is an <iframe>
-    // so its window.innerWidth = 390px, enabling Tailwind md: reflow.
-    // This ref is written by UIProvider once and shared to both ContainerPreview
-    // (which sets srcdoc + postMessages code) and RenderNode (which attaches it
-    // as the ref on the mirror <iframe> element). No prop-drilling needed.
-    mobileIframeRef: React.RefObject<HTMLIFrameElement | null>;
 }
 
 // ─── CONTEXT ─────────────────────────────────────────────────────────────────
@@ -135,9 +127,6 @@ const UIContext = createContext<UIContextType | null>(null);
 
 export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [selectedIdRaw, setSelectedIdRaw] = useState<string | null>(null);
-    // MIRROR-MEDIA-QUERY-1: stable ref to the mobile mirror iframe, shared via context.
-    // ContainerPreview sets srcdoc + posts code; RenderNode attaches it as ref.
-    const mobileIframeRef = useRef<HTMLIFrameElement>(null);
     // hoveredId removed from UIContext → now lives in HoverContext.
     // See src/context/HoverContext.tsx for rationale and implementation.
     // Item 2: selectedIds tracks the full multi-select set.
@@ -364,7 +353,6 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             addRecentComponent: (id) => setRecentComponents(p => [id, ...p.filter(i => i !== id)].slice(0, 8)),
             savePageViewport,
             restorePageViewport,
-            mobileIframeRef,
         }}>
             {children}
         </UIContext.Provider>
