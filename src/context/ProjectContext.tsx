@@ -38,7 +38,7 @@ import React, {
     createContext, useContext, useState, useEffect,
     useCallback, useRef, useMemo, type ReactNode,
 } from 'react';
-import type { VectraProject, Page, ApiRoute, HttpMethod, Framework, ProjectMeta } from '../types';
+import type { VectraProject, VectraNode, Page, ApiRoute, HttpMethod, Framework, ProjectMeta } from '../types';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 export const FRAMEWORK_KEY = 'vectra_framework';
 import { mergeAIContent } from '../utils/aiHelpers';
@@ -187,6 +187,10 @@ interface ProjectContextType {
 
     // ── AI ────────────────────────────────────────────────────────────────────
     runAI: (prompt: string) => Promise<string | undefined>;
+
+    // ── CF-1: Frame Picker ─────────────────────────────────────────────────────
+    /** Create a new artboard from a device preset, placed to the right of all existing frames. */
+    addFrame: (preset: import('../data/framePresets').FramePreset) => void;
 
     // ── Phase 6: Rust SWC compiler (exposed for ContainerPreview) ────────────
     /**
@@ -1194,6 +1198,65 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Note: elements intentionally omitted from deps — read via elementsRef
     // to prevent runAI from being recreated on every element change (60fps).
 
+    // CF-1: addFrame — places a new artboard from a FramePreset onto the
+    // active page, positioned to the right of all existing frames.
+    // FRAME-PLACEMENT-1 [PERMANENT]: new frames are placed at
+    //   left = max(existingFrame.left + existingFrame.width) + GAP
+    const addFrame = useCallback((preset: import('../data/framePresets').FramePreset) => {
+        const GAP = 120;
+        const TOP = 100;
+
+        // Find rightmost edge of all existing frames on the active page
+        const pageNode = elementsRef.current[activePageId];
+        let rightEdge = 100;
+        if (pageNode?.children) {
+            for (const cid of pageNode.children) {
+                const el = elementsRef.current[cid];
+                if (!el) continue;
+                const l = parseFloat(String(el.props?.style?.left || 0));
+                const w = parseFloat(String(el.props?.style?.width || 0));
+                if (l + w > rightEdge) rightEdge = l + w;
+            }
+        }
+
+        const newLeft = rightEdge + GAP;
+        const frameId = `frame-${preset.id}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+        const isMobile = preset.category === 'mobile';
+
+        const newFrame: VectraNode = {
+            id: frameId,
+            type: isMobile ? 'canvas' : 'webpage',
+            name: preset.label,
+            children: [],
+            props: {
+                layoutMode: 'canvas',
+                chromeName: preset.chromeName,
+                framePresetId: preset.id,
+                style: {
+                    position: 'absolute',
+                    left: `${newLeft}px`,
+                    top: `${TOP}px`,
+                    width: `${preset.width}px`,
+                    minHeight: `${preset.height}px`,
+                    backgroundColor: '#ffffff',
+                },
+            },
+        };
+
+        setElements(cur => {
+            const page = cur[activePageId];
+            if (!page) return cur;
+            return {
+                ...cur,
+                [frameId]: newFrame,
+                [activePageId]: {
+                    ...page,
+                    children: [...(page.children || []), frameId],
+                },
+            };
+        });
+    }, [activePageId, elementsRef, setElements]);
+
     // Direction D: updatePageSEO — merge-update SEO fields for a specific page.
     // All fields are optional; only the provided keys are changed.
     const updatePageSEO = useCallback(
@@ -1290,7 +1353,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             removeDataSource: (id) => setDataSources(p => p.filter(d => d.id !== id)),
             apiRoutes, addApiRoute, updateApiRoute, deleteApiRoute,
             framework, setFramework,
-            createNewProject, exitProject, runAI, compileComponent,
+            createNewProject, exitProject, runAI, compileComponent, addFrame,
             // ── Phase H ──────────────────────────────────────────────────────
             projectId, projectName, projectIndex,
             loadProject, renameProject, duplicateProject, deleteProject,

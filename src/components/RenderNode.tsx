@@ -10,6 +10,7 @@ import { TEMPLATES } from '../data/templates';
 import { COMPONENT_TYPES } from '../data/constants'; // M-6: for registry merge
 import { Resizer } from './Resizer';
 import { cn } from '../lib/utils';
+import { DeviceChrome } from './DeviceChrome';
 import { Loader2, Plus, PlayCircle, Zap } from 'lucide-react';
 // Preserve full framer-motion imports — AnimatePresence etc. are injected into
 // the AI sandbox so components that use them don’t crash with "undefined" errors.
@@ -29,56 +30,119 @@ import { SmartAccordion, SmartCarousel, SmartTable } from './smart/SmartComponen
 import * as LucideAll from 'lucide-react';
 
 // ── MOBILE MIRROR CSS INJECTION ──────────────────────────────────────────────────
-// Injected once at module load. Scoped to [data-vectra-mobile-mirror] so it
-// never affects the desktop frame or the rest of the app.
+// MIRROR-CSS-ESCAPE-1 [PERMANENT]:
+//   Tailwind JIT renders class="md:grid-cols-2" in the DOM (colon literal).
+//   In CSS, a colon in a class selector MUST be escaped as \:
+//   In a JS template literal, \\ produces a single \ in the output text.
+//   So to get the CSS text .md\:grid-cols-2 we write .md\\:grid-cols-2
+//   Previous version used single backslash — JS consumed it → invalid CSS.
 //
 // WHY CSS INJECTION (not iframe):
 //   An iframe isolates the browsing context (good for media queries) but breaks
-//   editor interactivity — you can’t select, drag, or edit elements inside it.
+//   editor interactivity — you can't select, drag, or edit elements inside it.
 //   Instead, we inject CSS overrides that force single-column layout within the
 //   mirror container. This lets RenderNode render real, selectable elements while
 //   the CSS ensures they stack as they would on a 390px mobile screen.
-//
-// WHAT IT COVERS:
-//   • Tailwind grid classes: grid-cols-2/3/4 → 1fr
-//   • Tailwind responsive grids: md:grid-cols-* → 1fr
-//   • Tailwind responsive flex: md:flex-row → column
-//   • Inline-style flex-row containers → column
-//   • All elements: max-width:100% + overflow-x:hidden
-//   • Images: fill width naturally
 (() => {
     const id = 'vectra-mobile-mirror-css';
     if (document.getElementById(id)) return;
     const style = document.createElement('style');
     style.id = id;
+    // NOTE: In this template literal, \\: produces the CSS text \:
+    // which is the correct escape for a colon in a CSS class selector.
     style.textContent = `
-/* ── Vectra Mobile Mirror — layout overrides ─────────────────────────── */
-[data-vectra-mobile-mirror] { overflow-x: hidden !important; }
-[data-vectra-mobile-mirror] * { max-width: 100% !important; box-sizing: border-box; }
+/* ── Vectra Mobile Mirror — scoped layout overrides ──────────────────── */
+[data-vectra-mobile-mirror] {
+  overflow-x: hidden !important;
+  width: 390px !important;
+}
 
-/* Grid: collapse all multi-column layouts to single column */
+/* Every child: constrain to container width */
+[data-vectra-mobile-mirror] * {
+  max-width: 100% !important;
+  box-sizing: border-box !important;
+  flex-shrink: 1 !important;
+}
+
+/* ── Grid collapse: static Tailwind classes ── */
 [data-vectra-mobile-mirror] .grid-cols-2,
 [data-vectra-mobile-mirror] .grid-cols-3,
 [data-vectra-mobile-mirror] .grid-cols-4,
 [data-vectra-mobile-mirror] .grid-cols-5,
-[data-vectra-mobile-mirror] .grid-cols-6 { grid-template-columns: 1fr !important; }
+[data-vectra-mobile-mirror] .grid-cols-6 {
+  grid-template-columns: 1fr !important;
+}
 
-/* Tailwind md: responsive overrides (escaped colon in CSS selector) */
-[data-vectra-mobile-mirror] .md\:grid-cols-2,
-[data-vectra-mobile-mirror] .md\:grid-cols-3,
-[data-vectra-mobile-mirror] .md\:grid-cols-4 { grid-template-columns: 1fr !important; }
-[data-vectra-mobile-mirror] .md\:flex-row { flex-direction: column !important; }
-[data-vectra-mobile-mirror] .md\:flex-row-reverse { flex-direction: column-reverse !important; }
-[data-vectra-mobile-mirror] .lg\:grid-cols-2,
-[data-vectra-mobile-mirror] .lg\:grid-cols-3,
-[data-vectra-mobile-mirror] .lg\:grid-cols-4 { grid-template-columns: 1fr !important; }
-[data-vectra-mobile-mirror] .lg\:flex-row { flex-direction: column !important; }
+/* ── Grid collapse: responsive prefixes (MIRROR-CSS-ESCAPE-1) ── */
+[data-vectra-mobile-mirror] .sm\\:grid-cols-2,
+[data-vectra-mobile-mirror] .sm\\:grid-cols-3,
+[data-vectra-mobile-mirror] .sm\\:grid-cols-4,
+[data-vectra-mobile-mirror] .md\\:grid-cols-2,
+[data-vectra-mobile-mirror] .md\\:grid-cols-3,
+[data-vectra-mobile-mirror] .md\\:grid-cols-4,
+[data-vectra-mobile-mirror] .lg\\:grid-cols-2,
+[data-vectra-mobile-mirror] .lg\\:grid-cols-3,
+[data-vectra-mobile-mirror] .lg\\:grid-cols-4,
+[data-vectra-mobile-mirror] .xl\\:grid-cols-2,
+[data-vectra-mobile-mirror] .xl\\:grid-cols-3 {
+  grid-template-columns: 1fr !important;
+}
 
-/* Flex containers: force wrap so items don't overflow horizontally */
+/* ── Flex direction: collapse horizontal → vertical ── */
+[data-vectra-mobile-mirror] .flex-row { flex-direction: column !important; }
+[data-vectra-mobile-mirror] .md\\:flex-row { flex-direction: column !important; }
+[data-vectra-mobile-mirror] .lg\\:flex-row { flex-direction: column !important; }
+[data-vectra-mobile-mirror] .xl\\:flex-row { flex-direction: column !important; }
+[data-vectra-mobile-mirror] .md\\:flex-row-reverse { flex-direction: column-reverse !important; }
+[data-vectra-mobile-mirror] .lg\\:flex-row-reverse { flex-direction: column-reverse !important; }
+
+/* ── Flex wrap — prevent horizontal overflow ── */
 [data-vectra-mobile-mirror] .flex { flex-wrap: wrap !important; }
 
-/* Images: natural width fill */
-[data-vectra-mobile-mirror] img { width: 100% !important; height: auto !important; object-fit: cover; }
+/* ── Responsive visibility ── */
+[data-vectra-mobile-mirror] .md\\:hidden,
+[data-vectra-mobile-mirror] .lg\\:hidden,
+[data-vectra-mobile-mirror] .xl\\:hidden { display: none !important; }
+[data-vectra-mobile-mirror] .md\\:block { display: block !important; }
+[data-vectra-mobile-mirror] .md\\:flex  { display: flex !important; }
+[data-vectra-mobile-mirror] .lg\\:block { display: block !important; }
+[data-vectra-mobile-mirror] .lg\\:flex  { display: flex !important; }
+
+/* ── Font size clamps — prevent 8xl/9xl text overflowing 390px ── */
+[data-vectra-mobile-mirror] .text-9xl,
+[data-vectra-mobile-mirror] .text-8xl,
+[data-vectra-mobile-mirror] .text-7xl { font-size: 2.5rem !important; line-height: 1.15 !important; }
+[data-vectra-mobile-mirror] .text-6xl,
+[data-vectra-mobile-mirror] .text-5xl { font-size: 2rem !important; line-height: 1.2 !important; }
+
+/* ── Padding clamps — remove huge desktop horizontal padding ── */
+[data-vectra-mobile-mirror] .px-20,
+[data-vectra-mobile-mirror] .px-24,
+[data-vectra-mobile-mirror] .px-28,
+[data-vectra-mobile-mirror] .px-32,
+[data-vectra-mobile-mirror] .px-40,
+[data-vectra-mobile-mirror] .px-48 { padding-left: 1rem !important; padding-right: 1rem !important; }
+[data-vectra-mobile-mirror] .md\\:px-20,
+[data-vectra-mobile-mirror] .lg\\:px-20,
+[data-vectra-mobile-mirror] .lg\\:px-24,
+[data-vectra-mobile-mirror] .xl\\:px-24 { padding-left: 1rem !important; padding-right: 1rem !important; }
+
+/* ── Gap clamps ── */
+[data-vectra-mobile-mirror] .gap-16,
+[data-vectra-mobile-mirror] .gap-20,
+[data-vectra-mobile-mirror] .gap-24 { gap: 1.5rem !important; }
+
+/* ── Images always fill width ── */
+[data-vectra-mobile-mirror] img {
+  width: 100% !important;
+  height: auto !important;
+  object-fit: cover !important;
+}
+
+/* ── Columns utility collapse ── */
+[data-vectra-mobile-mirror] .columns-2,
+[data-vectra-mobile-mirror] .columns-3,
+[data-vectra-mobile-mirror] .columns-4 { columns: 1 !important; }
 `;
     document.head.appendChild(style);
 })();
@@ -411,15 +475,19 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     const element = elements[elementId];
     const nodeRef = useRef<HTMLDivElement>(null);
 
-    // MIRROR-HEIGHT-1 [PERMANENT]: ResizeObserver tracks the desktop frame's
-    // actual rendered height so the mobile mirror auto-matches it as AI sections
-    // are added. The stored minHeight prop is a floor — not the rendered height.
-    const desktopHeightRef = useRef<number>(812);
+    // MIRROR-HEIGHT-2 [PERMANENT]: use useState + useRef so mirror wrapper
+    // re-renders when desktop frame grows. useRef alone updates silently —
+    // the mirror minHeight was computed once and never updated.
+    const desktopHeightRef = useRef<number>(812); // kept for non-render reads
+    const [mirrorHeight, setMirrorHeight] = useState<number>(812);
     useEffect(() => {
         if (element.type !== 'webpage' || isMobileMirror || !nodeRef.current) return;
         const ro = new ResizeObserver(entries => {
             const h = entries[0]?.contentRect.height;
-            if (h && h > 0) desktopHeightRef.current = h;
+            if (h && h > 100) {
+                desktopHeightRef.current = h;
+                setMirrorHeight(h); // triggers re-render → mirror minHeight updates
+            }
         });
         ro.observe(nodeRef.current);
         return () => ro.disconnect();
@@ -1014,6 +1082,14 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                         {element.name} · {Math.round(parseFloat(String(element.props.style?.width || 1440)))}px
                     </div>
                 )}
+                {/* CF-1: Device chrome overlay — browser bar, phone bezel, etc. */}
+                {(element.type === 'canvas' || element.type === 'webpage') && !isMobileMirror && element.props.chromeName && (
+                    <DeviceChrome
+                        chromeName={element.props.chromeName as string}
+                        width={parseFloat(String(element.props.style?.width || 1440))}
+                        height={parseFloat(String(element.props.style?.minHeight || 1080))}
+                    />
+                )}
                 {element.children?.map(childId => (
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
@@ -1039,12 +1115,15 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 left: `${desktopWidth + GAP}px`,
                                 top: 0,
                                 width: `${MIRROR_W}px`,
-                                minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
+                                minHeight: `${Math.max(mirrorHeight, 812)}px`,
                                 borderRadius: '16px',
                                 overflow: 'hidden',
                                 boxShadow: '0 8px 48px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.14)',
                                 border: '1px solid rgba(255,255,255,0.07)',
                                 backgroundColor: '#ffffff',
+                                // MIRROR-POINTER-1: read-only preview — clicks pass through
+                                // to canvas. Prevents coordinate-mismatch drags.
+                                pointerEvents: 'none',
                             }}
                         >
                             {/* Frame label */}
@@ -1052,6 +1131,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 position: 'absolute', top: 0, left: 0, zIndex: 20,
                                 background: 'rgba(0,0,0,0.65)',
                                 backdropFilter: 'blur(8px)',
+                                WebkitBackdropFilter: 'blur(8px)',
                                 color: '#a1a1aa',
                                 fontSize: '9px', padding: '3px 8px',
                                 borderBottomRightRadius: '8px',
@@ -1061,14 +1141,14 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 Mobile · {MIRROR_W}px
                             </div>
 
-                            {/* Sections stack via display:flex+column + module CSS overrides */}
+                            {/* Section stack — CSS overrides handle mobile reflow */}
                             <div style={{
                                 width: '100%',
-                                minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
+                                minHeight: `${Math.max(mirrorHeight, 812)}px`,
                                 display: 'flex',
                                 flexDirection: 'column',
                                 overflowX: 'hidden',
-                                paddingTop: '20px', // clear the label badge
+                                paddingTop: '20px',
                             }}>
                                 {element.children?.map(childId => (
                                     <RenderNode

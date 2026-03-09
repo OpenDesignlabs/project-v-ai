@@ -4,6 +4,7 @@ import { useUI } from '../context/UIContext';
 import { useEditor } from '../context/EditorContext';
 import { RenderNode } from './RenderNode';
 import { ContainerPreview } from './ContainerPreview';
+import { FramePicker } from './FramePicker';
 import { TEMPLATES } from '../data/templates';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 
@@ -95,7 +96,7 @@ const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ fr
 export const Canvas = () => {
     // ── Slow-changing project data ─────────────────────────────────────────────
     const {
-        elements, updateProject, activePageId, instantiateTemplate, history,
+        elements, updateProject, activePageId, instantiateTemplate, history, addFrame,
     } = useProject();
 
     // ── High-frequency viewport + UI state ────────────────────────────────────
@@ -588,6 +589,9 @@ export const Canvas = () => {
                     )}
                 </div>
             )}
+
+            {/* CF-1: Frame Picker — fixed to viewport bottom-left */}
+            {!previewMode && <FramePicker onAddFrame={addFrame} />}
         </div>
     );
 };
