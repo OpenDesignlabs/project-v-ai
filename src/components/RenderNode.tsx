@@ -337,7 +337,6 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         // instead of going through useEditor(), which double-subscribes RenderNode
         // to both ProjectContext AND UIContext for just this one field.
         componentRegistry: rawRegistry,
-        mobileIframeRef,
     } = useUI();
     // HOVER CONTEXT (perf isolation): hoveredId changes at 60fps pointer-move
     // frequency. Keeping it in a separate context means only the 2 nodes
@@ -964,15 +963,14 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
                 ))}
 
-                {/* ── Mobile Mirror Iframe ─────────────────────────────────
-                    MIRROR-MEDIA-QUERY-1 [PERMANENT]:
-                    Uses an <iframe> not a <div>. The iframe has its own
-                    browsing context — window.innerWidth = 390px inside it.
-                    Tailwind md: (min-width:768px) evaluates FALSE → full
-                    responsive reflow. Sections stack to single column,
-                    navbars collapse, grids go 1-col. Same approach as Plasmic.
-                    The iframe renders via ContainerPreview's buildAndInject
-                    postMessage — no extra compilation, same finalCode.
+                {/* ── Mobile Mirror Shell (visual chrome only) ────────────────
+                    MIRROR-BOOT-TIMING-1 [PERMANENT]:
+                    This div provides the visual frame chrome (border, shadow,
+                    label, background). The actual <iframe> is rendered and owned
+                    by ContainerPreview, which positions it over this element via
+                    getBoundingClientRect(). RenderNode must NOT own the iframe
+                    because ContainerPreview mounts before RenderNode renders the
+                    canvas — the boot srcdoc assignment would fire with ref=null.
                 ─────────────────────────────────────────────────────────────── */}
                 {element.type === 'webpage' && !isMobileMirror && !previewMode && (() => {
                     const desktopWidth = parseFloat(String(element.props.style?.width || 1440));
@@ -981,6 +979,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
 
                     return (
                         <div
+                            data-vectra-mirror-shell="true"
                             style={{
                                 position: 'absolute',
                                 left: `${desktopWidth + GAP}px`,
@@ -993,15 +992,14 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 border: '1px solid rgba(255,255,255,0.07)',
                                 backgroundColor: '#0a0a0a',
                                 pointerEvents: 'none',
-                                flexShrink: 0,
                             }}
                         >
-                            {/* Label */}
+                            {/* Label badge */}
                             <div style={{
                                 position: 'absolute', top: 0, left: 0, zIndex: 20,
-                                background: 'rgba(0,0,0,0.7)',
+                                background: 'rgba(0,0,0,0.75)',
                                 backdropFilter: 'blur(8px)',
-                                color: '#a1a1aa',
+                                color: '#71717a',
                                 fontSize: '9px', padding: '3px 8px',
                                 borderBottomRightRadius: '8px',
                                 fontFamily: 'monospace', textTransform: 'uppercase',
@@ -1009,20 +1007,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                             }}>
                                 Mobile · {MIRROR_W}px
                             </div>
-                            {/* THE IFRAME: window.innerWidth = 390px inside → md: = FALSE → reflow */}
-                            <iframe
-                                ref={mobileIframeRef}
-                                style={{
-                                    width: '100%',
-                                    height: '100%',
-                                    minHeight: `${Math.max(desktopHeightRef.current, 812)}px`,
-                                    border: 'none',
-                                    display: 'block',
-                                    pointerEvents: 'none',
-                                }}
-                                title="Mobile Preview"
-                                sandbox="allow-scripts allow-same-origin"
-                            />
+                            {/* iframe is overlaid here by ContainerPreview via position:fixed */}
                         </div>
                     );
                 })()}
@@ -1069,6 +1054,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             {...motionProps}
             id={isMobileMirror ? `${element.props.id}-mobile` : element.id}
             data-vid={element.id}         // Direction A Gap A2: enables [data-vid] CSS selectors from buildBreakpointCSS
+            {...(element.type === 'webpage' && !isMobileMirror ? { 'data-vectra-desktop-frame': 'true' } : {})}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

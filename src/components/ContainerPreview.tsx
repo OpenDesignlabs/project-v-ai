@@ -70,6 +70,12 @@ export const ContainerPreview = () => {
   const [iframeReady, setIframeReady] = useState(false);
   const [mobileIframeReady, setMobileIframeReady] = useState(false);
 
+  // MIRROR-BOOT-TIMING-1 [PERMANENT]: iframe is owned by ContainerPreview.
+  // We track the position of RenderNode's mirror shell div and overlay the
+  // iframe exactly on top of it using position:fixed.
+  const [mirrorRect, setMirrorRect] = useState<DOMRect | null>(null);
+  const mirrorRafRef = useRef<number>(0);
+
   // ── Listen for SHELL_READY signal from the iframe ─────────────────────────
   useEffect(() => {
     const handler = (ev: MessageEvent) => {
@@ -212,6 +218,36 @@ exports['default'] = function VectraPage(props) {
     if (mobileIframeReady) buildAndInject();
   }, [buildAndInject, mobileIframeReady]);
 
+  // ── Track mirror shell position at ~60fps via rAF ─────────────────────────
+  // The canvas pans and zooms constantly. The overlay iframe must stay aligned
+  // with the mirror shell div rendered by RenderNode inside the canvas.
+  useEffect(() => {
+    if (previewMode) { setMirrorRect(null); return; }
+
+    const tick = () => {
+      const shell = document.querySelector('[data-vectra-mirror-shell="true"]') as HTMLElement | null;
+      if (shell) {
+        const r = shell.getBoundingClientRect();
+        setMirrorRect(prev => {
+          if (!prev ||
+            Math.abs(prev.left - r.left) > 0.5 ||
+            Math.abs(prev.top - r.top) > 0.5 ||
+            Math.abs(prev.width - r.width) > 0.5 ||
+            Math.abs(prev.height - r.height) > 0.5) {
+            return r;
+          }
+          return prev;
+        });
+      } else {
+        setMirrorRect(prev => prev ? null : prev);
+      }
+      mirrorRafRef.current = requestAnimationFrame(tick);
+    };
+
+    mirrorRafRef.current = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(mirrorRafRef.current);
+  }, [previewMode]);
+
   // ── Toolbar ───────────────────────────────────────────────────────────────
   const DeviceButton = ({
     mode, icon: Icon,
@@ -238,91 +274,120 @@ exports['default'] = function VectraPage(props) {
     : 'h-9 border-b border-white/5 bg-zinc-900/60 backdrop-blur';
 
   return (
-    <div className={outerClasses}>
+    <>
+      <div className={outerClasses}>
 
-      {/* ── TOOLBAR ──────────────────────────────────────────────────── */}
-      <div className={cn('flex items-center justify-between px-3 shrink-0', toolbarClasses)}>
+        {/* ── TOOLBAR ──────────────────────────────────────────────────── */}
+        <div className={cn('flex items-center justify-between px-3 shrink-0', toolbarClasses)}>
 
-        {/* Left: traffic lights + URL bar */}
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="flex gap-1.5 mr-1">
-            <div className="w-2.5 h-2.5 rounded-full bg-red-500/30   border border-red-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/30 border border-yellow-500/60" />
-            <div className="w-2.5 h-2.5 rounded-full bg-green-500/30  border border-green-500/60" />
+          {/* Left: traffic lights + URL bar */}
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="flex gap-1.5 mr-1">
+              <div className="w-2.5 h-2.5 rounded-full bg-red-500/30   border border-red-500/60" />
+              <div className="w-2.5 h-2.5 rounded-full bg-yellow-500/30 border border-yellow-500/60" />
+              <div className="w-2.5 h-2.5 rounded-full bg-green-500/30  border border-green-500/60" />
+            </div>
+
+            {/* Fake address bar */}
+            <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 min-w-0">
+              <Zap size={10} className="text-blue-400 shrink-0" />
+              <span className="text-[11px] text-zinc-500 font-mono truncate">
+                instant-preview.vectra
+              </span>
+              {isCompiling && (
+                <Loader2 size={10} className="text-blue-400 animate-spin shrink-0" />
+              )}
+            </div>
           </div>
 
-          {/* Fake address bar */}
-          <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white/5 border border-white/10 min-w-0">
-            <Zap size={10} className="text-blue-400 shrink-0" />
-            <span className="text-[11px] text-zinc-500 font-mono truncate">
-              instant-preview.vectra
-            </span>
-            {isCompiling && (
-              <Loader2 size={10} className="text-blue-400 animate-spin shrink-0" />
+          {/* Right: actions */}
+          <div className="flex items-center gap-0.5">
+            {/* Device toggle buttons — only shown in fullscreen */}
+            {previewMode && (
+              <>
+                <DeviceButton mode="desktop" icon={Monitor} />
+                <DeviceButton mode="tablet" icon={Tablet} />
+                <DeviceButton mode="mobile" icon={Smartphone} />
+                <div className="w-px h-3 bg-white/10 mx-1" />
+              </>
+            )}
+
+            {/* Manual refresh — re-sends latest code */}
+            <button
+              onClick={() => buildAndInject()}
+              className="p-1.5 text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+              title="Refresh Preview"
+            >
+              <RefreshCw size={13} />
+            </button>
+
+            {/* Maximize / Minimize */}
+            <button
+              onClick={() => setPreviewMode(!previewMode)}
+              className="p-1.5 text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+              title={previewMode ? 'Minimize' : 'Expand'}
+            >
+              {previewMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+            </button>
+
+            {/* Close (fullscreen only) */}
+            {previewMode && (
+              <button
+                onClick={() => setPreviewMode(false)}
+                className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md transition-colors ml-0.5"
+              >
+                <X size={14} />
+              </button>
             )}
           </div>
         </div>
 
-        {/* Right: actions */}
-        <div className="flex items-center gap-0.5">
-          {/* Device toggle buttons — only shown in fullscreen */}
-          {previewMode && (
-            <>
-              <DeviceButton mode="desktop" icon={Monitor} />
-              <DeviceButton mode="tablet" icon={Tablet} />
-              <DeviceButton mode="mobile" icon={Smartphone} />
-              <div className="w-px h-3 bg-white/10 mx-1" />
-            </>
-          )}
-
-          {/* Manual refresh — re-sends latest code */}
-          <button
-            onClick={() => buildAndInject()}
-            className="p-1.5 text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-            title="Refresh Preview"
-          >
-            <RefreshCw size={13} />
-          </button>
-
-          {/* Maximize / Minimize */}
-          <button
-            onClick={() => setPreviewMode(!previewMode)}
-            className="p-1.5 text-zinc-500 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-            title={previewMode ? 'Minimize' : 'Expand'}
-          >
-            {previewMode ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
-          </button>
-
-          {/* Close (fullscreen only) */}
-          {previewMode && (
-            <button
-              onClick={() => setPreviewMode(false)}
-              className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md transition-colors ml-0.5"
-            >
-              <X size={14} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* ── IFRAME AREA ──────────────────────────────────────────────── */}
-      <div className={cn(
-        'flex-1 relative overflow-hidden',
-        previewMode ? 'bg-[#18181b]' : 'bg-[#09090b]'
-      )}>
-        {/* Device-width wrapper (only meaningful in fullscreen) */}
+        {/* ── IFRAME AREA ──────────────────────────────────────────────── */}
         <div className={cn(
-          'h-full mx-auto transition-all duration-300',
-          previewMode ? DEVICE_WIDTHS[device as DeviceMode] : 'w-full'
+          'flex-1 relative overflow-hidden',
+          previewMode ? 'bg-[#18181b]' : 'bg-[#09090b]'
         )}>
-          <iframe
-            ref={iframeRef}
-            className="w-full h-full border-0"
-            title="Instant Preview"
-            sandbox="allow-scripts allow-same-origin"
-          />
+          {/* Device-width wrapper (only meaningful in fullscreen) */}
+          <div className={cn(
+            'h-full mx-auto transition-all duration-300',
+            previewMode ? DEVICE_WIDTHS[device as DeviceMode] : 'w-full'
+          )}>
+            <iframe
+              ref={iframeRef}
+              className="w-full h-full border-0"
+              title="Instant Preview"
+              sandbox="allow-scripts allow-same-origin"
+            />
+          </div>
         </div>
       </div>
-    </div>
+
+      {/* ── Mobile Mirror Iframe Overlay ─────────────────────────────────
+          MIRROR-BOOT-TIMING-1 [PERMANENT]:
+          This iframe is always mounted in the DOM by ContainerPreview so that
+          the boot useEffect can set srcdoc immediately on mount.
+          It is visually positioned over the RenderNode mirror shell via
+          position:fixed + getBoundingClientRect() tracking at 60fps.
+          When no shell exists (empty canvas / previewMode), it hides offscreen.
+      ───────────────────────────────────────────────────────────────────── */}
+      <iframe
+        ref={mobileIframeRef}
+        title="Mobile Mirror"
+        sandbox="allow-scripts allow-same-origin"
+        style={{
+          position: 'fixed',
+          left: mirrorRect ? `${mirrorRect.left}px` : '-9999px',
+          top: mirrorRect ? `${mirrorRect.top}px` : '-9999px',
+          width: mirrorRect ? `${mirrorRect.width}px` : '390px',
+          height: mirrorRect ? `${mirrorRect.height}px` : '812px',
+          border: 'none',
+          zIndex: 10,
+          pointerEvents: 'none',
+          opacity: mirrorRect ? 1 : 0,
+          borderRadius: '16px',
+          overflow: 'hidden',
+        }}
+      />
+    </>
   );
 };
