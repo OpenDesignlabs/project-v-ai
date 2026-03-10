@@ -33,8 +33,11 @@ import type { WebContainer } from '@webcontainer/api';
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 
 export const PROXY_PORT = 3001;
-export const PROXY_HEALTH_URL = `http://localhost:${PROXY_PORT}/figma-proxy/health`;
-export const PROXY_BASE_URL = `http://localhost:${PROXY_PORT}/figma-proxy`;
+
+// FIG-WC-1 [PERMANENT]: WebContainer servers are NOT reachable via localhost:PORT
+// from the browser. Use the container-forwarded URL from the server-ready event.
+let proxyBaseUrl = `http://localhost:${PROXY_PORT}/figma-proxy`;
+export const getProxyBaseUrl = () => proxyBaseUrl;
 
 // Module-level singleton — prevents duplicate proxy processes
 let proxyBootPromise: Promise<void> | null = null;
@@ -137,7 +140,8 @@ server.listen(PORT, () => {
 export const checkProxyHealth = async (): Promise<boolean> => {
     if (!proxyIsRunning) return false;
     try {
-        const res = await fetch(PROXY_HEALTH_URL, { signal: AbortSignal.timeout(1500) });
+        const healthUrl = `${proxyBaseUrl}/health`;
+        const res = await fetch(healthUrl, { signal: AbortSignal.timeout(1500) });
         return res.ok;
     } catch {
         proxyIsRunning = false;
@@ -159,50 +163,47 @@ export const checkProxyHealth = async (): Promise<boolean> => {
  *
  * @throws Error if proxy does not become healthy within timeout.
  */
-export const ensureProxy = async (instance: WebContainer): Promise<void> => {
-    if (await checkProxyHealth()) return;
-    if (proxyBootPromise) return proxyBootPromise;
+export const ensureProxy = async (instance: WebContainer): Promise<string> => {
+    if (await checkProxyHealth()) return proxyBaseUrl;
+    if (proxyBootPromise) { await proxyBootPromise; return proxyBaseUrl; }
 
     proxyBootPromise = (async () => {
         try {
-            // Write proxy source to VFS root
             await instance.fs.writeFile('/proxy.mjs', PROXY_SOURCE);
             console.log('[figma-proxy] proxy.mjs written to VFS');
 
-            // Spawn Node process
-            const process = await instance.spawn('node', ['proxy.mjs']);
-
-            // Pipe output to console (non-blocking — fire and forget)
-            process.output.pipeTo(
-                new WritableStream({
-                    write: (chunk) => console.log('[figma-proxy]', chunk),
-                })
-            ).catch(() => { /* process ended — safe to ignore */ });
-
-            // Poll health endpoint — 20 attempts × 400 ms = 8 s max
-            const MAX_ATTEMPTS = 20;
-            for (let i = 0; i < MAX_ATTEMPTS; i++) {
-                await new Promise<void>(r => setTimeout(r, 400));
-                try {
-                    const res = await fetch(PROXY_HEALTH_URL, { signal: AbortSignal.timeout(800) });
-                    if (res.ok) {
-                        proxyIsRunning = true;
-                        console.log('[figma-proxy] ✅ Healthy');
-                        return;
+            // FIG-WC-1: subscribe to server-ready BEFORE spawning
+            const serverReadyPromise = new Promise<string>((resolve) => {
+                instance.on('server-ready', (port, url) => {
+                    if (port === PROXY_PORT) {
+                        console.log('[figma-proxy] server-ready:', port, url);
+                        resolve(url);
                     }
-                } catch {
-                    // Not ready yet — continue polling
-                }
-            }
+                });
+            });
 
-            throw new Error('Figma proxy did not become healthy within 8 seconds.');
+            const proc = await instance.spawn('node', ['proxy.mjs']);
+            proc.output.pipeTo(
+                new WritableStream({ write: (chunk) => console.log('[figma-proxy]', chunk) })
+            ).catch(() => { /* process ended */ });
+
+            // Race server-ready vs 10s timeout
+            const timeoutPromise = new Promise<string>((_, reject) =>
+                setTimeout(() => reject(new Error('Figma proxy did not fire server-ready within 10 seconds.')), 10000)
+            );
+
+            const resolvedUrl = await Promise.race([serverReadyPromise, timeoutPromise]);
+            proxyBaseUrl = resolvedUrl.replace(/\/$/, '') + '/figma-proxy';
+            proxyIsRunning = true;
+            console.log('[figma-proxy] ✅ Base URL:', proxyBaseUrl);
         } catch (err) {
-            proxyBootPromise = null; // Allow retry on next call
+            proxyBootPromise = null;
             throw err;
         }
     })();
 
-    return proxyBootPromise;
+    await proxyBootPromise;
+    return proxyBaseUrl;
 };
 
 /**
@@ -220,7 +221,7 @@ export const figmaFetch = async <T>(
     token: string,
     signal?: AbortSignal,
 ): Promise<T> => {
-    const url = `${PROXY_BASE_URL}${path}`;
+    const url = `${getProxyBaseUrl()}${path}`;
     const response = await fetch(url, {
         method: 'GET',
         headers: {

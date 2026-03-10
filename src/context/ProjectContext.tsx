@@ -954,6 +954,130 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return () => window.removeEventListener('vectra:figma-image-patch', handleImagePatch);
     }, []); // setElements is stable — empty deps is correct
 
+    // ── MCP-1 / MCP-WRITE-1: Stable refs for MCP command handler ──────────────
+    // The mcp-command listener uses [] deps (event bridge pattern). These refs
+    // mirror the latest versions of callbacks that may have identity changes
+    // (addPage depends on `pages`, deleteElement depends on `pushHistory`, etc).
+    const addPageRef = useRef(addPage);
+    useEffect(() => { addPageRef.current = addPage; }, [addPage]);
+    const deleteElementRef = useRef(deleteElement);
+    useEffect(() => { deleteElementRef.current = deleteElement; }, [deleteElement]);
+    // runAIRef initialized as null — populated by a sync effect after `runAI` useCallback (line ~1420).
+    // This avoids the forward-reference TS error (runAI is defined later in the file).
+    const runAIRef = useRef<((prompt: string) => Promise<string | undefined>) | null>(null);
+
+    // ── MCP-1 / MCP-WRITE-1: vectra:mcp-command event listener ───────────────
+    // MCPPanel dispatches this after receiving a __vectra_mutation__ from the SSE
+    // stream. We apply the mutation to React state here — never write to VFS directly.
+    useEffect(() => {
+        const handleMcpCommand = (e: Event) => {
+            const mutation = (e as CustomEvent).detail as Record<string, unknown>;
+            const { op } = mutation;
+
+            switch (op) {
+                case 'ADD_ELEMENT': {
+                    const { parentId, element } = mutation as {
+                        parentId: string;
+                        element: VectraNode;
+                    };
+                    if (!element?.id || !parentId) break;
+                    setElements(prev => {
+                        const parent = prev[parentId];
+                        if (!parent) {
+                            console.warn(`[MCP] ADD_ELEMENT: parent "${parentId}" not found`);
+                            return prev;
+                        }
+                        return {
+                            ...prev,
+                            [element.id]: element,
+                            [parentId]: {
+                                ...parent,
+                                children: [...(parent.children || []), element.id],
+                            },
+                        };
+                    });
+                    break;
+                }
+
+                case 'UPDATE_ELEMENT': {
+                    const { elementId, patch } = mutation as {
+                        elementId: string;
+                        patch: {
+                            name?: string;
+                            content?: string;
+                            style?: React.CSSProperties;
+                            className?: string;
+                            props?: Record<string, unknown>;
+                        };
+                    };
+                    if (!elementId) break;
+                    setElements(prev => {
+                        const el = prev[elementId];
+                        if (!el) {
+                            console.warn(`[MCP] UPDATE_ELEMENT: "${elementId}" not found`);
+                            return prev;
+                        }
+                        return {
+                            ...prev,
+                            [elementId]: {
+                                ...el,
+                                ...(patch.name !== undefined ? { name: patch.name } : {}),
+                                ...(patch.content !== undefined ? { content: patch.content } : {}),
+                                props: {
+                                    ...el.props,
+                                    ...(patch.className !== undefined ? { className: patch.className } : {}),
+                                    ...(patch.props || {}),
+                                    style: { ...el.props?.style, ...(patch.style || {}) },
+                                },
+                            },
+                        };
+                    });
+                    break;
+                }
+
+                case 'DELETE_ELEMENT': {
+                    const { elementId } = mutation as { elementId: string };
+                    if (elementId) deleteElementRef.current(elementId);
+                    break;
+                }
+
+                case 'ADD_PAGE': {
+                    const { name, slug } = mutation as { name: string; slug: string };
+                    if (name) addPageRef.current(name, slug);
+                    break;
+                }
+
+                case 'RUN_AI': {
+                    const { prompt, pageId } = mutation as { prompt: string; pageId?: string };
+                    if (!prompt) break;
+                    if (pageId) setActivePageId(pageId);
+                    runAIRef.current?.(prompt).catch(err =>
+                        console.warn('[MCP] RUN_AI failed:', err)
+                    );
+                    break;
+                }
+
+                case 'UPDATE_THEME': {
+                    const { theme: themeUpdates } = mutation as {
+                        theme: Partial<GlobalTheme>;
+                    };
+                    if (themeUpdates && typeof themeUpdates === 'object') {
+                        setTheme(prev => ({ ...prev, ...themeUpdates }));
+                    }
+                    break;
+                }
+
+                default:
+                    console.warn(`[MCP] Unknown op: ${op}`);
+            }
+
+            console.log(`[Vectra] MCP-1: Applied op "${op}"`);
+        };
+
+        window.addEventListener('vectra:mcp-command', handleMcpCommand);
+        return () => window.removeEventListener('vectra:mcp-command', handleMcpCommand);
+    }, []); // setElements, setTheme, setActivePageId are stable React setters
+
     // M-1 + S-7 FIX: use functional setElements to avoid stale closure on elements;
     // clone the appRoot node properly; and compute the fallback page from the list
     // BEFORE it is filtered (pages state hasn't flushed yet).
@@ -1296,6 +1420,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }, [pages, activePageId, pushHistory]);
     // Note: elements intentionally omitted from deps — read via elementsRef
     // to prevent runAI from being recreated on every element change (60fps).
+
+    // MCP-WRITE-1: populate runAIRef now that runAI is defined.
+    // runAIRef was initialized as null earlier (before runAI's useCallback)
+    // to avoid a forward-reference TS error.
+    useEffect(() => { runAIRef.current = runAI; }, [runAI]);
 
     // CF-1 — addFrame ─────────────────────────────────────────────────────────────
     // Spawns a mirror frame. ALL spawned frames have props.mirrorOf=sourceFrameId
