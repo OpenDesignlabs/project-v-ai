@@ -1198,39 +1198,56 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Note: elements intentionally omitted from deps — read via elementsRef
     // to prevent runAI from being recreated on every element change (60fps).
 
-    // CF-1: addFrame — places a new artboard from a FramePreset onto the
-    // active page, positioned to the right of all existing frames.
-    // FRAME-PLACEMENT-1 [PERMANENT]: new frames are placed at
-    //   left = max(existingFrame.left + existingFrame.width) + GAP
+    // CF-1 — addFrame ─────────────────────────────────────────────────────────────
+    // Spawns a mirror frame. ALL spawned frames have props.mirrorOf=sourceFrameId
+    // and empty children[]. RenderNode renders the SOURCE frame's children
+    // with width-aware CSS stacking via buildDeviceCSS().
+    //
+    // MIRROR-FRAME-1 [PERMANENT]:
+    //   spawned frames NEVER own children. element.children stays [].
+    //   runAI canvasNodeId search MUST skip nodes with props.mirrorOf.
+    //   ArtboardResizeHandle MUST be suppressed for mirror frames.
+    //
+    // FRAME-PLACEMENT-1 [PERMANENT]:
+    //   left = rightmost existing frame right-edge + 120px.
     const addFrame = useCallback((preset: import('../data/framePresets').FramePreset) => {
         const GAP = 120;
         const TOP = 100;
 
-        // Find rightmost edge of all existing frames on the active page
         const pageNode = elementsRef.current[activePageId];
+        let sourceFrameId = '';
         let rightEdge = 100;
+
         if (pageNode?.children) {
             for (const cid of pageNode.children) {
                 const el = elementsRef.current[cid];
                 if (!el) continue;
-                const l = parseFloat(String(el.props?.style?.left || 0));
-                const w = parseFloat(String(el.props?.style?.width || 0));
+                // Source = first webpage/canvas without mirrorOf
+                if (!sourceFrameId && (el.type === 'webpage' || el.type === 'canvas') && !el.props?.mirrorOf) {
+                    sourceFrameId = cid;
+                }
+                const l = parseFloat(String(el.props?.style?.left ?? 0)) || 0;
+                const w = parseFloat(String(el.props?.style?.width ?? 0)) || 0;
                 if (l + w > rightEdge) rightEdge = l + w;
             }
         }
 
+        if (!sourceFrameId) {
+            console.warn('[addFrame] No source frame found on active page.');
+            return;
+        }
+
         const newLeft = rightEdge + GAP;
         const frameId = `frame-${preset.id}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
-        const isMobile = preset.category === 'mobile';
 
         const newFrame: VectraNode = {
             id: frameId,
-            type: isMobile ? 'canvas' : 'webpage',
+            type: 'webpage',
             name: preset.label,
             children: [],
             props: {
                 layoutMode: 'canvas',
-                chromeName: preset.chromeName,
+                mirrorOf: sourceFrameId,
                 framePresetId: preset.id,
                 style: {
                     position: 'absolute',
@@ -1249,10 +1266,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             return {
                 ...cur,
                 [frameId]: newFrame,
-                [activePageId]: {
-                    ...page,
-                    children: [...(page.children || []), frameId],
-                },
+                [activePageId]: { ...page, children: [...(page.children ?? []), frameId] },
             };
         });
     }, [activePageId, elementsRef, setElements]);

@@ -10,7 +10,7 @@ import { TEMPLATES } from '../data/templates';
 import { COMPONENT_TYPES } from '../data/constants'; // M-6: for registry merge
 import { Resizer } from './Resizer';
 import { cn } from '../lib/utils';
-import { DeviceChrome } from './DeviceChrome';
+
 import { Loader2, Plus, PlayCircle, Zap } from 'lucide-react';
 // Preserve full framer-motion imports — AnimatePresence etc. are injected into
 // the AI sandbox so components that use them don’t crash with "undefined" errors.
@@ -150,6 +150,74 @@ import * as LucideAll from 'lucide-react';
 // ─── COMPILER WORKER (Singleton) ─────────────────────────────────────────────
 // Created ONCE at module level so Babel isn’t re-loaded on every component mount.
 // Classic worker mode: the worker uses importScripts('/babel.min.js') internally.
+
+// ── WIDTH-AWARE DEVICE MIRROR CSS ────────────────────────────────────────────
+// DEVICE-MIRROR-CSS-1 [PERMANENT]:
+//   Each spawned device frame gets a unique scope selector:
+//   [data-vectra-device-frame="frameId"].
+//   CSS is generated based on the frame's actual pixel width into three tiers:
+//
+//   MOBILE  (< 640px):  collapse ALL grids + ALL flex-row to column.
+//   TABLET  (640–1023px): collapse lg: and xl: prefixes only.
+//                       md: stays active (fires at 768px viewport, active here).
+//   DESKTOP (≥ 1024px): no stacking overrides — containment only.
+//
+//   WHY <style> TAG (not module injection):
+//   Frame IDs are dynamic (uuid). We can't pre-inject per-frame rules
+//   at module load time. The <style> tag is generated per-frame at render.
+//   Tailwind JIT processes classes before React commits — the <style> tag
+//   renders after JIT, so it always targets rules that already exist in the DOM.
+function buildDeviceCSS(frameId: string, frameWidth: number): string {
+    const sc = `[data-vectra-device-frame="${frameId}"]`;
+
+    // Desktop: containment only — no layout overrides
+    if (frameWidth >= 1024) {
+        return [
+            `${sc} { overflow-x: hidden !important; }`,
+            `${sc} * { max-width: 100% !important; box-sizing: border-box !important; }`,
+            `${sc} img { max-width: 100% !important; height: auto !important; }`,
+        ].join('\n');
+    }
+
+    // Tablet: collapse lg:/xl: only, keep md: (fires at 768px viewport — active at tablet)
+    if (frameWidth >= 640) {
+        return [
+            `${sc} { overflow-x: hidden !important; }`,
+            `${sc} * { max-width: 100% !important; box-sizing: border-box !important; flex-shrink: 1 !important; }`,
+            `${sc} .grid-cols-3, ${sc} .grid-cols-4, ${sc} .grid-cols-5, ${sc} .grid-cols-6 { grid-template-columns: repeat(2, 1fr) !important; }`,
+            `${sc} .lg\\:grid-cols-2, ${sc} .lg\\:grid-cols-3, ${sc} .lg\\:grid-cols-4, ${sc} .xl\\:grid-cols-2, ${sc} .xl\\:grid-cols-3 { grid-template-columns: 1fr !important; }`,
+            `${sc} .lg\\:flex-row, ${sc} .xl\\:flex-row { flex-direction: column !important; }`,
+            `${sc} .lg\\:flex-row-reverse { flex-direction: column-reverse !important; }`,
+            `${sc} .lg\\:hidden, ${sc} .xl\\:hidden { display: none !important; }`,
+            `${sc} .xl\\:px-24, ${sc} .xl\\:px-20 { padding-left: 2rem !important; padding-right: 2rem !important; }`,
+            `${sc} img { max-width: 100% !important; height: auto !important; }`,
+        ].join('\n');
+    }
+
+    // Mobile: collapse everything
+    return [
+        `${sc} { overflow-x: hidden !important; }`,
+        `${sc} * { max-width: 100% !important; box-sizing: border-box !important; flex-shrink: 1 !important; }`,
+        `${sc} .grid-cols-2, ${sc} .grid-cols-3, ${sc} .grid-cols-4, ${sc} .grid-cols-5, ${sc} .grid-cols-6 { grid-template-columns: 1fr !important; }`,
+        `${sc} .sm\\:grid-cols-2, ${sc} .sm\\:grid-cols-3, ${sc} .md\\:grid-cols-2, ${sc} .md\\:grid-cols-3, ${sc} .md\\:grid-cols-4 { grid-template-columns: 1fr !important; }`,
+        `${sc} .lg\\:grid-cols-2, ${sc} .lg\\:grid-cols-3, ${sc} .lg\\:grid-cols-4, ${sc} .xl\\:grid-cols-2, ${sc} .xl\\:grid-cols-3 { grid-template-columns: 1fr !important; }`,
+        `${sc} .flex-row { flex-direction: column !important; }`,
+        `${sc} .md\\:flex-row, ${sc} .lg\\:flex-row, ${sc} .xl\\:flex-row { flex-direction: column !important; }`,
+        `${sc} .md\\:flex-row-reverse { flex-direction: column-reverse !important; }`,
+        `${sc} .flex { flex-wrap: wrap !important; }`,
+        `${sc} .md\\:hidden, ${sc} .lg\\:hidden, ${sc} .xl\\:hidden { display: none !important; }`,
+        `${sc} .md\\:block { display: block !important; }`,
+        `${sc} .md\\:flex  { display: flex  !important; }`,
+        `${sc} .lg\\:block { display: block !important; }`,
+        `${sc} .text-9xl, ${sc} .text-8xl, ${sc} .text-7xl { font-size: 2.5rem !important; line-height: 1.15 !important; }`,
+        `${sc} .text-6xl, ${sc} .text-5xl { font-size: 2rem !important; line-height: 1.2 !important; }`,
+        `${sc} .px-20, ${sc} .px-24, ${sc} .px-28, ${sc} .px-32, ${sc} .px-40, ${sc} .px-48 { padding-left: 1rem !important; padding-right: 1rem !important; }`,
+        `${sc} .md\\:px-20, ${sc} .lg\\:px-20, ${sc} .lg\\:px-24 { padding-left: 1rem !important; padding-right: 1rem !important; }`,
+        `${sc} .gap-16, ${sc} .gap-20, ${sc} .gap-24 { gap: 1.5rem !important; }`,
+        `${sc} img { width: 100% !important; height: auto !important; object-fit: cover !important; }`,
+        `${sc} .columns-2, ${sc} .columns-3, ${sc} .columns-4 { columns: 1 !important; }`,
+    ].join('\n');
+}
 
 const compilerWorker = new Worker(
     new URL('../workers/compiler.worker.ts', import.meta.url),
@@ -1076,23 +1144,109 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
 
         content = (
             <>
-                {/* Desktop / artboard label */}
-                {(element.type === 'canvas' || element.type === 'webpage') && !previewMode && !isMobileMirror && (
-                    <div className="absolute top-0 left-0 bg-black/60 text-white text-[9px] px-2 py-0.5 rounded-br pointer-events-none z-10 font-mono tracking-wider uppercase">
-                        {element.name} · {Math.round(parseFloat(String(element.props.style?.width || 1440)))}px
-                    </div>
+                {/* Desktop / artboard label — with tier badge for mirror frames + CF-2 collapse toggle */}
+                {(element.type === 'canvas' || element.type === 'webpage') && !previewMode && !isMobileMirror && (() => {
+                    const isCollapsed = !!element.props.collapsed;
+                    const isMirrorFr = !!element.props.mirrorOf;
+                    const frameW = Math.round(parseFloat(String(element.props.style?.width || 1440)));
+                    const tier = frameW < 640 ? 'Mobile' : frameW < 1024 ? 'Tablet' : 'Desktop';
+                    const tierColor = frameW < 640 ? '#34d399' : frameW < 1024 ? '#a78bfa' : '#60a5fa';
+                    return (
+                        <div className="absolute top-0 left-0 z-[60] flex items-center" style={{ pointerEvents: 'none' }}>
+                            <div style={{
+                                display: 'flex', alignItems: 'center', gap: '6px',
+                                background: 'rgba(0,0,0,0.72)',
+                                backdropFilter: 'blur(6px)',
+                                padding: '3px 6px 3px 8px',
+                                borderBottomRightRadius: '7px',
+                                fontFamily: 'monospace', fontSize: '9px',
+                                letterSpacing: '0.07em', textTransform: 'uppercase',
+                                pointerEvents: 'auto', userSelect: 'none',
+                            }}>
+                                <span style={{ color: '#a1a1aa' }}>{element.name} · {frameW}px</span>
+                                {isMirrorFr && (
+                                    <span style={{
+                                        fontSize: '8px', fontWeight: 700,
+                                        color: tierColor,
+                                        background: `${tierColor}18`,
+                                        border: `1px solid ${tierColor}40`,
+                                        padding: '1px 5px', borderRadius: '4px',
+                                    }}>{tier}</span>
+                                )}
+                                {/* CF-2: Collapse toggle */}
+                                <button
+                                    onPointerDown={e => e.stopPropagation()}
+                                    onClick={e => {
+                                        e.stopPropagation();
+                                        updateProject({
+                                            ...elements,
+                                            [elementId]: { ...element, props: { ...element.props, collapsed: !isCollapsed } },
+                                        });
+                                    }}
+                                    title={isCollapsed ? 'Expand frame' : 'Collapse frame'}
+                                    style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '1px 2px', color: '#71717a', display: 'flex', alignItems: 'center' }}
+                                >
+                                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none"
+                                        style={{ transform: isCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.18s' }}>
+                                        <path d="M2 3.5L5 6.5L8 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                    );
+                })()}
+
+                {/* ── Mirror frame or regular artboard children ───────────────────
+                    MIRROR-FRAME-1: if element.props.mirrorOf is set, this frame
+                    is a device mirror. Render the SOURCE frame's children, not
+                    our own (element.children is always [] for mirror frames).
+                    Scoped CSS stacking is injected via buildDeviceCSS().
+                    Full pointer events — user can select/drag in this frame.
+                ─────────────────────────────────────────────────────────────── */}
+                {element.props.mirrorOf ? (() => {
+                    const sourceFrame = elements[element.props.mirrorOf as string];
+                    const sourceChildren = sourceFrame?.children ?? [];
+                    const frameWidth = parseFloat(String(element.props.style?.width ?? 390));
+
+                    if (sourceChildren.length === 0) {
+                        return (
+                            <div style={{
+                                width: '100%', height: '100%', minHeight: '200px',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                color: '#94a3b8', fontSize: '11px', fontFamily: 'monospace',
+                                flexDirection: 'column', gap: '6px',
+                            }}>
+                                <span style={{ fontSize: '20px', opacity: 0.4 }}>⊡</span>
+                                <span>Add content to the source frame</span>
+                            </div>
+                        );
+                    }
+
+                    return (
+                        <>
+                            {/* Width-aware CSS stacking scoped to this frame's ID */}
+                            <style dangerouslySetInnerHTML={{ __html: buildDeviceCSS(elementId, frameWidth) }} />
+                            <div style={{ width: '100%', minHeight: '100%', display: 'flex', flexDirection: 'column', overflowX: 'hidden' }}>
+                                {sourceChildren.map(childId => (
+                                    <RenderNode
+                                        key={`${childId}-${elementId}`}
+                                        elementId={childId}
+                                        isMobileMirror={true}
+                                    />
+                                ))}
+                            </div>
+                        </>
+                    );
+                })() : (
+                    // Regular (non-mirror) artboard — renders its own children
+                    element.children?.map(childId => (
+                        <RenderNode
+                            key={isMobileMirror ? `${childId}-mirror` : childId}
+                            elementId={childId}
+                            isMobileMirror={isMobileMirror}
+                        />
+                    ))
                 )}
-                {/* CF-1: Device chrome overlay — browser bar, phone bezel, etc. */}
-                {(element.type === 'canvas' || element.type === 'webpage') && !isMobileMirror && element.props.chromeName && (
-                    <DeviceChrome
-                        chromeName={element.props.chromeName as string}
-                        width={parseFloat(String(element.props.style?.width || 1440))}
-                        height={parseFloat(String(element.props.style?.minHeight || 1080))}
-                    />
-                )}
-                {element.children?.map(childId => (
-                    <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />
-                ))}
 
                 {/* ── Mobile Mirror ───────────────────────────────────────────────────────
                     Renders the same RenderNode children at 390px width.
@@ -1205,6 +1359,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             id={isMobileMirror ? `${element.props.id}-mobile` : element.id}
             data-vid={element.id}         // Direction A Gap A2: enables [data-vid] CSS selectors from buildBreakpointCSS
             {...(element.type === 'webpage' && !isMobileMirror ? { 'data-vectra-desktop-frame': 'true' } : {})}
+            {...(element.props.mirrorOf ? { 'data-vectra-device-frame': elementId } : {})}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

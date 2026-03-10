@@ -562,10 +562,13 @@ export const Canvas = () => {
                     <CanvasErrorBoundary onUndo={history.undo}>
                         <div style={{ width: '100%', maxWidth: '1440px', minHeight: '100vh', height: 'auto', display: 'flex', flexDirection: 'column', position: 'relative' }}>
                             <RenderNode elementId={activePageId} key={`editor-${activePageId}`} />
-                            {/* Item 3: per-frame resize handles */}
+                            {/* Item 3: per-frame resize handles — suppressed for mirror & collapsed frames */}
                             {(elements[activePageId]?.children || []).map(cid => {
-                                const t = elements[cid]?.type;
-                                if (t !== 'webpage' && t !== 'canvas') return null;
+                                const el = elements[cid];
+                                if (!el) return null;
+                                if (el.type !== 'webpage' && el.type !== 'canvas') return null;
+                                if (el.props?.mirrorOf) return null;   // CF-1: mirror frames skip
+                                if (el.props?.collapsed) return null;  // CF-2: collapsed frames skip
                                 return <ArtboardResizeHandle key={`arh-${cid}`} frameId={cid} zoom={zoom} />;
                             })}
                         </div>
