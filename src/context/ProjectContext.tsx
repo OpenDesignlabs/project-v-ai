@@ -166,6 +166,12 @@ interface ProjectContextType {
     deletePage: (id: string) => void;
     switchPage: (pageId: string) => void;
     /**
+     * STI-PAGE-1 [PERMANENT]: Atomic page import.
+     * Merges `nodes` into elements, registers the page, sets it active.
+     * Does NOT create an orphan canvas node — rootId IS the canvas.
+     */
+    importPage: (name: string, slug: string, nodes: VectraProject, rootId: string) => void;
+    /**
      * Direction D — SEO Control
      * Merge-update the SEO fields for a specific page.
      * Only the fields provided are changed — all others are preserved.
@@ -887,6 +893,67 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setActivePageId(pageId);
     }, [pages]); // pages needed for slug uniqueness check
 
+    // ── STI-PAGE-1: Atomic import of a pre-parsed page ────────────────────────
+    // Unlike addPage(), this does NOT create an empty canvas node.
+    // Caller has already built the full node tree; rootId is the canvas.
+    const importPage = useCallback((
+        name: string,
+        slug: string,
+        nodes: VectraProject,
+        rootId: string,
+    ) => {
+        const pageId = `page-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
+
+        // Build the page node pointing directly at the imported canvas root
+        const pageNode = {
+            id: pageId, type: 'page' as const, name,
+            children: [rootId],
+            props: { className: 'w-full h-full relative', style: { width: '100%', height: '100%' } },
+        };
+
+        // Single setElements call: merge all imported nodes + page node + wire app-root
+        setElements(prev => {
+            const appRoot = prev['application-root'];
+            return {
+                ...prev,
+                ...nodes,
+                [pageId]: pageNode,
+                ...(appRoot ? {
+                    'application-root': { ...appRoot, children: [...(appRoot.children || []), pageId] },
+                } : {}),
+            };
+        });
+
+        // Register page in pages[] with slug uniqueness check
+        setPages(prev => {
+            const existingSlugs = new Set(prev.map(p => p.slug));
+            let finalSlug = slug;
+            let counter = 2;
+            while (existingSlugs.has(finalSlug)) finalSlug = `${slug}-${counter++}`;
+            return [...prev, { id: pageId, name, slug: finalSlug, rootId: pageId }];
+        });
+
+        // Navigate to the new page
+        setActivePageId(pageId);
+
+        console.log(`[Vectra] STI-1: Imported page "${name}" → ${pageId} (${Object.keys(nodes).length} nodes)`);
+    }, []); // no deps — only stable setState setters used inside
+
+    // ── FIG-1: Async image-fill patch listener ────────────────────────────────
+    // FigmaPanel dispatches 'vectra:figma-image-patch' after the Figma Images API
+    // resolves CDN URLs for nodes that had IMAGE fills at import time.
+    // We merge only the patched nodes — never blow away the entire tree.
+    // skipHistory intentionally: image-fill resolution is not user-undoable.
+    useEffect(() => {
+        const handleImagePatch = (e: Event) => {
+            const { nodes: patchedNodes } = (e as CustomEvent<{ nodes: VectraProject }>).detail;
+            setElements(prev => ({ ...prev, ...patchedNodes }));
+            console.log(`[Vectra] FIG-1: Applied image fill patch — ${Object.keys(patchedNodes).length} nodes`);
+        };
+        window.addEventListener('vectra:figma-image-patch', handleImagePatch);
+        return () => window.removeEventListener('vectra:figma-image-patch', handleImagePatch);
+    }, []); // setElements is stable — empty deps is correct
+
     // M-1 + S-7 FIX: use functional setElements to avoid stale closure on elements;
     // clone the appRoot node properly; and compute the fallback page from the list
     // BEFORE it is filtered (pages state hasn't flushed yet).
@@ -1405,7 +1472,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             instantiateTemplate: instantiateTemplateTS,
             parentMap,
             pages, activePageId, setActivePageId, realPageId: activePageId,
-            addPage, deletePage, switchPage, updatePageSEO,
+            addPage, deletePage, switchPage, importPage, updatePageSEO,
             // S-2 FIX: expose undo/redo as flat stable values in addition to
             // the deprecated `history` shape (kept for back-compat).
             // `history: { undo, redo }` re-created a new object every render,

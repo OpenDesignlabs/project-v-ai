@@ -327,7 +327,7 @@ export interface EditorContextType {
     addAsset: (file: File) => void;
     globalStyles: GlobalStyles;
     setGlobalStyles: React.Dispatch<React.SetStateAction<GlobalStyles>>;
-    addPage: (name: string) => void;
+    addPage: (name: string, slug?: string) => void;
     deletePage: (id: string) => void;
     updateProject: (newElements: VectraProject) => void;
     deleteElement: (id: string) => void;
@@ -353,6 +353,10 @@ export interface EditorContextType {
     addDataSource: (ds: DataSource) => void;
     removeDataSource: (id: string) => void;
     updateDataSource: (id: string, patch: Partial<Omit<DataSource, 'id'>>) => void;
+    switchPage: (pageId: string) => void;
+    /** STI-PAGE-1: Atomic import — merges nodes, registers page, navigates to it. */
+    importPage: (name: string, slug: string, nodes: VectraProject, rootId: string) => void;
+    pages: any[];
     realPageId: string;
     isMagicBarOpen: boolean;
     setMagicBarOpen: React.Dispatch<React.SetStateAction<boolean>>;

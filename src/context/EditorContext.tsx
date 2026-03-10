@@ -189,6 +189,7 @@ export const useEditor = () => {
         addPage: project.addPage,
         deletePage: project.deletePage,
         switchPage: project.switchPage,
+        importPage: project.importPage,
         updatePageSEO: project.updatePageSEO,  // Direction D
         history: project.history,
         undo: project.undo,   // S-2: flat stable reference

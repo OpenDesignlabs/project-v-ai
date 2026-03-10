@@ -6,13 +6,15 @@ import {
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
     Trash2, Hexagon, Palette, Wand2, Database, Globe,
-    Server, Zap, CheckCircle2, Rocket, Link2,
+    Server, Zap, CheckCircle2, Rocket, Link2, FileArchive, Figma,
     Send, TerminalSquare, ChevronUp,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
 import { DeployPanel } from './DeployPanel';
 import { LoaderPanel } from './panels/LoaderPanel';
 import { DataPanel } from './panels/DataPanel';
+import { StitchPanel } from './panels/StitchPanel';
+import { FigmaPanel } from './panels/FigmaPanel';
 import { cn } from '../lib/utils';
 import { processImportedCode, generateComponentId } from '../utils/importHelpers';
 import { TEMPLATES, type TemplateConfig } from '../data/templates';
@@ -893,6 +895,18 @@ export const LeftSidebar = () => {
                     onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('deploy'); }}
                     tooltip="Deploy"
                 />
+                <NavButton
+                    icon={FileArchive}
+                    active={activePanel === 'stitch'}
+                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('stitch'); }}
+                    tooltip="Stitch Import (ZIP)"
+                />
+                <NavButton
+                    icon={Figma}
+                    active={activePanel === 'figma'}
+                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('figma'); }}
+                    tooltip="Figma Import"
+                />
             </div>
 
             {/* --- PANELS --- */}
@@ -1224,6 +1238,40 @@ export const LeftSidebar = () => {
                     </div>
                     <div className="flex-1 overflow-hidden">
                         <DataPanel />
+                    </div>
+                </div>
+            )}
+
+            {activePanel === 'stitch' && (
+                <div className="absolute left-[60px] top-0 bottom-0 w-[320px] bg-[#1a1a1c] border-r border-[#2c2c2e] shadow-xl z-40 flex flex-col">
+                    <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#2c2c2e] shrink-0">
+                        <div className="flex items-center gap-2">
+                            <FileArchive size={13} className="text-blue-400" />
+                            <span className="text-[10px] font-bold text-white uppercase tracking-wider">Stitch Import</span>
+                        </div>
+                        <button onClick={() => setActivePanel(null)} className="text-[#48484a] hover:text-white transition-colors">
+                            <X size={14} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <StitchPanel />
+                    </div>
+                </div>
+            )}
+
+            {activePanel === 'figma' && (
+                <div className="absolute left-[60px] top-0 bottom-0 w-[320px] bg-[#1a1a1c] border-r border-[#2c2c2e] shadow-xl z-40 flex flex-col">
+                    <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#2c2c2e] shrink-0">
+                        <div className="flex items-center gap-2">
+                            <Figma size={13} className="text-purple-400" />
+                            <span className="text-[10px] font-bold text-white uppercase tracking-wider">Figma Import</span>
+                        </div>
+                        <button onClick={() => setActivePanel(null)} className="text-[#48484a] hover:text-white transition-colors">
+                            <X size={14} />
+                        </button>
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <FigmaPanel />
                     </div>
                 </div>
             )}
