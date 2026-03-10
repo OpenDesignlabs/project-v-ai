@@ -30,7 +30,8 @@ dist-ssr
 vectra-engine/target/
 vectra-engine/*.log
 target/
-pkg/
+vectra-engine/pkg/
+docs/
 wasm-pack.log
 
 # Private Notes
