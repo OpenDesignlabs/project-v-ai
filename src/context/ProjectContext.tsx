@@ -1218,17 +1218,38 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         let sourceFrameId = '';
         let rightEdge = 100;
 
+        // AUTO_MIRROR constants — must match RenderNode.tsx exactly.
+        // The auto-mobile-mirror div is rendered by RenderNode beside every
+        // source frame (mirrorOf === undefined). It is DOM-only — NOT a node
+        // in elementsRef. We must add its footprint manually so spawned frames
+        // don't land on top of it.
+        // MIRROR-POSITION-2 [PERMANENT]: mirror left = desktopWidth + 80px (GAP).
+        const AUTO_MIRROR_GAP = 80;   // matches RenderNode: const GAP = 80
+        const AUTO_MIRROR_W = 390;  // matches RenderNode: const MIRROR_W = 390
+
         if (pageNode?.children) {
             for (const cid of pageNode.children) {
                 const el = elementsRef.current[cid];
                 if (!el) continue;
+
                 // Source = first webpage/canvas without mirrorOf
                 if (!sourceFrameId && (el.type === 'webpage' || el.type === 'canvas') && !el.props?.mirrorOf) {
                     sourceFrameId = cid;
                 }
+
                 const l = parseFloat(String(el.props?.style?.left ?? 0)) || 0;
                 const w = parseFloat(String(el.props?.style?.width ?? 0)) || 0;
-                if (l + w > rightEdge) rightEdge = l + w;
+                let frameRight = l + w;
+
+                // FRAME-PLACEMENT-1 FIX: if this is a source frame (no mirrorOf),
+                // RenderNode renders an auto-mobile-mirror div to its right.
+                // That div is invisible to elementsRef — extend frameRight manually
+                // to clear it so the new frame spawns after it.
+                if ((el.type === 'webpage' || el.type === 'canvas') && !el.props?.mirrorOf) {
+                    frameRight = l + w + AUTO_MIRROR_GAP + AUTO_MIRROR_W;
+                }
+
+                if (frameRight > rightEdge) rightEdge = frameRight;
             }
         }
 
