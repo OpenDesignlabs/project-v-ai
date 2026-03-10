@@ -5,13 +5,14 @@ import {
     Plus, Layers, File, Image as ImageIcon,
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
-    Trash2, Hexagon, Palette, Wand2, Database, Globe, Braces,
+    Trash2, Hexagon, Palette, Wand2, Database, Globe,
     Server, Zap, CheckCircle2, Rocket, Link2,
     Send, TerminalSquare, ChevronUp,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
 import { DeployPanel } from './DeployPanel';
 import { LoaderPanel } from './panels/LoaderPanel';
+import { DataPanel } from './panels/DataPanel';
 import { cn } from '../lib/utils';
 import { processImportedCode, generateComponentId } from '../utils/importHelpers';
 import { TEMPLATES, type TemplateConfig } from '../data/templates';
@@ -641,7 +642,6 @@ export const LeftSidebar = () => {
         pages, addPage, switchPage, deletePage, realPageId,
         updatePageSEO,
         theme, updateTheme, selectedId, elements, setElements,
-        dataSources, addDataSource, removeDataSource,
         apiRoutes, addApiRoute, updateApiRoute, deleteApiRoute,
         isInsertDrawerOpen, toggleInsertDrawer,
         framework,
@@ -661,8 +661,7 @@ export const LeftSidebar = () => {
     const [assetSearch, setAssetSearch] = useState('');
     const [unsplashImages, setUnsplashImages] = useState<{ id: number; url: string }[]>([]);
     const [loadingAssets, setLoadingAssets] = useState(false);
-    const [newApiUrl, setNewApiUrl] = useState('');
-    const [isFetchingApi, setIsFetchingApi] = useState(false);
+
     const fileInputRef = useRef<HTMLInputElement>(null);
     // Phase D: Backend panel local state
     const [selectedRouteId, setSelectedRouteId] = useState<string | null>(null);
@@ -1216,75 +1215,15 @@ export const LeftSidebar = () => {
             )}
 
             {activePanel === 'data' && (
-                <div className="absolute left-[60px] top-0 bottom-0 w-[300px] bg-[#252526] border-r border-[#3f3f46] shadow-xl z-40 flex flex-col">
-                    <div className="p-4 border-b border-[#3f3f46] flex items-center justify-between">
-                        <h2 className="font-bold text-[#cccccc] text-xs uppercase tracking-wide flex items-center gap-2">
-                            <Database size={14} className="text-emerald-400" /> Data Sources
-                        </h2>
-                        <button onClick={() => setActivePanel(null)} className="text-[#999] hover:text-white"><X size={16} /></button>
+                <div className="absolute left-[60px] top-0 bottom-0 w-[300px] bg-[#1a1a1c] border-r border-[#2c2c2e] shadow-xl z-40 flex flex-col">
+                    <div className="flex items-center justify-between px-4 pt-3 pb-2 border-b border-[#2c2c2e] shrink-0">
+                        <span className="text-[10px] font-bold text-[#636366] uppercase tracking-wider">Data</span>
+                        <button onClick={() => setActivePanel(null)} className="text-[#48484a] hover:text-white transition-colors">
+                            <X size={14} />
+                        </button>
                     </div>
-
-                    <div className="p-3 bg-[#2d2d2d] border-b border-[#3f3f46]">
-                        <div className="flex gap-2">
-                            <input
-                                value={newApiUrl}
-                                onChange={(e) => setNewApiUrl(e.target.value)}
-                                placeholder="https://api.example.com/data"
-                                className="flex-1 bg-[#333] border border-[#444] rounded px-2 py-1 text-xs text-white outline-none focus:border-[#007acc]"
-                            />
-                            <button
-                                onClick={async () => {
-                                    if (!newApiUrl) return;
-                                    setIsFetchingApi(true);
-                                    try {
-                                        const res = await fetch(newApiUrl);
-                                        const d = await res.json();
-                                        const sample = Array.isArray(d) ? d[0] : d;
-                                        addDataSource({
-                                            id: `ds-${Date.now()}`,
-                                            name: newApiUrl.split('/').pop() || 'API',
-                                            url: newApiUrl,
-                                            method: 'GET',
-                                            data: sample
-                                        });
-                                        setNewApiUrl('');
-                                    } catch (e) {
-                                        alert("CORS or Network Error: Connection to external API failed.");
-                                    } finally {
-                                        setIsFetchingApi(false);
-                                    }
-                                }}
-                                disabled={isFetchingApi || !newApiUrl}
-                                className="bg-[#333] hover:bg-[#444] text-white p-1.5 rounded border border-[#444]"
-                            >
-                                {isFetchingApi ? <Loader2 size={12} className="animate-spin" /> : <Plus size={12} />}
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                        {dataSources.map(ds => (
-                            <div key={ds.id} className="mb-4 bg-[#2d2d2d] rounded border border-[#3f3f46] overflow-hidden">
-                                <div className="p-2 bg-[#333] flex items-center justify-between border-b border-[#3f3f46]">
-                                    <div className="flex items-center gap-2 text-xs font-bold text-[#ccc]">
-                                        <Globe size={12} className="text-[#007acc]" />
-                                        {ds.name}
-                                    </div>
-                                    <button onClick={() => removeDataSource(ds.id)} className="text-[#666] hover:text-red-400"><Trash2 size={10} /></button>
-                                </div>
-                                <div className="p-2">
-                                    <div className="text-[9px] text-[#666] mb-2 uppercase font-bold flex items-center gap-1">
-                                        <Braces size={9} /> Response Schema
-                                    </div>
-                                    <JsonTree data={ds.data} setDragData={setDragData} />
-                                </div>
-                            </div>
-                        ))}
-                        {dataSources.length === 0 && (
-                            <div className="text-center text-[#666] text-xs mt-4 px-4 leading-relaxed">
-                                Connect external REST APIs to bind live data to your components.
-                            </div>
-                        )}
+                    <div className="flex-1 overflow-hidden">
+                        <DataPanel />
                     </div>
                 </div>
             )}

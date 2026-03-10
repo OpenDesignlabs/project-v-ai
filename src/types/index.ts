@@ -270,12 +270,28 @@ export type DeviceType = 'desktop' | 'tablet' | 'mobile';
 // View Mode: Visual (Design) vs Skeleton (Layout)
 export type ViewMode = 'visual' | 'skeleton';
 
+// DB-1: Extended DataSource — mirrors ProjectContext's authoritative copy.
+export type DataSourceKind = 'rest' | 'supabase' | 'planetscale';
+
 export interface DataSource {
     id: string;
     name: string;
+    kind?: DataSourceKind;
     url: string;
     method: 'GET' | 'POST';
-    data: any; // The sample JSON response schema
+    headers?: Record<string, string>;
+    body?: string;
+    supabaseAnonKey?: string;
+    supabaseTable?: string;
+    psHost?: string;
+    psUsername?: string;
+    psPassword?: string;
+    psDatabase?: string;
+    envVarMap?: Record<string, string>;
+    data: any;
+    status?: 'idle' | 'connecting' | 'connected' | 'error';
+    errorMessage?: string;
+    lastFetchedAt?: string;
 }
 
 export interface EditorContextType {
@@ -336,6 +352,7 @@ export interface EditorContextType {
     dataSources: DataSource[];
     addDataSource: (ds: DataSource) => void;
     removeDataSource: (id: string) => void;
+    updateDataSource: (id: string, patch: Partial<Omit<DataSource, 'id'>>) => void;
     realPageId: string;
     isMagicBarOpen: boolean;
     setMagicBarOpen: React.Dispatch<React.SetStateAction<boolean>>;

@@ -199,6 +199,7 @@ export const useEditor = () => {
         dataSources: project.dataSources,
         addDataSource: project.addDataSource,
         removeDataSource: project.removeDataSource,
+        updateDataSource: project.updateDataSource,
         apiRoutes: project.apiRoutes,
         addApiRoute: project.addApiRoute,
         updateApiRoute: project.updateApiRoute,

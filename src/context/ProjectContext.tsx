@@ -84,13 +84,43 @@ export interface GlobalTheme {
     font: string;
 }
 
+// ─── DB-1: DataSource type extended ──────────────────────────────────────────
+// All new fields optional — backward compat with existing { id, name, url, method, data }.
+export type DataSourceKind = 'rest' | 'supabase' | 'planetscale';
 export interface DataSource {
     id: string;
     name: string;
+    /** Connection type. Defaults to 'rest' when absent (backward compat). */
+    kind?: DataSourceKind;
     url: string;
     method: 'GET' | 'POST';
+    /** Custom request headers (REST). */
+    headers?: Record<string, string>;
+    /** JSON body string for POST requests (REST). */
+    body?: string;
+    /** Supabase anon/public key — DS-ENV-1: written to .env.local, not displayed. */
+    supabaseAnonKey?: string;
+    /** Active Supabase table name for schema introspection. */
+    supabaseTable?: string;
+    /** PlanetScale host. */
+    psHost?: string;
+    /** PlanetScale username. */
+    psUsername?: string;
+    /** PlanetScale password — DS-ENV-1: written to .env.local only. */
+    psPassword?: string;
+    /** PlanetScale database name. */
+    psDatabase?: string;
+    /**
+     * Maps DataSource field → .env.local variable name.
+     * DS-ENV-1 [PERMANENT]: secret values travel through this map into .env.local.
+     */
+    envVarMap?: Record<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data: any;
+    /** Transient connection state (not persisted to IDB). */
+    status?: 'idle' | 'connecting' | 'connected' | 'error';
+    errorMessage?: string;
+    lastFetchedAt?: string;
 }
 
 /** Snapping result returned by querySnapping (mirrors Rust SnapResult). */
@@ -168,6 +198,8 @@ interface ProjectContextType {
     dataSources: DataSource[];
     addDataSource: (ds: DataSource) => void;
     removeDataSource: (id: string) => void;
+    /** DB-1: partial update — for status/error/data updates after fetch. */
+    updateDataSource: (id: string, patch: Partial<Omit<DataSource, 'id'>>) => void;
 
     // ── API Routes (Phase D) ──────────────────────────────────────────────────
     apiRoutes: ApiRoute[];
@@ -1386,6 +1418,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             dataSources,
             addDataSource: (ds) => setDataSources(p => [...p, ds]),
             removeDataSource: (id) => setDataSources(p => p.filter(d => d.id !== id)),
+            updateDataSource: (id, patch) => setDataSources(p => p.map(d => d.id === id ? { ...d, ...patch } : d)),
             apiRoutes, addApiRoute, updateApiRoute, deleteApiRoute,
             framework, setFramework,
             createNewProject, exitProject, runAI, compileComponent, addFrame,
