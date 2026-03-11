@@ -40,7 +40,7 @@ let proxyBaseUrl = `http://localhost:${PROXY_PORT}/figma-proxy`;
 export const getProxyBaseUrl = () => proxyBaseUrl;
 
 // Module-level singleton — prevents duplicate proxy processes
-let proxyBootPromise: Promise<void> | null = null;
+let proxyBootPromise: Promise<string> | null = null;
 let proxyIsRunning = false;
 
 // ─── PROXY SOURCE ─────────────────────────────────────────────────────────────
@@ -167,7 +167,7 @@ export const ensureProxy = async (instance: WebContainer): Promise<string> => {
     if (await checkProxyHealth()) return proxyBaseUrl;
     if (proxyBootPromise) { await proxyBootPromise; return proxyBaseUrl; }
 
-    proxyBootPromise = (async () => {
+    proxyBootPromise = (async (): Promise<string> => {
         try {
             await instance.fs.writeFile('/proxy.mjs', PROXY_SOURCE);
             console.log('[figma-proxy] proxy.mjs written to VFS');
@@ -196,6 +196,7 @@ export const ensureProxy = async (instance: WebContainer): Promise<string> => {
             proxyBaseUrl = resolvedUrl.replace(/\/$/, '') + '/figma-proxy';
             proxyIsRunning = true;
             console.log('[figma-proxy] ✅ Base URL:', proxyBaseUrl);
+            return proxyBaseUrl; // Explicit return makes this Promise<string>
         } catch (err) {
             proxyBootPromise = null;
             throw err;
