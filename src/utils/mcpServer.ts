@@ -28,7 +28,7 @@ import type { WebContainer } from '@webcontainer/api';
 export const MCP_PORT = 3002;
 
 // Session singleton — same pattern as figmaProxy.ts
-let mcpBootPromise: Promise<void> | null = null;
+let mcpBootPromise: Promise<string> | null = null;
 let mcpIsRunning = false;
 
 // MCP-WC-1: The real reachable URL — populated from server-ready event.
@@ -352,7 +352,7 @@ export const ensureMcpServer = async (instance: WebContainer): Promise<string> =
     if (health) return mcpBaseUrl;
     if (mcpBootPromise) { await mcpBootPromise; return mcpBaseUrl; }
 
-    mcpBootPromise = (async () => {
+    mcpBootPromise = (async (): Promise<string> => {
         try {
             await instance.fs.writeFile('/mcp-server.mjs', buildServerSource());
             console.log('[mcp] mcp-server.mjs written to VFS');
@@ -381,6 +381,7 @@ export const ensureMcpServer = async (instance: WebContainer): Promise<string> =
             mcpBaseUrl = resolvedUrl.replace(/\/$/, ''); // strip trailing slash
             mcpIsRunning = true;
             console.log('[mcp] ✅ Base URL set to:', mcpBaseUrl);
+            return mcpBaseUrl; // Explicit return makes this Promise<string>
         } catch (err) {
             mcpBootPromise = null;
             throw err;

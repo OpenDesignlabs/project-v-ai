@@ -1091,7 +1091,7 @@ export const LeftSidebar = () => {
                         <button onClick={() => addPage('New Page')} className="p-1 hover:bg-[#333] rounded text-[#007acc]"><Plus size={16} /></button>
                     </div>
                     <div className="flex-1 overflow-y-auto flex flex-col custom-scrollbar">
-                        {pages.map((page) => (
+                        {pages.filter(p => !p.hidden).map((page) => (
                             <PageRow
                                 key={page.id}
                                 page={page}

@@ -163,6 +163,9 @@ export interface Page {
     slug: string;       // URL path (e.g., '/', '/about', '/contact')
     rootId: string;     // Pointer to the page's root element in VectraProject
     seo?: PageSEO;      // Direction D — per-page SEO metadata
+    /** FIG-FUTURE-1: hidden pages are staging areas (e.g. component-mode Figma imports).
+     *  Not shown in the Pages panel. Set when name starts with '__figma_comp__'. */
+    hidden?: boolean;
 }
 
 /**

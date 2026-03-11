@@ -930,7 +930,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             let finalSlug = slug;
             let counter = 2;
             while (existingSlugs.has(finalSlug)) finalSlug = `${slug}-${counter++}`;
-            return [...prev, { id: pageId, name, slug: finalSlug, rootId: pageId }];
+            return [...prev, {
+                id: pageId,
+                name,
+                slug: finalSlug,
+                rootId: pageId,
+                // FIG-FUTURE-1: hide component-mode Figma staging pages from the Pages panel.
+                // FigmaPanel names these '__figma_comp__<FrameName>'.
+                ...(name.startsWith('__figma_comp__') ? { hidden: true } : {}),
+            }];
         });
 
         // Navigate to the new page
