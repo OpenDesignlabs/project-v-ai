@@ -208,6 +208,28 @@ export const ensureProxy = async (instance: WebContainer): Promise<string> => {
 };
 
 /**
+ * resetProxy
+ * ──────────
+ * Clears the module-level singleton so the next call to ensureProxy()
+ * will re-spawn the proxy process.
+ *
+ * Call this when:
+ *   - The user clicks "Reconnect" after a proxy error
+ *   - The WebContainer instance is recycled
+ *   - The proxy process has exited (MCP-IDLE style auto-exit)
+ *
+ * NOTE: This does NOT kill the running proxy process — the WebContainer
+ * process lifecycle is managed by the container. It only resets the
+ * TypeScript singleton state so ensureProxy() will re-try.
+ */
+export const resetProxy = (): void => {
+    proxyBootPromise = null;
+    proxyIsRunning   = false;
+    // proxyBaseUrl stays at its last value — will be overwritten on next boot
+    console.log('[figma-proxy] Singleton reset. Next ensureProxy() will re-spawn.');
+};
+
+/**
  * figmaFetch
  * ──────────
  * Makes an authenticated Figma API call through the VFS proxy.
