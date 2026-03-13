@@ -11,7 +11,7 @@
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
-import type { DragData, InteractionState, Guide, Asset, GlobalStyles, EditorTool, DeviceType, ActionType } from '../types';
+import type { DragData, InteractionState, Guide, Asset, GlobalStyles, EditorTool, DeviceType, ActionType, SidebarPanel } from '../types';
 
 /** Per-page viewport snapshot — saved when switching away from a page. */
 interface PageViewport {
@@ -20,7 +20,7 @@ interface PageViewport {
     zoom: number;
 }
 
-export type SidebarPanel = 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files' | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | 'backend' | 'deploy' | 'loader' | 'stitch' | 'figma' | 'mcp' | null;
+export type { SidebarPanel } from '../types'; // canonical definition lives in types/index.ts
 export type AppView = 'dashboard' | 'editor';
 export type ViewMode = 'visual' | 'skeleton';
 

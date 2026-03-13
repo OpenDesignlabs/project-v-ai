@@ -1,5 +1,22 @@
 import type { LucideIcon } from 'lucide-react';
 
+// ─── WASM LAYOUT ENGINE ───────────────────────────────────────────────────────
+// Returned by ProjectContext.querySnapping(). Defined here (not in ProjectContext)
+// so EditorContextType can reference it without a circular import.
+export interface SnapResult {
+    x: number;
+    y: number;
+    guides: Array<{ orientation: string; pos: number; start: number; end: number; guide_type: string }>;
+}
+
+// ─── SIDEBAR PANEL ────────────────────────────────────────────────────────────
+// Canonical union of all valid panel identifiers. Defined here so EditorContextType
+// can reference it without importing from UIContext (avoids circular deps).
+export type SidebarPanel =
+    | 'add' | 'layers' | 'pages' | 'assets' | 'settings' | 'files'
+    | 'npm' | 'icons' | 'theme' | 'data' | 'marketplace' | 'backend'
+    | 'deploy' | 'loader' | 'stitch' | 'figma' | 'mcp' | null;
+
 export type ActionType =
     | { type: 'NAVIGATE'; payload: string }
     | { type: 'OPEN_MODAL'; payload: string }

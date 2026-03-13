@@ -38,7 +38,7 @@ import React, {
     createContext, useContext, useState, useEffect,
     useCallback, useRef, useMemo, type ReactNode,
 } from 'react';
-import type { VectraProject, VectraNode, Page, ApiRoute, HttpMethod, Framework, ProjectMeta } from '../types';
+import type { VectraProject, VectraNode, Page, ApiRoute, HttpMethod, Framework, ProjectMeta, SnapResult } from '../types';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 export const FRAMEWORK_KEY = 'vectra_framework';
 import { mergeAIContent } from '../utils/aiHelpers';
@@ -124,11 +124,6 @@ export interface DataSource {
 }
 
 /** Snapping result returned by querySnapping (mirrors Rust SnapResult). */
-export interface SnapResult {
-    x: number;
-    y: number;
-    guides: Array<{ orientation: string; pos: number; start: number; end: number; guide_type: string }>;
-}
 
 interface ProjectContextType {
     // ── Elements ──────────────────────────────────────────────────────────────
