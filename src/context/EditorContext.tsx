@@ -27,6 +27,7 @@ import { useProject } from './ProjectContext';
 import { useUI } from './UIContext';
 import { useHover } from './HoverContext';
 import { COMPONENT_TYPES } from '../data/constants';
+import type { EditorContextType } from '../types';
 
 export type { SidebarPanel, AppView, ViewMode } from './UIContext';
 export type { GlobalTheme, DataSource } from './ProjectContext';
@@ -274,7 +275,10 @@ export const useEditor = () => {
         handleInteractionMove,
         handleInteractionEnd,
         syncLayoutEngine,
-    };
+    // ARCH-1: `satisfies` validates this shape matches EditorContextType at compile time
+    // without widening the inferred type. Any field added to EditorContextType that is
+    // missing from this return object will immediately fail tsc — permanently prevents drift.
+    } satisfies EditorContextType;
 };
 
 // ─── DEPRECATED PROVIDER ──────────────────────────────────────────────────────

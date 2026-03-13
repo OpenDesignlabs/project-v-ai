@@ -298,20 +298,93 @@ export interface DataSource {
 }
 
 export interface EditorContextType {
+    // ── Project core ──────────────────────────────────────────────────────────
     elements: VectraProject;
     setElements: React.Dispatch<React.SetStateAction<VectraProject>>;
+    /** Stable ref — safe in useEffect deps without triggering re-runs */
+    elementsRef: React.MutableRefObject<VectraProject>;
+    updateProject: (newElements: VectraProject) => void;
+    /** Write elements + push undo entry atomically */
+    pushHistory: (newElements: VectraProject) => void;
+    deleteElement: (id: string) => void;
+    duplicateElement: (id: string) => void;
+    reorderElement: (id: string, newParentId: string, index: number) => void;
+    instantiateTemplate: (rootId: string, nodes: VectraProject) => { newNodes: VectraProject; rootId: string };
+    /** Precomputed child → parent map. Updated on every elements change. */
+    parentMap: Map<string, string>;
+
+    // ── Pages ─────────────────────────────────────────────────────────────────
+    pages: Page[];
+    activePageId: string;
+    setActivePageId: (id: string) => void;
+    /** Resolved page ID — follows redirects and preview overrides */
+    realPageId: string;
+    addPage: (name: string, slug?: string) => void;
+    deletePage: (id: string) => void;
+    switchPage: (pageId: string) => void;
+    /** STI-PAGE-1 / BUG-4-FIX: object-arg. Positional form caused white-screen crash. */
+    importPage: (args: { pageName: string; slug: string; nodes: VectraProject; rootId: string }) => void;
+    updatePageSEO: (pageId: string, seo: Partial<PageSEO>) => void;
+
+    // ── History ───────────────────────────────────────────────────────────────
+    history: { undo: () => void; redo: () => void };
+    /** Flat stable reference — safe in useEffect dep arrays (S-2) */
+    undo: () => void;
+    /** Flat stable reference — safe in useEffect dep arrays (S-2) */
+    redo: () => void;
+
+    // ── Snapping / layout engine ──────────────────────────────────────────────
+    /** Loads siblings of the dragged node into the WASM snapping engine */
+    syncLayoutEngine: (draggedId: string) => void;
+    /** 60fps snap query — 4 scalar args cross Wasm boundary. Returns null if engine unavailable. */
+    querySnapping: (x: number, y: number, w: number, h: number, threshold?: number) => SnapResult | null;
+
+    // ── Theme ─────────────────────────────────────────────────────────────────
+    theme: any;
+    updateTheme: (updates: any) => void;
+
+    // ── Data sources ──────────────────────────────────────────────────────────
+    dataSources: DataSource[];
+    addDataSource: (ds: DataSource) => void;
+    removeDataSource: (id: string) => void;
+    updateDataSource: (id: string, patch: Partial<Omit<DataSource, 'id'>>) => void;
+
+    // ── API routes ────────────────────────────────────────────────────────────
+    apiRoutes: ApiRoute[];
+    /** 3-arg form: addApiRoute(name, path, methods) — matches ProjectContext runtime */
+    addApiRoute: (name: string, path: string, methods: HttpMethod[]) => void;
+    updateApiRoute: (id: string, patch: Partial<Omit<ApiRoute, 'id'>>) => void;
+    deleteApiRoute: (id: string) => void;
+
+    // ── Framework ─────────────────────────────────────────────────────────────
+    framework: Framework;
+    setFramework: (fw: Framework) => void;
+
+    // ── AI ────────────────────────────────────────────────────────────────────
+    runAI: (prompt: string, pageId: string) => void;
+
+    // ── Multi-project ─────────────────────────────────────────────────────────
+    projectId: string;
+    projectName: string;
+    projectIndex: ProjectMeta[];
+    createNewProject: (templateId: string) => void;
+    exitProject: () => void;
+    /** Takes full ProjectMeta (not id) — matches ProjectContext runtime */
+    loadProject: (meta: ProjectMeta) => Promise<void>;
+    renameProject: (id: string, name: string) => void;
+    /** Takes full ProjectMeta (not id) — matches ProjectContext runtime */
+    duplicateProject: (meta: ProjectMeta) => Promise<void>;
+    deleteProject: (id: string) => Promise<void>;
+    /** Sprint 2 soft-delete — removes from index, preserves IDB data */
+    removeProjectFromIndex: (id: string) => void;
+    purgeProjectData: (id: string) => Promise<void>;
+    restoreProjectToIndex: (meta: ProjectMeta) => void;
+
+    // ── Selection / UI state ──────────────────────────────────────────────────
     selectedId: string | null;
     setSelectedId: (id: string | null) => void;
     hoveredId: string | null;
     setHoveredId: (id: string | null) => void;
-    activePageId: string;
-    setActivePageId: (id: string) => void;
-    previewMode: boolean;
-    setPreviewMode: (mode: boolean) => void;
-    viewMode: ViewMode;
-    setViewMode: (mode: ViewMode) => void;
-    device: DeviceType;
-    setDevice: (device: DeviceType) => void;
     activeTool: EditorTool;
     setActiveTool: (tool: EditorTool) => void;
     zoom: number;
@@ -324,45 +397,31 @@ export interface EditorContextType {
     setDragData: (data: DragData | null) => void;
     interaction: InteractionState | null;
     setInteraction: React.Dispatch<React.SetStateAction<InteractionState | null>>;
-    handleInteractionMove: (e: PointerEvent) => void;
+    previewMode: boolean;
+    setPreviewMode: (mode: boolean) => void;
+    viewMode: ViewMode;
+    setViewMode: (mode: ViewMode) => void;
+    device: DeviceType;
+    setDevice: (device: DeviceType) => void;
+    activePanel: SidebarPanel;
+    setActivePanel: React.Dispatch<React.SetStateAction<SidebarPanel>>;
+    togglePanel: (panel: SidebarPanel) => void;
+    isInsertDrawerOpen: boolean;
+    toggleInsertDrawer: () => void;
+    isMagicBarOpen: boolean;
+    setMagicBarOpen: React.Dispatch<React.SetStateAction<boolean>>;
     guides: Guide[];
     assets: Asset[];
     addAsset: (file: File) => void;
     globalStyles: GlobalStyles;
     setGlobalStyles: React.Dispatch<React.SetStateAction<GlobalStyles>>;
-    addPage: (name: string, slug?: string) => void;
-    deletePage: (id: string) => void;
-    updateProject: (newElements: VectraProject) => void;
-    deleteElement: (id: string) => void;
-    history: { undo: () => void; redo: () => void };
-    runAction: (action: ActionType) => void;
-    isInsertDrawerOpen: boolean;
-    toggleInsertDrawer: () => void;
-    activePanel: string | null;
-    setActivePanel: (panel: string | null) => void;
-    togglePanel: (panel: string | null) => void;
-    componentRegistry: Record<string, ComponentConfig>;
-    registerComponent: (id: string, config: ComponentConfig) => void;
-    instantiateTemplate: (rootId: string, nodes: VectraProject) => { newNodes: VectraProject; rootId: string };
-    recentComponents: string[];
-    addRecentComponent: (id: string) => void;
     currentView: 'dashboard' | 'editor';
     setCurrentView: (view: 'dashboard' | 'editor') => void;
-    createNewProject: (templateId: string) => void;
-    exitProject: () => void;
-    theme: any;
-    updateTheme: (updates: any) => void;
-    dataSources: DataSource[];
-    addDataSource: (ds: DataSource) => void;
-    removeDataSource: (id: string) => void;
-    updateDataSource: (id: string, patch: Partial<Omit<DataSource, 'id'>>) => void;
-    switchPage: (pageId: string) => void;
-    /** STI-PAGE-1: Atomic import — merges nodes, registers page, navigates to it. */
-    importPage: (name: string, slug: string, nodes: VectraProject, rootId: string) => void;
-    pages: any[];
-    realPageId: string;
-    isMagicBarOpen: boolean;
-    setMagicBarOpen: React.Dispatch<React.SetStateAction<boolean>>;
+    runAction: (action: ActionType) => void;
+    componentRegistry: Record<string, ComponentConfig>;
+    registerComponent: (id: string, config: ComponentConfig) => void;
+    recentComponents: string[];
+    addRecentComponent: (id: string) => void;
 }
 
 // ─── PHASE A: Framework type ──────────────────────────────────────────────────

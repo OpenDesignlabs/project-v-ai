@@ -67,16 +67,26 @@ const resetIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => 
 const server = http.createServer((req, res) => {
     resetIdle();
 
-    // CORS — allow WebContainer iframe origins
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Figma-Token');
+    // FIG-CORS-2: cors object passed directly into every res.writeHead() call.
+    // res.setHeader() before writeHead() is silently discarded by Node.js —
+    // writeHead with a status code resets all previously set headers unless
+    // headers are passed as its second argument.
+    const cors = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, X-Figma-Token',
+    };
 
-    if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
+    // Handle CORS preflight — must come before any routing
+    if (req.method === 'OPTIONS') {
+        res.writeHead(204, cors); // headers embedded in writeHead — NOT via setHeader
+        res.end();
+        return;
+    }
 
     // Health check
     if (req.url === '/figma-proxy/health') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', port: PORT }));
         return;
     }
@@ -86,7 +96,7 @@ const server = http.createServer((req, res) => {
     // old process exits before ensureProxy() spawns a fresh one on the same port.
     // Without this: EADDRINUSE on re-spawn.
     if (req.url === '/figma-proxy/shutdown') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
         setTimeout(() => process.exit(0), 50); // respond first, exit after
         return;
@@ -94,13 +104,13 @@ const server = http.createServer((req, res) => {
 
     // Only handle /figma-proxy/* paths
     if (!req.url || !req.url.startsWith('/figma-proxy/')) {
-        res.writeHead(404); res.end('Not found'); return;
+        res.writeHead(404, cors); res.end('Not found'); return;
     }
 
     // FIGMA-SEC-2: read token from header, never from URL or stored file
     const token = req.headers['x-figma-token'];
     if (!token) {
-        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.writeHead(401, { ...cors, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Missing X-Figma-Token header' }));
         return;
     }
@@ -121,14 +131,14 @@ const server = http.createServer((req, res) => {
 
     const proxyReq = https.request(options, (proxyRes) => {
         res.writeHead(proxyRes.statusCode ?? 200, {
+            ...cors,
             'Content-Type': proxyRes.headers['content-type'] ?? 'application/json',
-            'Access-Control-Allow-Origin': '*',
         });
         proxyRes.pipe(res, { end: true });
     });
 
     proxyReq.on('error', (err) => {
-        res.writeHead(502, { 'Content-Type': 'application/json' });
+        res.writeHead(502, { ...cors, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Upstream error', detail: err.message }));
     });
 

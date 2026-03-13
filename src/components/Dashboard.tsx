@@ -471,11 +471,14 @@ export const Dashboard = () => {
     const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
     // Stage 1: hide immediately, schedule purge after UNDO_WINDOW_MS
-    const handleSoftDelete = (meta: ProjectMeta) => {
+    // PERF-7 FIX: async — awaits purgeProjectData() when a prior pending delete is
+    // replaced. purgeProjectData() is async (IDB); calling fire-and-forget risks a
+    // dangling Promise and silent failure on congested IndexedDB.
+    const handleSoftDelete = async (meta: ProjectMeta) => {
         // If another delete is pending, purge it immediately before starting new timer
         if (pendingDelete) {
             clearTimeout(pendingDelete.timerId);
-            purgeProjectData(pendingDelete.meta.id);
+            await purgeProjectData(pendingDelete.meta.id);
         }
         removeProjectFromIndex(meta.id);
         const timerId = setTimeout(() => {
