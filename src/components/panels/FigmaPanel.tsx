@@ -24,7 +24,7 @@ import {
     Figma, Link, Key, Loader2,
     CheckCircle2, XCircle, AlertTriangle,
     Layout, Box, RefreshCw, Eye, EyeOff,
-    Search, X, ChevronRight, Layers,
+    Search, X,
 } from 'lucide-react';
 import { useEditor } from '../../context/EditorContext';
 import { useContainer } from '../../context/ContainerContext';
@@ -226,10 +226,13 @@ export const FigmaPanel: React.FC = () => {
             log(`Importing "${info.name}" as ${mode}…`);
 
             try {
-                const figmaNode = findNodeById(fileDataRef.current!.document, info.id);
+                const figmaNode = findNodeById(fileDataRef.current!, info.id);
                 if (!figmaNode) throw new Error(`Frame "${info.name}" not found in document`);
 
-                const result: FigmaTransformResult = transformFigmaFrame(figmaNode);
+                const result: FigmaTransformResult = transformFigmaFrame(
+                                figmaNode,
+                                mode, // 'page' | 'component'
+                            );
                 totalNodes += Object.keys(result.nodes).length;
                 frameNames.push(info.name);
 
@@ -263,7 +266,8 @@ export const FigmaPanel: React.FC = () => {
                             token,
                         );
                         if (!imgRes?.images) return;
-                        const patchedNodes = applyImageFills(result.nodes, imgRes.images);
+                        // applyImageFills needs 3 args: nodes, imageFillMap, figmaImageUrls
+                        const patchedNodes = applyImageFills(result.nodes, result.imageFillMap, imgRes.images);
                         window.dispatchEvent(new CustomEvent('vectra:figma-image-patch', {
                             detail: { nodes: patchedNodes, rootId: result.rootId },
                         }));
@@ -286,8 +290,8 @@ export const FigmaPanel: React.FC = () => {
     }, [frameSelections, fileUrl, token, importPage, registerComponent, log]);
 
     // ── Reconnect ─────────────────────────────────────────────────────────────
-    const handleReconnect = useCallback(() => {
-        resetProxy(); // clears singleton so next ensureProxy() re-spawns
+    const handleReconnect = useCallback(async () => {
+        await resetProxy(); // FIG-SHUTDOWN-1: async — waits for graceful process exit
         abortRef.current?.abort();
         setStep('connect');
         setErrorMsg('');
@@ -455,10 +459,10 @@ export const FigmaPanel: React.FC = () => {
 
                                     <span className="flex-1 text-[10px] font-semibold truncate text-[#e5e5ea]">{fs.info.name}</span>
 
-                                    {/* Dimension badge */}
-                                    {fs.info.width && fs.info.height && (
+                                    {/* Dimension badge — from .bounds (FigmaFrameInfo has no direct width/height) */}
+                                    {fs.info.bounds && (
                                         <span className="text-[8px] font-mono text-[#48484a] shrink-0 bg-[#1c1c1e] px-1 py-0.5 rounded">
-                                            {Math.round(fs.info.width)}×{Math.round(fs.info.height)}
+                                            {Math.round(fs.info.bounds.width)}×{Math.round(fs.info.bounds.height)}
                                         </span>
                                     )}
 

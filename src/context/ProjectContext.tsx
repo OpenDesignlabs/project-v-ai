@@ -170,7 +170,7 @@ interface ProjectContextType {
      * Merges `nodes` into elements, registers the page, sets it active.
      * Does NOT create an orphan canvas node — rootId IS the canvas.
      */
-    importPage: (name: string, slug: string, nodes: VectraProject, rootId: string) => void;
+    importPage: (args: { pageName: string; slug: string; nodes: VectraProject; rootId: string }) => void;
     /**
      * Direction D — SEO Control
      * Merge-update the SEO fields for a specific page.
@@ -896,17 +896,29 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // ── STI-PAGE-1: Atomic import of a pre-parsed page ────────────────────────
     // Unlike addPage(), this does NOT create an empty canvas node.
     // Caller has already built the full node tree; rootId is the canvas.
-    const importPage = useCallback((
-        name: string,
-        slug: string,
-        nodes: VectraProject,
-        rootId: string,
-    ) => {
+    //
+    // BUG-FIX PC-1: switched from 4 positional args to a single object arg.
+    // StitchPanel v2 and FigmaPanel v2 both call importPage({ pageName, slug, nodes, rootId }).
+    // The old positional signature caused `name` to receive the whole object literal,
+    // making name.startsWith() throw TypeError → white screen crash.
+    //
+    // PC-SAFE-1: all string inputs are guarded against non-string values from
+    // corrupt VFS/localStorage hydration or stale Figma API parse results.
+    const importPage = useCallback(({ pageName, slug, nodes, rootId }: {
+        pageName: string;
+        slug: string;
+        nodes: VectraProject;
+        rootId: string;
+    }) => {
+        // PC-SAFE-1: sanitize strings — VFS hydration can produce undefined
+        const safeName = typeof pageName === 'string' && pageName.trim() ? pageName.trim() : 'Imported Page';
+        const safeSlug = typeof slug    === 'string' && slug.trim()    ? slug.trim()    : '/imported';
+
         const pageId = `page-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
         // Build the page node pointing directly at the imported canvas root
         const pageNode = {
-            id: pageId, type: 'page' as const, name,
+            id: pageId, type: 'page' as const, name: safeName,
             children: [rootId],
             props: { className: 'w-full h-full relative', style: { width: '100%', height: '100%' } },
         };
@@ -927,24 +939,24 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         // Register page in pages[] with slug uniqueness check
         setPages(prev => {
             const existingSlugs = new Set(prev.map(p => p.slug));
-            let finalSlug = slug;
+            let finalSlug = safeSlug.startsWith('/') ? safeSlug : `/${safeSlug}`;
             let counter = 2;
-            while (existingSlugs.has(finalSlug)) finalSlug = `${slug}-${counter++}`;
+            while (existingSlugs.has(finalSlug)) finalSlug = `${safeSlug}-${counter++}`;
             return [...prev, {
                 id: pageId,
-                name,
+                name: safeName,
                 slug: finalSlug,
                 rootId: pageId,
                 // FIG-FUTURE-1: hide component-mode Figma staging pages from the Pages panel.
-                // FigmaPanel names these '__figma_comp__<FrameName>'.
-                ...(name.startsWith('__figma_comp__') ? { hidden: true } : {}),
+                // PC-SAFE-1: typeof guard prevents crash if safeName is somehow non-string.
+                ...(typeof safeName === 'string' && safeName.startsWith('__figma_comp__') ? { hidden: true } : {}),
             }];
         });
 
         // Navigate to the new page
         setActivePageId(pageId);
 
-        console.log(`[Vectra] STI-1: Imported page "${name}" → ${pageId} (${Object.keys(nodes).length} nodes)`);
+        console.log(`[Vectra] STI-1: Imported page "${safeName}" → ${pageId} (${Object.keys(nodes).length} nodes)`);
     }, []); // no deps — only stable setState setters used inside
 
     // ── FIG-1: Async image-fill patch listener ────────────────────────────────

@@ -81,6 +81,17 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // FIG-SHUTDOWN-1: graceful shutdown endpoint.
+    // resetProxy() calls this before clearing singleton state, ensuring the
+    // old process exits before ensureProxy() spawns a fresh one on the same port.
+    // Without this: EADDRINUSE on re-spawn.
+    if (req.url === '/figma-proxy/shutdown') {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ ok: true }));
+        setTimeout(() => process.exit(0), 50); // respond first, exit after
+        return;
+    }
+
     // Only handle /figma-proxy/* paths
     if (!req.url || !req.url.startsWith('/figma-proxy/')) {
         res.writeHead(404); res.end('Not found'); return;
@@ -222,7 +233,22 @@ export const ensureProxy = async (instance: WebContainer): Promise<string> => {
  * process lifecycle is managed by the container. It only resets the
  * TypeScript singleton state so ensureProxy() will re-try.
  */
-export const resetProxy = (): void => {
+// FIG-SHUTDOWN-1: resetProxy is now async — it calls the /shutdown endpoint
+// first so the running Node process exits cleanly before we clear singleton
+// state. This prevents EADDRINUSE when ensureProxy() re-spawns on the same port.
+export const resetProxy = async (): Promise<void> => {
+    if (proxyIsRunning) {
+        try {
+            // Signal the running proxy to exit gracefully (50ms delay inside)
+            await fetch(`${proxyBaseUrl}/shutdown`, {
+                signal: AbortSignal.timeout(1500),
+            });
+            // Give the process time to exit before we re-use the port
+            await new Promise<void>(r => setTimeout(r, 300));
+        } catch {
+            // Process may already be dead — safe to continue
+        }
+    }
     proxyBootPromise = null;
     proxyIsRunning   = false;
     // proxyBaseUrl stays at its last value — will be overwritten on next boot
