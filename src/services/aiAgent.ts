@@ -38,34 +38,62 @@ const processLocalIntent = (
     prompt: string,
     currentElements: VectraProject
 ): AIResponse | null => {
-    const p = prompt.toLowerCase();
+    const p = prompt.toLowerCase().trim();
 
-    // 1. Color changes
-    const colorMatch = p.match(/(change|make|set) (.*?) (color|background|bg) to (.*?)$/);
+    // ── 1. Color changes (SPRINT-B-FIX-3: expanded patterns) ─────────────────
+    // Patterns covered:
+    //   a) "change/make/set/turn X color/background/bg/text to VALUE"  (original)
+    //   b) "make/set/turn X blue/red/..."                              (NEW — no 'color' word)
+    //   c) "change/set [the] background [color] to VALUE"              (NEW — bg-only shorthand)
+    //   d) "make all text/headings white/black/..."                    (NEW — bulk text color)
+    const CSS_COLORS = ['blue', 'red', 'green', 'white', 'black', 'dark', 'light',
+        'gray', 'grey', 'purple', 'pink', 'yellow', 'orange', 'teal', 'indigo', 'violet'];
+
+    const colorMatch =
+        p.match(/(change|make|set|turn)\s+(.*?)\s+(color|background|bg|text|fill)\s+to\s+(.+)$/) ||
+        p.match(/(make|set|turn)\s+(.*?)\s+(blue|red|green|white|black|dark|light|gray|grey|purple|pink|yellow|orange|teal|indigo|violet)\s*$/) ||
+        p.match(/(change|set)\s+(?:the\s+)?background(?:\s+color)?\s+to\s+(.+)$/);
+
     if (colorMatch) {
-        const targetName = colorMatch[2];
-        const colorVal = colorMatch[4].trim();
+        const isSimpleColorWord = CSS_COLORS.some(c => p.endsWith(' ' + c));
+        const isBgOnly = /^(change|set)\s+(?:the\s+)?background/.test(p);
+        const targetName = (isBgOnly ? 'all' : (colorMatch[2] || 'all')).trim();
+        const colorVal = isSimpleColorWord
+            ? (colorMatch[3] || colorMatch[2]).trim()
+            : (colorMatch[4] || colorMatch[2]).trim();
+
+        // Normalise shorthand color words to Tailwind-friendly hex
+        const COLOR_MAP: Record<string, string> = {
+            blue: '#3b82f6', red: '#ef4444', green: '#22c55e',
+            white: '#ffffff', black: '#000000', dark: '#09090b',
+            light: '#f8fafc', gray: '#6b7280', grey: '#6b7280',
+            purple: '#a855f7', pink: '#ec4899', yellow: '#eab308',
+            orange: '#f97316', teal: '#14b8a6', indigo: '#6366f1', violet: '#8b5cf6',
+        };
+        const resolvedColor = COLOR_MAP[colorVal.toLowerCase()] ?? colorVal;
+
         const updates: Record<string, VectraNode> = {};
         let count = 0;
+        const isTextTarget = targetName === 'text' || targetName === 'heading';
+        const isBgTarget   = targetName === 'background' || targetName === 'bg' || isBgOnly;
 
         Object.values(currentElements).forEach(el => {
-            if (
+            const matchesTarget =
+                targetName === 'all' ||
                 el.type.includes(targetName) ||
-                el.name.toLowerCase().includes(targetName) ||
-                targetName === 'all'
-            ) {
-                updates[el.id] = {
-                    ...el,
-                    props: {
-                        ...el.props,
-                        style: {
-                            ...el.props.style,
-                            [el.type === 'text' || el.type === 'heading' ? 'color' : 'background']: colorVal,
-                        },
-                    },
-                };
-                count++;
-            }
+                el.name.toLowerCase().includes(targetName);
+            if (!matchesTarget) return;
+
+            const styleKey =
+                isTextTarget || el.type === 'text' || el.type === 'heading' || el.type === 'link'
+                    ? 'color'
+                    : isBgTarget ? 'backgroundColor' : 'background';
+
+            updates[el.id] = {
+                ...el,
+                props: { ...el.props, style: { ...el.props.style, [styleKey]: resolvedColor } },
+            };
+            count++;
         });
 
         if (count > 0) {
@@ -73,13 +101,14 @@ const processLocalIntent = (
         }
     }
 
-    // 2. Text content update
-    if (p.includes('change text to')) {
-        const textVal = prompt.split('change text to')[1].trim();
+    // ── 2. Text content update ─────────────────────────────────────────────────
+    if (p.includes('change text to') || p.includes('set text to')) {
+        const splitter = p.includes('change text to') ? 'change text to' : 'set text to';
+        const textVal = prompt.slice(prompt.toLowerCase().indexOf(splitter) + splitter.length).trim();
         const textNode = Object.values(currentElements).find(
             el => el.type === 'text' || el.type === 'heading'
         );
-        if (textNode) {
+        if (textNode && textVal) {
             return {
                 action: 'update',
                 elements: { [textNode.id]: { ...textNode, content: textVal } },
@@ -88,19 +117,74 @@ const processLocalIntent = (
         }
     }
 
-    // 3. Dark mode
-    if (p.includes('dark mode') || p.includes('black background')) {
-        const rootId = Object.keys(currentElements).find(
-            k => currentElements[k].type === 'webpage'
-        );
+    // ── 3. Dark / Light mode (SPRINT-B-FIX-3: light mode added) ──────────────
+    if (p.includes('dark mode') || p.includes('black background') || p.includes('dark theme')) {
+        const rootId = Object.keys(currentElements).find(k => currentElements[k].type === 'webpage');
         if (rootId) {
-            const updated = { ...currentElements[rootId] };
-            updated.props.className = (updated.props.className || '') + ' bg-[#09090b] text-white';
+            const node = currentElements[rootId];
             return {
                 action: 'update',
-                elements: { [rootId]: updated },
+                elements: { [rootId]: { ...node, props: { ...node.props, className: ((node.props.className || '') + ' bg-[#09090b] text-white').trim() } } },
                 message: 'Applied Dark Mode.',
             };
+        }
+    }
+    if (p.includes('light mode') || p.includes('white background') || p.includes('light theme')) {
+        const rootId = Object.keys(currentElements).find(k => currentElements[k].type === 'webpage');
+        if (rootId) {
+            const node = currentElements[rootId];
+            return {
+                action: 'update',
+                elements: { [rootId]: { ...node, props: { ...node.props, className: ((node.props.className || '') + ' bg-white text-zinc-900').trim() } } },
+                message: 'Applied Light Mode.',
+            };
+        }
+    }
+
+    // ── 4. Hide / Show element (SPRINT-B-FIX-3: new) ──────────────────────────
+    const hideMatch = p.match(/^(hide|show)\s+(?:the\s+)?(.+)$/);
+    if (hideMatch) {
+        const shouldHide = hideMatch[1] === 'hide';
+        const targetName = hideMatch[2].trim();
+        const updates: Record<string, VectraNode> = {};
+        let count = 0;
+        Object.values(currentElements).forEach(el => {
+            if (el.name.toLowerCase().includes(targetName) || el.type.includes(targetName)) {
+                updates[el.id] = { ...el, hidden: shouldHide };
+                count++;
+            }
+        });
+        if (count > 0) {
+            return { action: 'update', elements: updates, message: `${shouldHide ? 'Hidden' : 'Shown'} ${count} element(s).` };
+        }
+    }
+
+    // ── 5. Remove style property (SPRINT-B-FIX-3: new) ────────────────────────
+    // "remove shadow", "remove border", "remove border radius", "clear padding"
+    const removePropMatch = p.match(/^(?:remove|clear|reset)\s+(?:the\s+)?(shadow|border|border[\s-]?radius|padding|margin|background)\s*$/);
+    if (removePropMatch) {
+        const propRaw = removePropMatch[1].toLowerCase().replace(/[\s-]/g, '');
+        const propMap: Record<string, string[]> = {
+            shadow:       ['boxShadow', 'filter'],
+            border:       ['border', 'borderWidth', 'borderColor', 'borderStyle'],
+            borderradius: ['borderRadius'],
+            padding:      ['padding', 'paddingTop', 'paddingBottom', 'paddingLeft', 'paddingRight'],
+            margin:       ['margin', 'marginTop', 'marginBottom', 'marginLeft', 'marginRight'],
+            background:   ['background', 'backgroundColor', 'backgroundImage'],
+        };
+        const propsToRemove = propMap[propRaw] ?? [];
+        if (propsToRemove.length > 0) {
+            const updates: Record<string, VectraNode> = {};
+            let count = 0;
+            Object.values(currentElements).forEach(el => {
+                const style = { ...((el.props?.style as Record<string, unknown>) ?? {}) };
+                let changed = false;
+                propsToRemove.forEach(k => { if (k in style) { delete style[k]; changed = true; } });
+                if (changed) { updates[el.id] = { ...el, props: { ...el.props, style } }; count++; }
+            });
+            if (count > 0) {
+                return { action: 'update', elements: updates, message: `Removed ${removePropMatch[1]} from ${count} element(s).` };
+            }
         }
     }
 
@@ -185,6 +269,135 @@ const callDirectAPI = async (
     }
 
     throw new Error(`AI failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
+};
+
+// ─── STREAMING API GATEWAY ─────────────────────────────────────────────────
+// SPRINT-B-FIX-4: SSE streaming variant used by processCloudLLM.
+// Dispatches 'vectra:ai-stream-chunk' CustomEvents as tokens arrive so
+// MagicBar can render a live section-name ticker without polling or prop drilling.
+//
+// FALLBACK: If the provider responds with Content-Type: application/json
+// (some HF Router upstreams ignore stream:true), we parse it as a normal
+// JSON response and dispatch one synthetic chunk event for MagicBar progress.
+//
+// SPRINT-B-FIX-4-PERM: This function MUST NOT be used for the SRE Agent.
+// SRE calls require temperature=0.1 determinism — streaming adds latency with
+// no UX benefit for a 2s fix call. The SRE Agent keeps using callDirectAPI.
+const callDirectAPIWithStreaming = async (
+    systemPrompt: string,
+    userPrompt: string,
+    model: string,
+    temperature: number,
+    apiKey: string
+): Promise<string> => {
+    if (!apiKey) {
+        throw new Error(`No API Key configured for model: ${model}. Check VITE_AI_PRIMARY_KEY in .env`);
+    }
+
+    console.log(`🔑 [Stream] Calling AI (${model.split('/').pop()})...`);
+
+    const MAX_RETRIES = 3;
+    let retries = MAX_RETRIES;
+    let lastError = '';
+
+    while (retries > 0) {
+        try {
+            const res = await fetch(AI_CONFIG.endpoint, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${apiKey}`,
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    model,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt },
+                    ],
+                    max_tokens: 8000,
+                    temperature,
+                    stream: true,
+                }),
+            });
+
+            if (!res.ok) {
+                if (res.status === 503 || res.status === 504) {
+                    console.warn(`⏳ [Stream] Provider timeout (${res.status}) — retry ${MAX_RETRIES - retries + 1}/${MAX_RETRIES} in 5s...`);
+                    await new Promise(r => setTimeout(r, 5000));
+                    retries--;
+                    lastError = `HTTP ${res.status}`;
+                    continue;
+                }
+                if (res.status === 401) throw new Error('Invalid API Key (401). Check your HF token in .env.');
+                if (res.status === 429) throw new Error('Rate limit exceeded (429). Please wait and try again.');
+                const errText = await res.text().catch(() => '');
+                throw new Error(`API Error ${res.status}: ${errText.slice(0, 120)}`);
+            }
+
+            // ── Fallback: provider returned JSON despite stream:true ───────────
+            // Some HF Router upstreams (cheapest tag) ignore the stream parameter.
+            // Detect by Content-Type header or absent body.
+            const contentType = res.headers.get('content-type') ?? '';
+            if (contentType.includes('application/json') || !res.body) {
+                const data = await res.json();
+                const content: string = data.choices?.[0]?.message?.content ?? '';
+                if (content) {
+                    window.dispatchEvent(new CustomEvent('vectra:ai-stream-chunk', {
+                        detail: { text: content, accumulated: content },
+                    }));
+                }
+                console.log(`[Stream] Non-streaming response received (${content.length} chars)`);
+                return content;
+            }
+
+            // ── True SSE streaming path ────────────────────────────────────────
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let fullContent = '';
+            let sseBuffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+
+                sseBuffer += decoder.decode(value, { stream: true });
+                const lines = sseBuffer.split('\n');
+                sseBuffer = lines.pop() ?? '';  // keep incomplete last line in buffer
+
+                for (const line of lines) {
+                    if (!line.startsWith('data: ')) continue;
+                    const payload = line.slice(6).trim();
+                    if (payload === '[DONE]') break;
+                    try {
+                        const json = JSON.parse(payload);
+                        const token: string = json.choices?.[0]?.delta?.content ?? '';
+                        if (token) {
+                            fullContent += token;
+                            window.dispatchEvent(new CustomEvent('vectra:ai-stream-chunk', {
+                                detail: { text: token, accumulated: fullContent },
+                            }));
+                        }
+                    } catch { /* partial JSON frame — normal in SSE, skip */ }
+                }
+            }
+
+            if (!fullContent) throw new Error('Streaming response body was empty');
+            console.log(`[Stream] ✅ Complete (${fullContent.length} chars)`);
+            return fullContent;
+
+        } catch (err: any) {
+            lastError = err.message;
+            if (err.name === 'TypeError' || err.message.toLowerCase().includes('fetch')) {
+                console.warn(`⏳ [Stream] Network block — retry ${MAX_RETRIES - retries + 1}/${MAX_RETRIES} in 5s...`);
+                await new Promise(r => setTimeout(r, 5000));
+                retries--;
+                continue;
+            }
+            throw err;
+        }
+    }
+
+    throw new Error(`AI streaming failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
 };
 
 // ─── DIRECTION C: Canvas Context Builder ─────────────────────────────────────────────────────────────────────────
@@ -515,8 +728,10 @@ ${canvasContext}
 
     let content = '';
     try {
-        console.log('🤖 [Generator] Calling primary model (section-first)...');
-        content = await callDirectAPI(systemPrompt, `Generate: ${prompt}`, AI_CONFIG.primaryModel, 0.65, AI_CONFIG.primaryApiKey);
+        console.log('🤖 [Generator] Calling primary model (section-first, streaming)...');
+        // SPRINT-B-FIX-4: Use streaming variant so MagicBar gets live section ticker.
+        // SRE Agent (fixComponentError) keeps callDirectAPI — see SPRINT-B-FIX-4-PERM.
+        content = await callDirectAPIWithStreaming(systemPrompt, `Generate: ${prompt}`, AI_CONFIG.primaryModel, 0.65, AI_CONFIG.primaryApiKey);
     } catch (e) {
         console.error('❌ [Generator] API call failed:', e);
         return { action: 'error', message: (e as Error).message };

@@ -1415,39 +1415,42 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             if (result.action === 'create' && result.elements && result.rootId) {
                 const isFullPage = /page|website|portfolio|landing|blog|store|dashboard/i.test(prompt);
 
-                // Compute merged result BEFORE calling setElements so we can
-                // push it to history immediately after.
-                let merged: VectraProject;
-                setElements(cur => {
-                    merged = mergeAIContent(
-                        cur,
-                        canvasNodeId,         // ← target the artboard, not the page
-                        result.elements!,
-                        result.rootId!,
-                        isFullPage
-                    );
-                    return merged;
-                });
-
-                // Push to history so Cmd+Z can undo AI generation.
-                setTimeout(() => {
-                    pushHistory(elementsRef.current);
-                    console.log(
-                        '✅ AI: Canvas updated with',
-                        Object.keys(result.elements!).length,
-                        'elements — pushed to history.'
-                    );
-                }, 0);
+                // SPRINT-B-FIX-5: Compute merged directly from elementsRef.current (H-4 pattern).
+                // elementsRef.current is always the latest committed state — same guarantee
+                // as all 60fps event handlers. This replaces the functional setElements +
+                // setTimeout(pushHistory) pattern which had two risks:
+                //   1. The functional updater is invoked twice in StrictMode dev builds,
+                //      meaning `merged` was re-assigned (harmlessly) but the setTimeout
+                //      scheduled from INSIDE an updater would fire twice on the update-path.
+                //   2. setTimeout defers pushHistory by one event-loop tick — a second
+                //      rapid AI call could slip in before history was committed.
+                // Using elementsRef.current + synchronous pushHistory(merged) eliminates
+                // both risks with zero behaviour change in production.
+                const merged = mergeAIContent(
+                    elementsRef.current,
+                    canvasNodeId,
+                    result.elements!,
+                    result.rootId!,
+                    isFullPage
+                );
+                setElements(merged);
+                pushHistory(merged);
+                console.log(
+                    '✅ AI: Canvas updated with',
+                    Object.keys(result.elements!).length,
+                    'elements — pushed to history.'
+                );
 
                 return result.message;
             }
 
             if (result.action === 'update' && result.elements) {
-                setElements(cur => {
-                    const updated = { ...cur, ...result.elements };
-                    setTimeout(() => pushHistory(elementsRef.current), 0);
-                    return updated;
-                });
+                // SPRINT-B-FIX-5: Same pattern as create path — read from ref, push synchronously.
+                // The update path had a worse form of the bug: setTimeout was INSIDE the
+                // functional updater, which StrictMode invokes twice → two history pushes.
+                const updated = { ...elementsRef.current, ...result.elements };
+                setElements(updated);
+                pushHistory(updated);
                 console.log('✅ AI: Updated', Object.keys(result.elements).length, 'elements — pushed to history.');
                 return result.message;
             }

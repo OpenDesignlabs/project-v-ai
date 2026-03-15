@@ -5,17 +5,46 @@ import type { VectraProject, VectraNode } from '../types';
 export const repairJSON = (jsonStr: string): string => {
     let repaired = jsonStr.trim();
 
-    // ── Stage 1: Detect truncation inside the "code" string ──────────────────
+    // ── Stage 0: Single-quote normalisation ────────────────────────────────────
+    // SPRINT-B-FIX-30: Some models (especially smaller ones) output JSON with
+    // single-quoted keys or values. Standard JSON.parse rejects them.
+    // Strategy: replace single-quote delimiters that appear in unambiguous JSON
+    // boundary positions — after { [ , : (with optional whitespace).
+    // We do NOT do a global s/' → "/ replace because single quotes may appear
+    // legitimately inside already-double-quoted JSX strings (e.g. "it's great").
+    //
+    // Pattern: JSON boundary char + optional space + 'value' → "value"
+    //   { 'key': 'val' }  →  { "key": "val" }
+    //   [: 'foo', 'bar']  →  [: "foo", "bar"]
+    repaired = repaired.replace(/([{[,:\s])\s*'([^']*)'/g, (_, boundary, inner) => {
+        return `${boundary}"${inner.replace(/"/g, '\\"')}"`;
+    });
+
+    // ── Stage 1: Trailing-comma stripping ────────────────────────────────────
+    // SPRINT-B-FIX-30: AI models frequently emit trailing commas before } or ]
+    // which are illegal in JSON. Apply iteratively (handles nested cases like
+    // [ 1, 2, { "a": 3, }, ] — one pass removes inner trailing comma, second
+    // removes outer, third sees no change and stops).
+    //
+    //   { "a": 1, }  →  { "a": 1 }
+    //   [1, 2, 3,]   →  [1, 2, 3]
+    //   { "a": { "b": 2, }, }  →  { "a": { "b": 2 } }
+    let prev = '';
+    while (prev !== repaired) {
+        prev = repaired;
+        repaired = repaired.replace(/,(\s*[}\]])/g, '$1');
+    }
+
+    // ── Stage 2: Detect truncation inside the "code" string ──────────────────
+    // (Was Stage 1 — unchanged, renumbered for SPRINT-B-FIX-30 insertion above)
     // The AI most commonly runs out of tokens while writing JSX inside the
     // "code" value. We find that block, check if the string is still open,
     // and inject a safe JSX/function closer before sealing the JSON string.
     const codeKeyIdx = repaired.lastIndexOf('"code"');
     if (codeKeyIdx !== -1) {
-        // Find the opening quote of the code value: "code": "<here>
         const afterKey = repaired.indexOf('"', repaired.indexOf(':', codeKeyIdx) + 1);
         if (afterKey !== -1) {
-            // Walk from the opening quote, respecting escape sequences, to see if it closed
-            let inStr = true; // we START inside the string
+            let inStr = true;
             let escaped = false;
             let closedAt = -1;
             for (let i = afterKey + 1; i < repaired.length; i++) {
@@ -25,16 +54,15 @@ export const repairJSON = (jsonStr: string): string => {
                 if (ch === '"') { inStr = false; closedAt = i; break; }
             }
             if (inStr || closedAt === -1) {
-                // String was never closed — AI was cut off mid-component.
-                // Append a safe JSX+function closer, then seal the JSON string.
                 console.log('🔧 repairJSON: AI truncated inside "code" string — injecting closure');
-                repaired += '</div>}';   // close any open JSX + the function body
-                repaired += '"';         // close the JSON string value
+                repaired += '</div>}';
+                repaired += '"';
             }
         }
     }
 
-    // ── Stage 2: Walk string respecting escapes, count structural brackets ────
+    // ── Stage 3: Walk string counting structural brackets ────────────────────
+    // (Was Stage 2 — unchanged, renumbered)
     let openBraces = 0;
     let openBrackets = 0;
     let inString = false;
@@ -51,7 +79,8 @@ export const repairJSON = (jsonStr: string): string => {
         else if (ch === ']') openBrackets--;
     }
 
-    // ── Stage 3: Close arrays before objects (correct nesting order) ─────────
+    // ── Stage 4: Close arrays before objects (correct nesting order) ────────
+    // (Was Stage 3 — unchanged, renumbered)
     if (openBrackets > 0) {
         console.log(`🔧 repairJSON: Adding ${openBrackets} closing bracket(s)`);
         repaired += ']'.repeat(openBrackets);
