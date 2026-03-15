@@ -59,10 +59,27 @@ const stripAndFixCode = (code: string): string =>
     .replace(/<\/Icon>/g, '')
     .trim();
 
+// ─── ARCH-4: useDebouncedValue ────────────────────────────────────────────────
+// Returns a value that only updates after `delay` ms of inactivity.
+// ARCH-4 [PERMANENT]: ContainerPreview MUST consume this for elements so that
+// 60fps drag updates never reach the SWC compiler. Delay = 400ms.
+function useDebouncedValue<T>(value: T, delay: number): T {
+  const [debounced, setDebounced] = useState<T>(value);
+  useEffect(() => {
+    const t = setTimeout(() => setDebounced(value), delay);
+    return () => clearTimeout(t);
+  }, [value, delay]);
+  return debounced;
+}
+
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export const ContainerPreview = () => {
-  const { elements, compileComponent } = useProject();
+  const { elements: liveElements, compileComponent } = useProject();
+  // ARCH-4 [PERMANENT]: Gate SWC recompiles to settled state only.
+  // 60fps drag style updates are debounced away. buildAndInject only fires
+  // when the user stops editing for 400ms.
+  const elements = useDebouncedValue(liveElements, 400);
   const { previewMode, setPreviewMode, device, setDevice } = useUI();
 
   const iframeRef = useRef<HTMLIFrameElement>(null);

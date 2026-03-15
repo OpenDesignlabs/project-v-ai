@@ -315,8 +315,26 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     const shouldSyncLayoutRef = useRef<boolean>(true);
 
     // H-1 FIX: O(1) child→parent reverse-lookup map.
-    // Rebuilt via useMemo whenever elements changes — one O(N) pass per state update
-    // instead of O(N) per node per render (which was effectively O(N²) at 60fps).
+    //
+    // PERF-2 FIX [PERMANENT]: Gate rebuild to structural changes only.
+    //
+    // PROBLEM: useMemo([elements]) rebuilt the map on EVERY updateProject call,
+    // including 60fps drag/resize where only style.left/top changes. On a 200-node
+    // canvas this ran a full O(N) loop ~60×/sec with an identical output each time.
+    //
+    // SOLUTION: Derive a `structuralKey` that encodes only id+type+children[].
+    // Style props, className, content, and all other fields are intentionally excluded.
+    // The map is only rebuilt when the key actually changes — i.e. when nodes are
+    // added, deleted, moved, or reparented. Style-only updates skip the rebuild.
+    const structuralKey = useMemo(() => {
+        const nodeIds = Object.keys(elements).sort();
+        return nodeIds.map(id => {
+            const node = elements[id];
+            const children = (node.children || []).join(',');
+            return `${id}:${node.type}:[${children}]`;
+        }).join('|');
+    }, [elements]);
+
     const parentMap = useMemo(() => {
         const map = new Map<string, string>();
         for (const [nodeId, node] of Object.entries(elements)) {
@@ -325,7 +343,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
         }
         return map;
-    }, [elements]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [structuralKey]); // PERF-2: rebuild only on topology change, not style updates
+
     // NM-4 FIX: stable ref that always mirrors the latest parentMap so reorderElement
     // (and other callbacks) can do O(1) parent lookups without adding parentMap to deps.
     const parentMapRef = useRef(parentMap);
@@ -1352,6 +1372,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // The three-tier AI logic (generateWithAI → mergeAIContent → fallback)
     // is completely unchanged in behaviour.
     const runAI = useCallback(async (prompt: string): Promise<string | undefined> => {
+        // PERF-3 [PERMANENT]: Signal useFileSync that AI generation is active.
+        // useFileSync reads window.__vectra_ai_running to clamp debounce at 1000ms
+        // and suppress mid-generation VFS writes. Cleared in finally block.
+        (window as any).__vectra_ai_running = true;
         try {
             console.log('🎨 AI Agent processing:', prompt);
 
@@ -1431,6 +1455,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         } catch (e) {
             console.error('❌ AI Error:', e);
             return 'Something went wrong.';
+        } finally {
+            // PERF-3 [PERMANENT]: Always clear the flag so useFileSync resumes normal
+            // debounce. The finally block guarantees this even if runAI throws.
+            (window as any).__vectra_ai_running = false;
         }
     }, [pages, activePageId, pushHistory]);
     // Note: elements intentionally omitted from deps — read via elementsRef

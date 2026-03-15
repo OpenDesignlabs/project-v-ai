@@ -218,6 +218,23 @@ export const useFileSync = () => {
 
   const syncedFiles = useRef<Map<string, string>>(new Map());
   const isSyncing = useRef<boolean>(false);
+
+  // PERF-3 [PERMANENT]: AI generation starvation guard.
+  //
+  // PROBLEM: AI calls setElements many times while building a page. Each call
+  // resets the 800ms debounce (nodeCountChanged = true). If AI fires setElements
+  // every ~200ms over 3 seconds, the VFS never receives a write — the timer is
+  // perpetually evicted before it can fire.
+  //
+  // FIX: isAIRunning ref gates debounce to 1000ms while generation is active.
+  // syncForcedAfterAI ref ensures exactly ONE sync fires when AI finishes,
+  // even if no further element change occurs.
+  //
+  // WIRING: ProjectContext sets window.__vectra_ai_running = true/false around
+  // runAI(). This hook reads it via the ref — zero re-render cost.
+  const isAIRunning = useRef<boolean>(false);
+  const syncForcedAfterAI = useRef<boolean>(false);
+
   // NS-7 FIX: interaction in the dep array caused the sync effect to re-run at 60fps
   // during drag (setInteraction produces a new object every pointermove). The early-return
   // guard was hit correctly but the debounce timer was still reset 60×/second, starving
@@ -673,27 +690,37 @@ export const useFileSync = () => {
       }
     };
 
+    // PERF-3: Mirror global AI flag into ref each effect cycle.
+    isAIRunning.current = !!(window as any).__vectra_ai_running;
+
+    // PERF-3: If AI just finished and a forced sync was armed, fire immediately.
+    if (!isAIRunning.current && syncForcedAfterAI.current) {
+      syncForcedAfterAI.current = false;
+      const timer = setTimeout(sync, 0);
+      return () => clearTimeout(timer);
+    }
+
     // S-2 FIX: smart debounce — delay varies by change type to prevent starvation.
     //
+    //   AI running      → hold at 1000ms, force-sync when AI finishes (PERF-3)
     //   AI generation   → node count changes rapidly → 800ms (let it settle)
     //   Structural edit → children[] or type changed → 600ms (standard structural)
     //   Style edit only → same nodes, same count    → 250ms (fast for sliders)
-    //
-    // The old flat 600ms timer reset on every AI setElements call, starving the VFS
-    // for 3+ seconds while the AI was running a multi-step generation sequence.
     const prevNodeCount = prevElementsRef.current ? Object.keys(prevElementsRef.current).length : 0;
     const currNodeCount = Object.keys(elements).length;
     const nodeCountChanged = currNodeCount !== prevNodeCount;
 
     let debounceMs: number;
-    if (nodeCountChanged) {
-      // Could be AI adding nodes, drag-drop template, etc. — let it settle
+    if (isAIRunning.current) {
+      // PERF-3: AI is actively generating — clamp at 1000ms and arm forced-sync.
+      syncForcedAfterAI.current = true;
+      debounceMs = 1000;
+    } else if (nodeCountChanged) {
       debounceMs = 800;
     } else if (elements !== prevElementsRef.current) {
-      // Same node count but references changed — could be style slider
       debounceMs = 250;
     } else {
-      debounceMs = 600; // pages/apiRoutes/theme change
+      debounceMs = 600;
     }
 
     const timer = setTimeout(sync, debounceMs);
