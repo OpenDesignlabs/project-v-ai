@@ -116,7 +116,7 @@ const InputUnit = ({ label, icon: Icon, value, onChange, step, unit }: { label: 
 export const RightSidebar = () => {
     const { elements, selectedId, updateProject, pushHistory, elementsRef, previewMode, pages, parentMap, setElements, componentRegistry, setMagicBarOpen } = useEditor();
     // Direction A: read activeBreakpoint and setDevice from UIContext
-    const { activeBreakpoint, setDevice } = useUI();
+    const { activeBreakpoint, setDevice, selectedIds } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
     const [fillMode, setFillMode] = useState<FillMode>('solid');
     const [animScope, setAnimScope] = useState<'single' | 'all'>('single');
@@ -396,6 +396,89 @@ export const RightSidebar = () => {
 
     return (
         <div className="w-[320px] bg-[#333333] border-l border-[#252526] h-full flex flex-col">
+
+            {/* UX-4 [PERMANENT]: Multi-select alignment toolbar.
+                Only shown when 2+ elements are selected. All ops use elementsRef.current (H-4)
+                and call updateProject() once per action — never per-element in a loop. */}
+            {selectedIds.size > 1 && (() => {
+                const ids = Array.from(selectedIds);
+                const boxes = ids.map(id => {
+                    const el = elementsRef.current[id];
+                    const s = (el?.props?.style || {}) as Record<string, any>;
+                    return { id, left: parseFloat(String(s.left ?? '0')), top: parseFloat(String(s.top ?? '0')),
+                             width: parseFloat(String(s.width ?? '0')), height: parseFloat(String(s.height ?? '0')) };
+                }).filter(b => !!elementsRef.current[b.id]);
+                if (!boxes.length) return null;
+                const minLeft = Math.min(...boxes.map(b => b.left));
+                const maxRight = Math.max(...boxes.map(b => b.left + b.width));
+                const minTop = Math.min(...boxes.map(b => b.top));
+                const maxBottom = Math.max(...boxes.map(b => b.top + b.height));
+                const centerH = (minLeft + maxRight) / 2;
+                const centerV = (minTop + maxBottom) / 2;
+                const align = (transform: (b: typeof boxes[0]) => { left?: number; top?: number }) => {
+                    const cur = elementsRef.current;
+                    const next = { ...cur };
+                    boxes.forEach(b => {
+                        const el = cur[b.id]; if (!el) return;
+                        const d = transform(b);
+                        next[b.id] = { ...el, props: { ...el.props, style: {
+                            ...el.props.style,
+                            ...(d.left !== undefined ? { left: `${d.left}px` } : {}),
+                            ...(d.top  !== undefined ? { top:  `${d.top}px`  } : {}),
+                        }}};
+                    });
+                    updateProject(next);
+                };
+                const distributeH = () => {
+                    if (boxes.length < 3) return;
+                    const sorted = [...boxes].sort((a, b) => a.left - b.left);
+                    const gap = (maxRight - minLeft - sorted.reduce((s, b) => s + b.width, 0)) / (sorted.length - 1);
+                    let cursor = minLeft;
+                    const cur = elementsRef.current; const next = { ...cur };
+                    sorted.forEach(b => {
+                        const el = cur[b.id]; if (!el) return;
+                        next[b.id] = { ...el, props: { ...el.props, style: { ...el.props.style, left: `${cursor}px` } } };
+                        cursor += b.width + gap;
+                    });
+                    updateProject(next);
+                };
+                const distributeV = () => {
+                    if (boxes.length < 3) return;
+                    const sorted = [...boxes].sort((a, b) => a.top - b.top);
+                    const gap = (maxBottom - minTop - sorted.reduce((s, b) => s + b.height, 0)) / (sorted.length - 1);
+                    let cursor = minTop;
+                    const cur = elementsRef.current; const next = { ...cur };
+                    sorted.forEach(b => {
+                        const el = cur[b.id]; if (!el) return;
+                        next[b.id] = { ...el, props: { ...el.props, style: { ...el.props.style, top: `${cursor}px` } } };
+                        cursor += b.height + gap;
+                    });
+                    updateProject(next);
+                };
+                const ABtns: { title: string; icon: string; onClick: () => void; disabled?: boolean }[] = [
+                    { title: 'Align left edges',      icon: '⊢',   onClick: () => align(_b => ({ left: minLeft })) },
+                    { title: 'Center horizontally',   icon: '↔',   onClick: () => align(b => ({ left: centerH - b.width / 2 })) },
+                    { title: 'Align right edges',     icon: '⊣',   onClick: () => align(b => ({ left: maxRight - b.width })) },
+                    { title: 'Align top edges',       icon: '⊤',   onClick: () => align(_b => ({ top: minTop })) },
+                    { title: 'Center vertically',     icon: '↕',   onClick: () => align(b => ({ top: centerV - b.height / 2 })) },
+                    { title: 'Align bottom edges',    icon: '⊥',   onClick: () => align(b => ({ top: maxBottom - b.height })) },
+                    { title: 'Distribute H', icon: '⇔', onClick: distributeH, disabled: boxes.length < 3 },
+                    { title: 'Distribute V', icon: '⇕', onClick: distributeV, disabled: boxes.length < 3 },
+                ];
+                return (
+                    <div className="p-3 border-b border-[#252526] bg-[#2a2a2d]">
+                        <div className="text-[9px] font-bold text-[#555] uppercase tracking-widest mb-2">{ids.length} elements selected</div>
+                        <div className="grid grid-cols-8 gap-1">
+                            {ABtns.map(({ title, icon, onClick, disabled }) => (
+                                <button key={title} title={title} onClick={onClick} disabled={disabled}
+                                    className="h-7 rounded bg-[#333] border border-[#3e3e42] text-[#888] hover:text-white hover:bg-[#007acc] hover:border-[#007acc] disabled:opacity-30 disabled:cursor-not-allowed transition-all text-sm flex items-center justify-center"
+                                >{icon}</button>
+                            ))}
+                        </div>
+                        <p className="text-[9px] text-[#444] mt-1.5">Shift-click to add/remove · distribute needs 3+</p>
+                    </div>
+                );
+            })()}
 
             {/* IDENTITY HEADER */}
             <div className="p-3 border-b border-[#252526] bg-[#333333]">

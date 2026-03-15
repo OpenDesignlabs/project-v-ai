@@ -9,7 +9,7 @@ import {
     Play, Undo, Redo, Code, Grid,
     Check, X, Copy, Trash2,
     Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck,
-    Cpu, Maximize, Github, ExternalLink, Eye, EyeOff
+    Cpu, Maximize, Github, ExternalLink, Eye, EyeOff, ChevronDown, Plus, FileText
 } from 'lucide-react';
 import {
     publishToGitHub,
@@ -92,7 +92,8 @@ export const Header = () => {
         activePageId, setSelectedId, viewMode, setViewMode, selectedId,
         deleteElement, exitProject, setMagicBarOpen,
         pages, dataSources, framework,
-        theme, projectId // Direction 2 + Gap 2
+        theme, projectId, // Direction 2 + Gap 2
+        realPageId, switchPage, addPage,
     } = useEditor();
 
     const { instance, status } = useContainer();
@@ -101,6 +102,22 @@ export const Header = () => {
     const [copied, setCopied] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [exportDone, setExportDone] = useState(false);
+
+    // UX-22 [PERMANENT]: Page switcher dropdown.
+    // Uses 50ms setTimeout on the global mousedown listener to prevent the
+    // opening click from also triggering the close handler.
+    const [pageDropOpen, setPageDropOpen] = useState(false);
+    const pageDropRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!pageDropOpen) return;
+        const close = (e: MouseEvent) => {
+            if (pageDropRef.current && !pageDropRef.current.contains(e.target as Node)) {
+                setPageDropOpen(false);
+            }
+        };
+        const t = setTimeout(() => window.addEventListener('mousedown', close), 50);
+        return () => { clearTimeout(t); window.removeEventListener('mousedown', close); };
+    }, [pageDropOpen]);
 
     // UX-28 [PERMANENT]: Live save-state indicator.
     // Driven by vectra:save-state events from useFileSync — zero coupling to sync internals.
@@ -599,10 +616,62 @@ export const Header = () => {
                     </div>
                 </div>
 
-                {/* CENTER: View Switcher — flex justify-center, no absolute needed */}
-                <div className="flex items-center justify-center gap-4">
+                {/* CENTER: View Switcher + Page Switcher */}
+                <div className="flex items-center justify-center gap-3">
 
-                    {/* View Mode (Layout | Design)  */}
+                    {/* UX-22: Page Switcher Dropdown */}
+                    <div className="relative" ref={pageDropRef}>
+                        <button
+                            onClick={() => setPageDropOpen(p => !p)}
+                            className={cn(
+                                "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-[11px] font-medium border transition-all max-w-[150px]",
+                                pageDropOpen
+                                    ? "bg-[#007acc]/15 border-[#007acc]/40 text-white"
+                                    : "bg-[#252526] border-[#3e3e42] text-[#ccc] hover:text-white hover:border-[#555]"
+                            )}
+                            title="Switch page (pages)"
+                        >
+                            <FileText size={11} className="text-[#007acc] shrink-0" />
+                            <span className="truncate max-w-[90px]">
+                                {pages.find(p => p.id === realPageId)?.name ?? 'Page'}
+                            </span>
+                            <ChevronDown size={10} className={cn("shrink-0 transition-transform duration-150", pageDropOpen && "rotate-180")} />
+                        </button>
+
+                        {pageDropOpen && (
+                            <div className="absolute top-full left-0 mt-1 z-[200] bg-[#252526] border border-[#3f3f46] rounded-xl shadow-2xl py-1 min-w-[190px]">
+                                <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-widest border-b border-[#2a2a2c] mb-1">Pages</div>
+                                {pages.filter(p => !p.hidden).map(page => (
+                                    <button
+                                        key={page.id}
+                                        onClick={() => { switchPage(page.id); setPageDropOpen(false); }}
+                                        className={cn(
+                                            "w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-left transition-colors",
+                                            page.id === realPageId
+                                                ? "text-white bg-[#007acc]/15"
+                                                : "text-[#aaa] hover:text-white hover:bg-[#2a2a2c]"
+                                        )}
+                                    >
+                                        <span className={cn(
+                                            "w-1.5 h-1.5 rounded-full shrink-0",
+                                            page.id === realPageId ? "bg-[#007acc]" : "bg-[#444]"
+                                        )} />
+                                        <span className="flex-1 truncate">{page.name}</span>
+                                        <span className="text-[9px] text-[#444] font-mono shrink-0 max-w-[60px] truncate">{page.slug}</span>
+                                    </button>
+                                ))}
+                                <div className="h-px bg-[#2a2a2c] my-1" />
+                                <button
+                                    onClick={() => { addPage('New Page'); setPageDropOpen(false); }}
+                                    className="w-full flex items-center gap-2 px-3 py-1.5 text-[11px] text-[#007acc] hover:bg-[#007acc]/10 transition-colors"
+                                >
+                                    <Plus size={11} /> New Page
+                                </button>
+                            </div>
+                        )}
+                    </div>
+
+                    {/* View Mode (Layout | Design) */}
                     <div className="flex items-center bg-[#252526] rounded-md p-0.5 border border-[#3e3e42]">
                         <button
                             onClick={() => setViewMode('skeleton')}

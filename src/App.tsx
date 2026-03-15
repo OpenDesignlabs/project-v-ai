@@ -89,7 +89,7 @@ const LoadingScreen = ({ message = "INITIALIZING ENVIRONMENT" }) => (
 
 const EditorLayout = () => {
   const { history, deleteElement, duplicateElement, selectedId, setSelectedId, setActivePanel,
-          elementsRef, updateProject, projectName } = useEditor();
+          elementsRef, updateProject, projectName, importPage, parentMap } = useEditor();
   const { selectedIds, clearSelection, addToSelection } = useUI();
   const { status } = useContainer();
 
@@ -100,8 +100,8 @@ const EditorLayout = () => {
     return () => { document.title = 'Vectra'; };
   }, [projectName]);
   const [isImportOpen, setIsImportOpen] = useState(false);
-  // Item 1 — session clipboard: stores the last copied node ID.
-  // Module-level ref — survives renders, zero context writes.
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  // UX-3: session clipboard — stores last copied node ID.
   const clipboardRef = useRef<string | null>(null);
 
   useFileSync();
@@ -176,12 +176,44 @@ const EditorLayout = () => {
         (window as any).__vectra_clipboard = null;
       }
 
-      // Item 1: Paste
+      // UX-3 [PERMANENT]: True cross-page paste.
+      // Same-page: duplicateElement() (parent lookup succeeds).
+      // Cross-page: deepClone subtree with fresh IDs, importPage() for atomic insert.
       if ((e.metaKey || e.ctrlKey) && e.key === 'v' && !isTyping) {
-        if (clipboardRef.current) {
+        const srcId = clipboardRef.current;
+        if (!srcId) { /* nothing */ }
+        else {
           e.preventDefault();
-          const newId = duplicateElement(clipboardRef.current);
-          if (newId) setSelectedId(newId);
+          const srcEl = elementsRef.current[srcId];
+          if (srcEl) {
+            // Same-page fast path — parent still exists in current elements
+            if (parentMap.get(srcId)) {
+              const newId = duplicateElement(srcId);
+              if (newId) setSelectedId(newId);
+            } else {
+              // Cross-page: rebuild full subtree with collision-free IDs
+              const src = elementsRef.current;
+              const idMap = new Map<string, string>();
+              const walk = (id: string) => {
+                const node = src[id]; if (!node) return;
+                idMap.set(id, `el-${crypto.randomUUID().replace(/-/g,'').slice(0,12)}`);
+                (node.children || []).forEach(walk);
+              };
+              walk(srcId);
+              const cloned: Record<string, any> = {};
+              idMap.forEach((newId, oldId) => {
+                const node = src[oldId]; if (!node) return;
+                cloned[newId] = {
+                  ...node, id: newId,
+                  children: (node.children || []).map((c: string) => idMap.get(c) ?? c),
+                  props: { ...node.props, style: { ...node.props?.style, left: '120px', top: '120px' } },
+                };
+              });
+              const newRootId = idMap.get(srcId) ?? srcId;
+              importPage({ pageName: `__paste_${newRootId}`, slug: `/__paste_${newRootId}`, nodes: cloned, rootId: newRootId });
+              setSelectedId(newRootId);
+            }
+          }
         }
       }
 
@@ -206,11 +238,20 @@ const EditorLayout = () => {
         }
       }
 
+      // UX-29 [PERMANENT]: ? key opens keyboard shortcut reference.
+      if (e.key === '?' && !isTyping) {
+        e.preventDefault();
+        setShowShortcuts(p => !p);
+      }
+      if (e.key === 'Escape' && showShortcuts) {
+        setShowShortcuts(false);
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [history, deleteElement, duplicateElement, selectedId, selectedIds, setSelectedId,
-    clearSelection, addToSelection, isImportOpen, elementsRef, updateProject]);
+    clearSelection, addToSelection, isImportOpen, elementsRef, updateProject,
+    showShortcuts, importPage, parentMap]);
 
   if (status === 'booting' || status === 'mounting') {
     let message = "Initializing...";
@@ -241,6 +282,75 @@ const EditorLayout = () => {
         <Suspense fallback={null}>
           <ImportModal onClose={() => setIsImportOpen(false)} />
         </Suspense>
+      )}
+
+      {/* UX-29 [PERMANENT]: Keyboard shortcut reference modal. Opened with '?' key. */}
+      {showShortcuts && (
+        <div
+          className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"
+          onClick={() => setShowShortcuts(false)}
+        >
+          <div
+            className="bg-[#1e1e1e] border border-[#3f3f46] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b border-[#2a2a2c]">
+              <h2 className="text-sm font-bold text-white flex items-center gap-2">
+                <span className="text-[#007acc]">⌨</span> Keyboard Shortcuts
+              </h2>
+              <button onClick={() => setShowShortcuts(false)} className="text-[#555] hover:text-[#ccc] transition-colors text-xs">✕</button>
+            </div>
+            <div className="p-6 grid grid-cols-2 gap-8">
+              {([
+                { group: 'Canvas', items: [
+                  ['Space + drag', 'Pan canvas'],
+                  ['Ctrl/⌘ + scroll', 'Zoom in/out'],
+                  ['⌘0 / Ctrl+0', 'Zoom to fit'],
+                  ['Arrow keys', 'Nudge 1px'],
+                  ['Shift + Arrow', 'Nudge 10px'],
+                ]},
+                { group: 'Selection', items: [
+                  ['Click', 'Select element'],
+                  ['Shift + click', 'Multi-select'],
+                  ['Escape', 'Deselect'],
+                  ['Delete / Backspace', 'Delete selected'],
+                  ['Right-click', 'Context menu'],
+                ]},
+                { group: 'Edit', items: [
+                  ['⌘D / Ctrl+D', 'Duplicate'],
+                  ['⌘C / Ctrl+C', 'Copy'],
+                  ['⌘V / Ctrl+V', 'Paste (cross-page)'],
+                  ['⌘Z / Ctrl+Z', 'Undo'],
+                  ['⌘⇧Z / Ctrl+Y', 'Redo'],
+                  ['Double-click', 'Edit text inline'],
+                ]},
+                { group: 'View & Tools', items: [
+                  ['⌘K / Ctrl+K', 'Open AI magic bar'],
+                  ['I', 'Toggle insert drawer'],
+                  ['⌘I / Ctrl+I', 'Import component'],
+                  ['?', 'This shortcut list'],
+                  ['Escape', 'Close panels / dialogs'],
+                ]},
+              ] as const).map(({ group, items }) => (
+                <div key={group}>
+                  <div className="text-[10px] font-bold text-[#007acc] uppercase tracking-widest mb-3">{group}</div>
+                  <div className="space-y-2">
+                    {items.map(([key, desc]) => (
+                      <div key={key} className="flex items-center justify-between gap-4">
+                        <span className="text-[11px] text-[#888]">{desc}</span>
+                        <kbd className="text-[10px] font-mono bg-[#2a2a2d] border border-[#3e3e42] text-[#ccc] px-2 py-0.5 rounded shrink-0">{key}</kbd>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="px-6 py-3 border-t border-[#2a2a2c] text-[10px] text-[#444] text-center">
+              Press <kbd className="font-mono bg-[#2a2a2d] border border-[#3e3e42] text-[#777] px-1.5 py-0.5 rounded">?</kbd> to toggle
+              · <kbd className="font-mono bg-[#2a2a2d] border border-[#3e3e42] text-[#777] px-1.5 py-0.5 rounded">Esc</kbd> to close
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
