@@ -65,20 +65,174 @@ interface VectraFile {
 // ─── UX-27: DESIGN TEMPLATES ─────────────────────────────────────────────────
 // UX-27 [PERMANENT]: Template selection stores AI prompt in sessionStorage key
 // 'vectra_initial_prompt'. Key MUST be cleared by runAI after first use.
+
+// SPRINT-D-FIX-19: Static SVG wireframe previews — one per template.
+// Pure data constants; no live element data involved.
+// NM-THUMB [PERMANENT]: thumbnails MUST NOT use html2canvas — these are
+// hand-authored SVGs describing layout intent, not live canvas captures.
+const TEMPLATE_PREVIEW_SVGS: Record<string, string> = {
+    blank: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
+  <rect width="280" height="130" fill="#0a0a0b"/>
+  <line x1="0" y1="65" x2="280" y2="65" stroke="#ffffff" stroke-opacity="0.03" stroke-width="1"/>
+  <line x1="140" y1="0" x2="140" y2="130" stroke="#ffffff" stroke-opacity="0.03" stroke-width="1"/>
+  <rect x="90" y="48" width="100" height="8" rx="2" fill="#27272a" opacity="0.8"/>
+  <rect x="110" y="62" width="60" height="5" rx="1" fill="#1d1d20" opacity="0.8"/>
+  <rect x="120" y="75" width="40" height="12" rx="3" fill="#3f3f46" opacity="0.6"/>
+</svg>`,
+    landing: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
+  <rect width="280" height="130" fill="#0a0a0b"/>
+  <rect x="0" y="0" width="280" height="14" fill="#1d1d20"/>
+  <rect x="8" y="4" width="28" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="200" y="4" width="16" height="6" rx="1" fill="#27272a"/>
+  <rect x="222" y="4" width="16" height="6" rx="1" fill="#27272a"/>
+  <rect x="244" y="4" width="16" height="6" rx="1" fill="#3b82f6" opacity="0.7"/>
+  <rect x="60" y="22" width="160" height="10" rx="2" fill="#7c3aed" opacity="0.7"/>
+  <rect x="80" y="36" width="120" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="100" y="46" width="80" height="6" rx="1" fill="#27272a"/>
+  <rect x="108" y="57" width="64" height="12" rx="3" fill="#6d28d9" opacity="0.8"/>
+  <rect x="8" y="78" width="80" height="32" rx="3" fill="#1d1d20" stroke="#27272a" stroke-width="1"/>
+  <rect x="100" y="78" width="80" height="32" rx="3" fill="#1d1d20" stroke="#27272a" stroke-width="1"/>
+  <rect x="192" y="78" width="80" height="32" rx="3" fill="#1d1d20" stroke="#27272a" stroke-width="1"/>
+  <rect x="16" y="86" width="20" height="5" rx="1" fill="#4f46e5" opacity="0.6"/>
+  <rect x="16" y="95" width="56" height="4" rx="1" fill="#27272a"/>
+  <rect x="108" y="86" width="20" height="5" rx="1" fill="#4f46e5" opacity="0.6"/>
+  <rect x="108" y="95" width="56" height="4" rx="1" fill="#27272a"/>
+  <rect x="200" y="86" width="20" height="5" rx="1" fill="#4f46e5" opacity="0.6"/>
+  <rect x="200" y="95" width="56" height="4" rx="1" fill="#27272a"/>
+  <rect x="0" y="117" width="280" height="13" fill="#18181b"/>
+</svg>`,
+    dashboard: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
+  <rect width="280" height="130" fill="#0a0a0b"/>
+  <rect x="0" y="0" width="280" height="14" fill="#18181b"/>
+  <rect x="8" y="4" width="20" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="200" y="3" width="70" height="8" rx="2" fill="#27272a"/>
+  <rect x="0" y="14" width="48" height="116" fill="#111113"/>
+  <rect x="8" y="22" width="32" height="6" rx="1" fill="#27272a"/>
+  <rect x="8" y="34" width="32" height="6" rx="1" fill="#3b82f6" opacity="0.5"/>
+  <rect x="8" y="46" width="32" height="6" rx="1" fill="#27272a"/>
+  <rect x="8" y="58" width="32" height="6" rx="1" fill="#27272a"/>
+  <rect x="8" y="70" width="32" height="6" rx="1" fill="#27272a"/>
+  <rect x="56" y="20" width="52" height="28" rx="3" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+  <rect x="62" y="26" width="20" height="5" rx="1" fill="#4f46e5" opacity="0.6"/>
+  <rect x="62" y="35" width="36" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="116" y="20" width="52" height="28" rx="3" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+  <rect x="122" y="26" width="20" height="5" rx="1" fill="#0891b2" opacity="0.6"/>
+  <rect x="122" y="35" width="36" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="176" y="20" width="52" height="28" rx="3" fill="#18181b" stroke="#27272a" stroke-width="1"/>
+  <rect x="182" y="26" width="20" height="5" rx="1" fill="#059669" opacity="0.6"/>
+  <rect x="182" y="35" width="36" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="56" y="56" width="172" height="52" rx="3" fill="#111113" stroke="#27272a" stroke-width="1"/>
+  <rect x="64" y="62" width="40" height="4" rx="1" fill="#3f3f46"/>
+  <polyline points="64,100 84,80 104,88 124,72 144,78 164,65 184,70 204,62 220,68" stroke="#3b82f6" stroke-width="2" fill="none" opacity="0.7" stroke-linecap="round"/>
+  <rect x="236" y="14" width="36" height="94" rx="3" fill="#111113" stroke="#27272a" stroke-width="1"/>
+  <rect x="240" y="20" width="28" height="4" rx="1" fill="#3f3f46"/>
+  <rect x="240" y="30" width="28" height="6" rx="1" fill="#27272a"/>
+  <rect x="240" y="40" width="28" height="6" rx="1" fill="#27272a"/>
+  <rect x="240" y="50" width="28" height="6" rx="1" fill="#27272a"/>
+</svg>`,
+    portfolio: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
+  <rect width="280" height="130" fill="#0a0a0b"/>
+  <rect x="0" y="0" width="280" height="12" fill="#18181b"/>
+  <rect x="8" y="3" width="24" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="220" y="3" width="14" height="6" rx="1" fill="#27272a"/>
+  <rect x="238" y="3" width="14" height="6" rx="1" fill="#27272a"/>
+  <rect x="256" y="3" width="16" height="6" rx="2" fill="#10b981" opacity="0.5"/>
+  <rect x="40" y="18" width="200" height="11" rx="2" fill="#7c3aed" opacity="0.6"/>
+  <rect x="70" y="33" width="140" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="90" y="43" width="100" height="6" rx="1" fill="#27272a"/>
+  <rect x="8" y="58" width="82" height="34" rx="3" fill="#1d1d20" stroke="#3f3f46" stroke-width="1"/>
+  <rect x="99" y="58" width="82" height="34" rx="3" fill="#1d1d20" stroke="#3f3f46" stroke-width="1"/>
+  <rect x="190" y="58" width="82" height="34" rx="3" fill="#1d1d20" stroke="#3f3f46" stroke-width="1"/>
+  <rect x="8" y="98" width="82" height="26" rx="3" fill="#1a1a1d" stroke="#27272a" stroke-width="1"/>
+  <rect x="99" y="98" width="82" height="26" rx="3" fill="#1a1a1d" stroke="#27272a" stroke-width="1"/>
+  <rect x="190" y="98" width="82" height="26" rx="3" fill="#1a1a1d" stroke="#27272a" stroke-width="1"/>
+  <rect x="14" y="63" width="70" height="18" rx="2" fill="#10b981" opacity="0.2"/>
+  <rect x="105" y="63" width="70" height="18" rx="2" fill="#3b82f6" opacity="0.2"/>
+  <rect x="196" y="63" width="70" height="18" rx="2" fill="#a855f7" opacity="0.2"/>
+  <rect x="14" y="103" width="50" height="4" rx="1" fill="#3f3f46"/>
+  <rect x="105" y="103" width="50" height="4" rx="1" fill="#3f3f46"/>
+  <rect x="196" y="103" width="50" height="4" rx="1" fill="#3f3f46"/>
+</svg>`,
+    saas: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
+  <rect width="280" height="130" fill="#0a0a0b"/>
+  <rect x="0" y="0" width="280" height="13" fill="#18181b"/>
+  <rect x="8" y="3.5" width="22" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="90" y="3.5" width="14" height="6" rx="1" fill="#27272a"/>
+  <rect x="110" y="3.5" width="14" height="6" rx="1" fill="#27272a"/>
+  <rect x="130" y="3.5" width="14" height="6" rx="1" fill="#27272a"/>
+  <rect x="248" y="2" width="24" height="9" rx="2" fill="#f59e0b" opacity="0.7"/>
+  <rect x="50" y="20" width="180" height="10" rx="2" fill="#d97706" opacity="0.6"/>
+  <rect x="70" y="34" width="140" height="5" rx="1" fill="#3f3f46"/>
+  <rect x="85" y="43" width="110" height="5" rx="1" fill="#27272a"/>
+  <rect x="96" y="53" width="88" height="10" rx="3" fill="#b45309" opacity="0.8"/>
+  <rect x="6" y="72" width="82" height="50" rx="3" fill="#1d1d20" stroke="#3f3f46" stroke-width="1"/>
+  <rect x="99" y="68" width="82" height="56" rx="3" fill="#1a1a2e" stroke="#6d28d9" stroke-width="1.5"/>
+  <rect x="192" y="72" width="82" height="50" rx="3" fill="#1d1d20" stroke="#3f3f46" stroke-width="1"/>
+  <rect x="110" y="64" width="60" height="8" rx="2" fill="#7c3aed" opacity="0.9"/>
+  <rect x="118" y="66.5" width="44" height="3" rx="1" fill="white" opacity="0.8"/>
+  <rect x="12" y="80" width="40" height="7" rx="1" fill="#3f3f46"/>
+  <rect x="12" y="92" width="60" height="3" rx="1" fill="#27272a"/>
+  <rect x="12" y="99" width="60" height="3" rx="1" fill="#27272a"/>
+  <rect x="12" y="106" width="60" height="3" rx="1" fill="#27272a"/>
+  <rect x="105" y="78" width="40" height="7" rx="1" fill="#a78bfa"/>
+  <rect x="105" y="90" width="68" height="3" rx="1" fill="#27272a"/>
+  <rect x="105" y="97" width="68" height="3" rx="1" fill="#27272a"/>
+  <rect x="105" y="104" width="68" height="3" rx="1" fill="#27272a"/>
+  <rect x="105" y="113" width="68" height="8" rx="2" fill="#7c3aed" opacity="0.7"/>
+  <rect x="198" y="80" width="40" height="7" rx="1" fill="#3f3f46"/>
+  <rect x="198" y="92" width="60" height="3" rx="1" fill="#27272a"/>
+  <rect x="198" y="99" width="60" height="3" rx="1" fill="#27272a"/>
+  <rect x="198" y="106" width="60" height="3" rx="1" fill="#27272a"/>
+</svg>`,
+    blog: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
+  <rect width="280" height="130" fill="#0a0a0b"/>
+  <rect x="0" y="0" width="280" height="13" fill="#18181b"/>
+  <rect x="8" y="3.5" width="28" height="6" rx="1" fill="#3f3f46"/>
+  <rect x="180" y="3.5" width="16" height="6" rx="1" fill="#27272a"/>
+  <rect x="200" y="3.5" width="16" height="6" rx="1" fill="#27272a"/>
+  <rect x="220" y="3.5" width="16" height="6" rx="1" fill="#27272a"/>
+  <rect x="6" y="18" width="172" height="40" rx="3" fill="#ec4899" opacity="0.15" stroke="#ec4899" stroke-opacity="0.2" stroke-width="1"/>
+  <rect x="12" y="23" width="100" height="7" rx="1" fill="#db2777" opacity="0.6"/>
+  <rect x="12" y="34" width="140" height="4" rx="1" fill="#3f3f46"/>
+  <rect x="12" y="42" width="110" height="4" rx="1" fill="#27272a"/>
+  <rect x="12" y="50" width="60" height="4" rx="1" fill="#27272a"/>
+  <rect x="6" y="64" width="172" height="26" rx="2" fill="#1a1a1d" stroke="#27272a" stroke-width="1"/>
+  <rect x="12" y="69" width="90" height="5" rx="1" fill="#3f3f46"/>
+  <rect x="12" y="78" width="130" height="4" rx="1" fill="#27272a"/>
+  <rect x="12" y="85" width="100" height="4" rx="1" fill="#27272a"/>
+  <rect x="6" y="96" width="172" height="26" rx="2" fill="#1a1a1d" stroke="#27272a" stroke-width="1"/>
+  <rect x="12" y="101" width="80" height="5" rx="1" fill="#3f3f46"/>
+  <rect x="12" y="110" width="130" height="4" rx="1" fill="#27272a"/>
+  <rect x="12" y="117" width="90" height="4" rx="1" fill="#27272a"/>
+  <rect x="185" y="18" width="89" height="104" rx="3" fill="#111113" stroke="#27272a" stroke-width="1"/>
+  <rect x="191" y="24" width="52" height="5" rx="1" fill="#3f3f46"/>
+  <rect x="191" y="34" width="72" height="6" rx="1" fill="#1d1d20" stroke="#27272a" stroke-width="1"/>
+  <rect x="191" y="44" width="72" height="6" rx="1" fill="#1d1d20" stroke="#27272a" stroke-width="1"/>
+  <rect x="191" y="54" width="72" height="6" rx="1" fill="#1d1d20" stroke="#27272a" stroke-width="1"/>
+  <rect x="191" y="68" width="52" height="5" rx="1" fill="#3f3f46"/>
+  <rect x="191" y="78" width="36" height="4" rx="1" fill="#27272a"/>
+  <rect x="191" y="86" width="52" height="4" rx="1" fill="#27272a"/>
+  <rect x="191" y="94" width="44" height="4" rx="1" fill="#27272a"/>
+  <rect x="191" y="102" width="48" height="4" rx="1" fill="#27272a"/>
+</svg>`,
+};
+
 interface DesignTemplate {
     id: string;
     label: string;
     description: string;
     icon: React.ReactNode;
     accent: string;
+    // SPRINT-D-FIX-19: inline SVG wireframe preview
+    svgPreview: string;
 }
 const DESIGN_TEMPLATES: DesignTemplate[] = [
-    { id: 'blank',     label: 'Blank Canvas',  description: 'Start from scratch with an empty artboard',          icon: <Box size={20} />,           accent: 'border-zinc-700 bg-zinc-900/30' },
-    { id: 'landing',   label: 'Landing Page',  description: 'Hero + features + CTA sections ready to edit',       icon: <LayoutTemplate size={20} />, accent: 'border-purple-500/30 bg-purple-900/10' },
-    { id: 'dashboard', label: 'Dashboard',     description: 'Sidebar nav + stat cards + content area',            icon: <Monitor size={20} />,       accent: 'border-blue-500/30 bg-blue-900/10' },
-    { id: 'portfolio', label: 'Portfolio',     description: 'Clean hero + project grid + contact section',        icon: <Star size={20} />,          accent: 'border-emerald-500/30 bg-emerald-900/10' },
-    { id: 'saas',      label: 'SaaS',          description: 'Pricing + features + testimonials layout',            icon: <Zap size={20} />,           accent: 'border-amber-500/30 bg-amber-900/10' },
-    { id: 'blog',      label: 'Blog',          description: 'Article list + post header + sidebar',               icon: <Sparkles size={20} />,      accent: 'border-pink-500/30 bg-pink-900/10' },
+    { id: 'blank',     label: 'Blank Canvas',  description: 'Start from scratch with an empty artboard',          icon: <Box size={16} />,           accent: 'border-zinc-700 bg-zinc-900/30',          svgPreview: TEMPLATE_PREVIEW_SVGS.blank     },
+    { id: 'landing',   label: 'Landing Page',  description: 'Hero + features + CTA sections ready to edit',       icon: <LayoutTemplate size={16} />, accent: 'border-purple-500/30 bg-purple-900/10',   svgPreview: TEMPLATE_PREVIEW_SVGS.landing   },
+    { id: 'dashboard', label: 'Dashboard',     description: 'Sidebar nav + stat cards + content area',            icon: <Monitor size={16} />,        accent: 'border-blue-500/30 bg-blue-900/10',       svgPreview: TEMPLATE_PREVIEW_SVGS.dashboard },
+    { id: 'portfolio', label: 'Portfolio',     description: 'Clean hero + project grid + contact section',        icon: <Star size={16} />,           accent: 'border-emerald-500/30 bg-emerald-900/10', svgPreview: TEMPLATE_PREVIEW_SVGS.portfolio },
+    { id: 'saas',      label: 'SaaS',          description: 'Pricing + features + testimonials layout',            icon: <Zap size={16} />,            accent: 'border-amber-500/30 bg-amber-900/10',     svgPreview: TEMPLATE_PREVIEW_SVGS.saas      },
+    { id: 'blog',      label: 'Blog',          description: 'Article list + post header + sidebar',               icon: <Sparkles size={16} />,       accent: 'border-pink-500/30 bg-pink-900/10',       svgPreview: TEMPLATE_PREVIEW_SVGS.blog      },
 ];
 
 // ─── FRAMEWORK METADATA (Phase E — preserved exactly) —————————————————
@@ -504,6 +658,12 @@ export const Dashboard = () => {
     const [importError, setImportError] = useState<string | null>(null);
     const importFileRef = useRef<HTMLInputElement>(null);
 
+    // SPRINT-D-FIX-20: project list sort mode.
+    // 'recent'    — descending lastEditedAt (existing default — no change for current users)
+    // 'name'      — ascending alpha by project name
+    // 'framework' — group by framework slug, then alpha within group
+    const [sortMode, setSortMode] = useState<'recent' | 'name' | 'framework'>('recent');
+
     // ── Sprint 2: soft-delete state + handlers ─────────────────────────────
     const UNDO_WINDOW_MS = 5000;
 
@@ -630,8 +790,19 @@ export const Dashboard = () => {
         window.dispatchEvent(new CustomEvent('vectra:open-project'));
     };
 
-    // Sorted: most recently edited first
-    const sortedProjects = [...projectIndex].sort((a, b) => b.lastEditedAt - a.lastEditedAt);
+    // SPRINT-D-FIX-20: Sort projects according to active sort mode.
+    // Default 'recent' preserves existing behaviour (no observable change for current users).
+    const sortedProjects = [...projectIndex].sort((a, b) => {
+        if (sortMode === 'name') {
+            return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        }
+        if (sortMode === 'framework') {
+            const fwCmp = a.framework.localeCompare(b.framework);
+            return fwCmp !== 0 ? fwCmp : a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
+        }
+        // 'recent': descending lastEditedAt — pre-existing default
+        return b.lastEditedAt - a.lastEditedAt;
+    });
 
     const filteredProjects = searchQuery.trim()
         ? sortedProjects.filter(p =>
@@ -728,10 +899,11 @@ export const Dashboard = () => {
                         </div>
                     </div>
 
-                    {/* Search bar */}
+                    {/* Search bar + sort toggle — SPRINT-D-FIX-20 */}
                     {projectIndex.length > 0 && (
-                        <div className="flex gap-4 mb-8">
-                            <div className="relative max-w-sm w-full">
+                        <div className="flex items-center gap-3 mb-8 flex-wrap">
+                            {/* Search */}
+                            <div className="relative max-w-sm w-full flex-1 min-w-[160px]">
                                 <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500 pointer-events-none" />
                                 <input
                                     id="project-search"
@@ -741,6 +913,28 @@ export const Dashboard = () => {
                                     onChange={e => setSearchQuery(e.target.value)}
                                     className="w-full bg-[#18181b] border border-white/8 rounded-lg pl-9 pr-4 py-2.5 text-sm text-zinc-300 outline-none focus:border-[#007acc]/50 transition-colors placeholder:text-zinc-600"
                                 />
+                            </div>
+
+                            {/* Sort mode pills */}
+                            <div className="flex items-center gap-1 bg-[#111113] border border-white/5 rounded-lg p-0.5 shrink-0">
+                                {([
+                                    { id: 'recent'    as const, label: 'Recent' },
+                                    { id: 'name'      as const, label: 'A–Z'    },
+                                    { id: 'framework' as const, label: 'Stack'  },
+                                ] as const).map(opt => (
+                                    <button
+                                        key={opt.id}
+                                        onClick={() => setSortMode(opt.id)}
+                                        className={cn(
+                                            'px-3 py-1.5 rounded-md text-[11px] font-semibold transition-all',
+                                            sortMode === opt.id
+                                                ? 'bg-white/8 text-zinc-200 shadow-sm'
+                                                : 'text-zinc-600 hover:text-zinc-400',
+                                        )}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
                             </div>
                         </div>
                     )}
@@ -904,26 +1098,39 @@ export const Dashboard = () => {
                         {DESIGN_TEMPLATES.map(tpl => {
                             const isSel = selectedTemplate === tpl.id;
                             return (
+                                // SPRINT-D-FIX-19: SVG wireframe preview + compact card body
                                 <button
                                     key={tpl.id}
                                     onClick={() => setSelectedTemplate(tpl.id)}
                                     className={cn(
-                                        'relative flex flex-col items-start gap-2 p-4 rounded-xl border text-left transition-all duration-150',
+                                        'relative flex flex-col items-start rounded-xl border text-left transition-all duration-150 overflow-hidden',
                                         tpl.accent,
                                         isSel
-                                            ? 'ring-2 ring-white/30 scale-[1.02] shadow-lg'
-                                            : 'hover:scale-[1.01] hover:brightness-110 opacity-75 hover:opacity-100'
+                                            ? 'ring-2 ring-white/30 scale-[1.01] shadow-lg shadow-black/40'
+                                            : 'hover:scale-[1.005] hover:brightness-110 opacity-80 hover:opacity-100'
                                     )}
                                 >
-                                    {isSel && (
-                                        <div className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full bg-white flex items-center justify-center">
-                                            <CheckCircle2 size={12} className="text-black" />
+                                    {/* SVG wireframe preview */}
+                                    <div className="w-full overflow-hidden rounded-t-xl bg-[#060608] border-b border-white/5 relative">
+                                        <img
+                                            src={`data:image/svg+xml,${encodeURIComponent(tpl.svgPreview)}`}
+                                            alt={`${tpl.label} layout preview`}
+                                            className="w-full object-cover"
+                                            draggable={false}
+                                        />
+                                        {/* Fade gradient blends preview into card body */}
+                                        <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
+                                    </div>
+                                    {/* Card body */}
+                                    <div className="p-3 flex items-start gap-2.5 w-full">
+                                        <div className="text-zinc-400 shrink-0 mt-0.5">{tpl.icon}</div>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="text-sm font-bold text-white leading-tight">{tpl.label}</div>
+                                            <div className="text-[10px] text-zinc-500 mt-0.5 leading-snug">{tpl.description}</div>
                                         </div>
-                                    )}
-                                    <div className="text-zinc-300">{tpl.icon}</div>
-                                    <div>
-                                        <div className="text-sm font-bold text-white">{tpl.label}</div>
-                                        <div className="text-[11px] text-zinc-500 mt-0.5 leading-snug">{tpl.description}</div>
+                                        {isSel && (
+                                            <CheckCircle2 size={14} className="text-white shrink-0 mt-0.5" />
+                                        )}
                                     </div>
                                 </button>
                             );

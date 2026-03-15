@@ -89,7 +89,7 @@ const LoadingScreen = ({ message = "INITIALIZING ENVIRONMENT" }) => (
 
 const EditorLayout = () => {
   const { history, deleteElement, duplicateElement, selectedId, setSelectedId, setActivePanel,
-          elementsRef, updateProject, projectName, importPage, parentMap } = useEditor();
+          elementsRef, updateProject, pushHistory, projectName, importPage, parentMap } = useEditor();
   const { selectedIds, clearSelection, addToSelection } = useUI();
   const { status } = useContainer();
 
@@ -217,6 +217,114 @@ const EditorLayout = () => {
         }
       }
 
+      // SPRINT-D-FIX-23: ⌘G / Ctrl+G — group ≥2 multi-selected siblings into a container.
+      //
+      // CONSTRAINTS:
+      //   • Requires selectedIds.size >= 2. Single-select: no-op.
+      //   • All selected elements MUST share the same parent (canvas-mode siblings).
+      //     Cross-parent grouping is skipped with console.warn — clean fail, no mutation.
+      //   • NS-1: groupId uses crypto.randomUUID().
+      //   • C-1/C-2: all mutations use spread-clone.
+      //   • updateProject() calls pushHistory internally (H-3) — no double-push.
+      //   • PERF-2: parentMap.get() is O(1) per element — runs once on keydown.
+      //
+      // BOUNDING BOX:
+      //   1. Read each element’s absolute left/top/width/height.
+      //   2. Compute minX/minY → maxX/maxY across the set.
+      //   3. Container positioned at (minX, minY) with size (maxX−minX, maxY−minY).
+      //   4. Each child’s left/top becomes relative to the container origin:
+      //      childRelLeft = childAbsLeft − containerLeft
+      if ((e.metaKey || e.ctrlKey) && e.key === 'g' && !isTyping) {
+        e.preventDefault();
+
+        const idsToGroup = [...selectedIds].filter(id => !PROTECTED.has(id));
+        if (idsToGroup.length < 2) return;
+
+        const cur = elementsRef.current;
+
+        // All selected elements must share the same parent
+        const parentIds = new Set(idsToGroup.map(id => parentMap.get(id)));
+        if (parentIds.size !== 1) {
+          console.warn('[Vectra] ⌘G: selected elements have different parents — group skipped');
+          return;
+        }
+        const sharedParentId = [...parentIds][0];
+        if (!sharedParentId) return;
+        const sharedParent = cur[sharedParentId];
+        if (!sharedParent) return;
+
+        // Compute bounding box across all elements
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const id of idsToGroup) {
+          const el = cur[id];
+          if (!el?.props?.style) continue;
+          const s = el.props.style as Record<string, string | number>;
+          const l = parseFloat(String(s.left   ?? 0));
+          const t = parseFloat(String(s.top    ?? 0));
+          const w = parseFloat(String(s.width  ?? 100));
+          const h = parseFloat(String(s.height ?? (s.minHeight ?? 100)));
+          minX = Math.min(minX, l);     minY = Math.min(minY, t);
+          maxX = Math.max(maxX, l + w); maxY = Math.max(maxY, t + h);
+        }
+        if (!isFinite(minX)) return; // no parsable positions
+
+        const groupW = Math.max(maxX - minX, 20);
+        const groupH = Math.max(maxY - minY, 20);
+        // NS-1: crypto.randomUUID() — no Date.now()+random collisions
+        const groupId = `container-${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`;
+
+        const next = { ...cur };
+
+        // 1. Create the new container node
+        next[groupId] = {
+          id: groupId,
+          type: 'container',
+          name: 'Group',
+          children: idsToGroup,
+          props: {
+            layoutMode: 'canvas',
+            className: '',
+            style: {
+              position: 'absolute',
+              left:   `${minX}px`,
+              top:    `${minY}px`,
+              width:  `${groupW}px`,
+              height: `${groupH}px`,
+            },
+          },
+        };
+
+        // 2. Reposition each child relative to the new container origin
+        for (const id of idsToGroup) {
+          const el = cur[id];
+          if (!el) continue;
+          const s = (el.props?.style ?? {}) as Record<string, string | number>;
+          const relLeft = parseFloat(String(s.left ?? 0)) - minX;
+          const relTop  = parseFloat(String(s.top  ?? 0)) - minY;
+          next[id] = {
+            ...el,
+            props: { ...el.props, style: { ...el.props.style, left: `${relLeft}px`, top: `${relTop}px` } },
+          };
+        }
+
+        // 3. Replace grouped children with the container in the shared parent's children array.
+        //    Preserve sibling order: container inserted at position of the first grouped child.
+        const groupIdSet = new Set(idsToGroup);
+        const oldChildren = sharedParent.children ?? [];
+        const firstIdx = oldChildren.findIndex(c => groupIdSet.has(c));
+        const newChildren = [
+          ...oldChildren.slice(0, firstIdx).filter(c => !groupIdSet.has(c)),
+          groupId,
+          ...oldChildren.slice(firstIdx + 1).filter(c => !groupIdSet.has(c)),
+        ];
+        next[sharedParentId] = { ...sharedParent, children: newChildren };
+
+        // updateProject() calls pushHistory internally (H-3) — no separate call needed
+        updateProject(next);
+        setSelectedId(groupId);
+        clearSelection();
+      }
+
       // Item 1 + 2: Duplicate (single or multi)
       if ((e.metaKey || e.ctrlKey) && e.key === 'd' && !isTyping) {
         e.preventDefault();
@@ -250,7 +358,7 @@ const EditorLayout = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [history, deleteElement, duplicateElement, selectedId, selectedIds, setSelectedId,
-    clearSelection, addToSelection, isImportOpen, elementsRef, updateProject,
+    clearSelection, addToSelection, isImportOpen, elementsRef, updateProject, pushHistory,
     showShortcuts, importPage, parentMap]);
 
   if (status === 'booting' || status === 'mounting') {
@@ -318,6 +426,7 @@ const EditorLayout = () => {
                 ]},
                 { group: 'Edit', items: [
                   ['⌘D / Ctrl+D', 'Duplicate'],
+                  ['⌘G / Ctrl+G', 'Group into container'],
                   ['⌘C / Ctrl+C', 'Copy'],
                   ['⌘V / Ctrl+V', 'Paste (cross-page)'],
                   ['⌘Z / Ctrl+Z', 'Undo'],
