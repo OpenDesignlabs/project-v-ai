@@ -1278,24 +1278,73 @@ export const RightSidebar = () => {
                         </Section>
 
                         <Section title="Prototyping">
+                            {/* SPRINT-C-FIX-14: On Click now supports External URL.
+                                '__external__' is a sentinel stored in linkTo.
+                                Guard in generateNodeCode prevents it reaching
+                                React Router <Link> (would produce broken route).
+                                When '__external__' is selected, props.href is the
+                                actual URL and props.target controls tab behaviour. */}
                             <div className="space-y-3">
                                 <Row label="On Click">
                                     <SelectInput
                                         value={props.linkTo || ''}
-                                        onChange={(v: string) => updateProp('linkTo', v || undefined)}
+                                        onChange={(v: string) => {
+                                            updateProp('linkTo', v || undefined);
+                                            if (v !== '__external__') {
+                                                updateProp('href', undefined);
+                                                updateProp('target', undefined);
+                                            }
+                                        }}
                                         options={[
                                             { value: '', label: '— No Action —' },
+                                            { value: '__external__', label: '↗ External URL' },
                                             ...pages.map(p => ({
                                                 value: p.slug,
-                                                label: `Maps to: ${p.name}`
+                                                label: `Navigate → ${p.name}`,
                                             }))
                                         ]}
                                     />
                                 </Row>
-                                {props.linkTo && (
+
+                                {/* External URL controls */}
+                                {props.linkTo === '__external__' && (
+                                    <div className="space-y-2 pl-2 border-l-2 border-blue-500/30">
+                                        <Row label="URL">
+                                            <TextInput
+                                                value={String(props.href ?? '')}
+                                                onChange={(v: string) => updateProp('href', v || undefined)}
+                                                placeholder="https://example.com"
+                                                icon={ArrowRight}
+                                            />
+                                        </Row>
+                                        <Row label="Opens in">
+                                            <ToggleGroup
+                                                value={String(props.target ?? '_self')}
+                                                onChange={(v: string) => updateProp('target', v)}
+                                                options={[
+                                                    { value: '_self', label: 'Same tab', icon: <span className="text-[9px] font-bold">↩</span> },
+                                                    { value: '_blank', label: 'New tab', icon: <span className="text-[9px] font-bold">↗</span> },
+                                                ]}
+                                            />
+                                        </Row>
+                                        {props.href && (
+                                            <div className="text-[10px] text-[#666] bg-[#252526] p-2 rounded border border-[#3e3e42] flex items-start gap-2">
+                                                <ArrowRight size={12} className="mt-0.5 shrink-0" />
+                                                <span>
+                                                    Links to{' '}
+                                                    <strong className="text-[#007acc] font-mono break-all">{String(props.href)}</strong>
+                                                    {props.target === '_blank' && <span className="text-[#555]"> — opens in new tab with <code className="text-[9px] bg-[#1e1e1e] px-1 rounded">rel="noopener noreferrer"</code></span>}
+                                                </span>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Internal navigation info banner */}
+                                {props.linkTo && props.linkTo !== '__external__' && (
                                     <div className="text-[10px] text-[#666] bg-[#252526] p-2 rounded border border-[#3e3e42] flex items-start gap-2">
-                                        <ArrowRight size={12} className="mt-0.5" />
-                                        <span>Clicking this element will navigate to <strong className="text-[#007acc]">{props.linkTo}</strong></span>
+                                        <ArrowRight size={12} className="mt-0.5 shrink-0" />
+                                        <span>Navigates to <strong className="text-[#007acc]">{props.linkTo}</strong> using React Router <code className="text-[9px] bg-[#1e1e1e] px-1 rounded">{'<Link>'}</code></span>
                                     </div>
                                 )}
                             </div>
@@ -1304,25 +1353,136 @@ export const RightSidebar = () => {
                 )}
 
                 {/* --- TAB: SETTINGS --- */}
+                {/* SPRINT-C-FIX-11: Settings tab fully implemented.
+                    All writes use updateProject (C-1/C-2 spread-clone).
+                    aria-label/role/tabIndex write into element.props —
+                    RenderNode spreads these onto native DOM elements immediately
+                    so accessibility is live on the canvas without an export.
+                    data-testid / data-cy stored in props for Playwright/Cypress. */}
                 {activeTab === 'settings' && (
                     <>
+                        {/* ── Metadata ─────────────────────────────────── */}
                         <Section title="Metadata">
-                            <Row label="ID">
+                            <Row label="Node ID">
                                 <TextInput
                                     value={element.id}
-                                    onChange={() => { }}
+                                    onChange={() => { /* read-only */ }}
                                     icon={Hash}
                                 />
                             </Row>
-                            <div className="mt-2 text-[10px] text-[#555]">
-                                Unique identifier used for code generation.
-                            </div>
+                            <p className="mt-1 text-[10px] text-[#484848] leading-relaxed">
+                                Read-only UUID used for code generation and{' '}
+                                <code className="text-[#555] bg-[#1e1e1e] px-1 rounded text-[9px]">data-vid</code>{' '}
+                                canvas targeting.
+                            </p>
                         </Section>
 
-                        <Section title="Custom Attributes">
-                            <div className="p-4 text-center text-xs text-[#666]">
-                                ARIA labels and data attributes configuration coming soon.
+                        {/* ── Accessibility ─────────────────────────────── */}
+                        <Section title="Accessibility (ARIA)">
+                            <div className="space-y-2.5">
+                                <Row label="aria-label">
+                                    <TextInput
+                                        value={String((element.props as any)['aria-label'] ?? '')}
+                                        onChange={(v: string) => updateProject({
+                                            ...elements,
+                                            [element.id]: {
+                                                ...element,
+                                                props: { ...element.props, 'aria-label': v || undefined },
+                                            },
+                                        })}
+                                        placeholder="Describe this element..."
+                                        icon={Hand}
+                                    />
+                                </Row>
+                                <Row label="role">
+                                    <SelectInput
+                                        value={String((element.props as any)['role'] ?? '')}
+                                        onChange={(v: string) => updateProject({
+                                            ...elements,
+                                            [element.id]: {
+                                                ...element,
+                                                props: { ...element.props, role: v || undefined },
+                                            },
+                                        })}
+                                        options={[
+                                            { value: '', label: '— default —' },
+                                            { value: 'button', label: 'button' },
+                                            { value: 'link', label: 'link' },
+                                            { value: 'heading', label: 'heading' },
+                                            { value: 'img', label: 'img' },
+                                            { value: 'navigation', label: 'navigation' },
+                                            { value: 'main', label: 'main' },
+                                            { value: 'section', label: 'section' },
+                                            { value: 'article', label: 'article' },
+                                            { value: 'aside', label: 'aside' },
+                                            { value: 'dialog', label: 'dialog' },
+                                            { value: 'banner', label: 'banner (header)' },
+                                            { value: 'contentinfo', label: 'contentinfo (footer)' },
+                                            { value: 'region', label: 'region' },
+                                            { value: 'list', label: 'list' },
+                                            { value: 'listitem', label: 'listitem' },
+                                            { value: 'none', label: 'none (hide from SR)' },
+                                        ]}
+                                    />
+                                </Row>
+                                <Row label="tabIndex">
+                                    <NumberInput
+                                        label=""
+                                        value={Number((element.props as any)['tabIndex'] ?? 0)}
+                                        onChange={(v: number) => updateProject({
+                                            ...elements,
+                                            [element.id]: {
+                                                ...element,
+                                                props: { ...element.props, tabIndex: v },
+                                            },
+                                        })}
+                                        min={-1}
+                                        max={99}
+                                        step={1}
+                                    />
+                                </Row>
                             </div>
+                            <p className="mt-2 text-[10px] text-[#484848] leading-relaxed">
+                                ARIA attributes apply live on the canvas and are written into exported JSX.
+                                Use <code className="text-[#555] bg-[#1e1e1e] px-1 rounded text-[9px]">aria-label</code> for icon-only buttons.
+                            </p>
+                        </Section>
+
+                        {/* ── Test & Data Attributes ──────────────────── */}
+                        <Section title="Test IDs & Data Attributes">
+                            <div className="space-y-2.5">
+                                <Row label="data-testid">
+                                    <TextInput
+                                        value={String((element.props as any)['data-testid'] ?? '')}
+                                        onChange={(v: string) => updateProject({
+                                            ...elements,
+                                            [element.id]: {
+                                                ...element,
+                                                props: { ...element.props, 'data-testid': v || undefined },
+                                            },
+                                        })}
+                                        placeholder="e.g. submit-button"
+                                        icon={Hash}
+                                    />
+                                </Row>
+                                <Row label="data-cy">
+                                    <TextInput
+                                        value={String((element.props as any)['data-cy'] ?? '')}
+                                        onChange={(v: string) => updateProject({
+                                            ...elements,
+                                            [element.id]: {
+                                                ...element,
+                                                props: { ...element.props, 'data-cy': v || undefined },
+                                            },
+                                        })}
+                                        placeholder="e.g. checkout-form"
+                                        icon={Hash}
+                                    />
+                                </Row>
+                            </div>
+                            <p className="mt-2 text-[10px] text-[#484848] leading-relaxed">
+                                For Playwright, Cypress, and Jest/Testing Library. Written into exported JSX.
+                            </p>
                         </Section>
                     </>
                 )}
