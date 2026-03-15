@@ -88,9 +88,17 @@ const LoadingScreen = ({ message = "INITIALIZING ENVIRONMENT" }) => (
 );
 
 const EditorLayout = () => {
-  const { history, deleteElement, duplicateElement, selectedId, setSelectedId, setActivePanel } = useEditor();
+  const { history, deleteElement, duplicateElement, selectedId, setSelectedId, setActivePanel,
+          elementsRef, updateProject, projectName } = useEditor();
   const { selectedIds, clearSelection, addToSelection } = useUI();
   const { status } = useContainer();
+
+  // UX-30 [PERMANENT]: Browser tab title tracks active project name.
+  // Resets to 'Vectra' on unmount (user returns to dashboard).
+  useEffect(() => {
+    document.title = projectName ? `${projectName} — Vectra` : 'Vectra';
+    return () => { document.title = 'Vectra'; };
+  }, [projectName]);
   const [isImportOpen, setIsImportOpen] = useState(false);
   // Item 1 — session clipboard: stores the last copied node ID.
   // Module-level ref — survives renders, zero context writes.
@@ -106,6 +114,31 @@ const EditorLayout = () => {
 
       const PROTECTED = new Set(['application-root', 'page-home', 'main-frame',
         'main-frame-desktop', 'main-frame-mobile', 'main-canvas']);
+
+      // UX-2 [PERMANENT]: Arrow key nudge — 1px per tap, 10px with Shift.
+      // Reads elementsRef.current (H-4 pattern) — no stale closure on elements state.
+      // Guard: position === 'absolute' only — flex/grid children have no left/top.
+      // skipHistory:true during motion — one undo entry per gesture, not per pixel.
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        if (isTyping || !selectedId) return;
+        const el = elementsRef.current[selectedId];
+        if (!el?.props?.style) return;
+        const s = el.props.style as Record<string, string>;
+        if (s.position !== 'absolute') return;
+        e.preventDefault();
+        const NUDGE = e.shiftKey ? 10 : 1;
+        const left = parseFloat(s.left ?? '0');
+        const top  = parseFloat(s.top  ?? '0');
+        const newLeft = e.key === 'ArrowLeft'  ? left - NUDGE
+                      : e.key === 'ArrowRight' ? left + NUDGE : left;
+        const newTop  = e.key === 'ArrowUp'    ? top  - NUDGE
+                      : e.key === 'ArrowDown'  ? top  + NUDGE : top;
+        updateProject({
+          ...elementsRef.current,
+          [selectedId]: { ...el, props: { ...el.props, style: { ...s, left: `${newLeft}px`, top: `${newTop}px` } } },
+        }, { skipHistory: true });
+        return;
+      }
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isTyping) return;
@@ -170,7 +203,7 @@ const EditorLayout = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [history, deleteElement, duplicateElement, selectedId, selectedIds, setSelectedId,
-    clearSelection, addToSelection, isImportOpen]);
+    clearSelection, addToSelection, isImportOpen, elementsRef, updateProject]);
 
   if (status === 'booting' || status === 'mounting') {
     let message = "Initializing...";

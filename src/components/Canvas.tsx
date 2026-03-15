@@ -289,14 +289,60 @@ export const Canvas = () => {
     }, [elements, activePageId, previewMode, setZoom, setPan]);
 
     // ── 4. DROP — element creation from sidebar drag ──────────────────────────
+    // UX-16 [PERMANENT]: Snap a drop coordinate to the nearest artboard frame.
+    // Prevents elements from landing in empty canvas void when the user misses a frame.
+    // DATA_BINDING drops bypass this — they use hit-test to find a specific target element.
+    const snapDropToArtboard = (wx: number, wy: number): { x: number; y: number } => {
+        const pageRoot = elements[activePageId];
+        if (!pageRoot?.children) return { x: wx, y: wy };
+
+        const frames = pageRoot.children
+            .map(id => elements[id])
+            .filter(el => el?.type === 'webpage')
+            .map(el => {
+                const s = (el.props?.style ?? {}) as Record<string, any>;
+                return {
+                    left:   parseFloat(String(s.left   ?? '0')),
+                    top:    parseFloat(String(s.top    ?? '0')),
+                    width:  parseFloat(String(s.width  ?? '1440')),
+                    height: parseFloat(String(s.height ?? s.minHeight ?? '900')),
+                };
+            });
+
+        if (frames.length === 0) return { x: wx, y: wy };
+
+        // Point already inside a frame — no snap needed
+        const inside = frames.find(f =>
+            wx >= f.left && wx <= f.left + f.width &&
+            wy >= f.top  && wy <= f.top  + f.height
+        );
+        if (inside) return { x: wx, y: wy };
+
+        // Find nearest frame by center distance, clamp to its bounds with 40px inset
+        let nearest = frames[0];
+        let nearestDist = Infinity;
+        for (const f of frames) {
+            const cx = f.left + f.width  / 2;
+            const cy = f.top  + f.height / 2;
+            const dist = Math.sqrt((wx - cx) ** 2 + (wy - cy) ** 2);
+            if (dist < nearestDist) { nearestDist = dist; nearest = f; }
+        }
+        const PAD = 40;
+        return {
+            x: Math.max(nearest.left + PAD, Math.min(wx, nearest.left + nearest.width  - PAD)),
+            y: Math.max(nearest.top  + PAD, Math.min(wy, nearest.top  + nearest.height - PAD)),
+        };
+    };
+
     const handleGlobalDrop = (e: React.DragEvent) => {
         e.preventDefault();
         if (!dragData || previewMode) return;
 
         const rect = canvasRef.current?.getBoundingClientRect();
         if (!rect) return;
-        const worldX = (e.clientX - rect.left - pan.x) / zoom;
-        const worldY = (e.clientY - rect.top - pan.y) / zoom;
+        // UX-16: use let so snapDropToArtboard can reassign x/y after DATA_BINDING bypass
+        let worldX = (e.clientX - rect.left - pan.x) / zoom;
+        let worldY = (e.clientY - rect.top - pan.y) / zoom;
 
         // ── Data binding drop ───────────────────────────────────────────────
         if (dragData.type === 'DATA_BINDING') {
@@ -335,6 +381,14 @@ export const Canvas = () => {
                 setSelectedId(targetId);
                 return;
             }
+        }
+
+        // UX-16: Snap all non-binding drops to the nearest artboard.
+        // 'webpage' artboard drops (new frames) bypass snap — they land at cursor.
+        if (dragData.type !== 'DATA_BINDING' && dragData.payload !== 'webpage') {
+            const snapped = snapDropToArtboard(worldX, worldY);
+            worldX = snapped.x;
+            worldY = snapped.y;
         }
 
         let newNodes: Record<string, any> = {};

@@ -239,6 +239,9 @@ export const useFileSync = () => {
     const sync = async () => {
       if (isSyncing.current) return;
       isSyncing.current = true;
+      // UX-28 [PERMANENT]: Notify Header that a VFS write cycle is starting.
+      // Event is tiny (no payload serialization cost) — safe at sync frequency.
+      window.dispatchEvent(new CustomEvent('vectra:save-state', { detail: { saving: true } }));
 
       // ── Resolve framework-specific path constants ─────────────────────
       const isNext = framework === 'nextjs';
@@ -665,6 +668,8 @@ export const useFileSync = () => {
         console.error('[useFileSync] Sync error:', e);
       } finally {
         isSyncing.current = false;
+        // UX-28 [PERMANENT]: Signal save complete regardless of success/error.
+        window.dispatchEvent(new CustomEvent('vectra:save-state', { detail: { saving: false } }));
       }
     };
 

@@ -275,9 +275,9 @@ export const useEditor = () => {
         handleInteractionMove,
         handleInteractionEnd,
         syncLayoutEngine,
-    // ARCH-1: `satisfies` validates this shape matches EditorContextType at compile time
-    // without widening the inferred type. Any field added to EditorContextType that is
-    // missing from this return object will immediately fail tsc — permanently prevents drift.
+        // ARCH-1: `satisfies` validates this shape matches EditorContextType at compile time
+        // without widening the inferred type. Any field added to EditorContextType that is
+        // missing from this return object will immediately fail tsc — permanently prevents drift.
     } satisfies EditorContextType;
 };
 

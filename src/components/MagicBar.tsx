@@ -1,12 +1,12 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useEditor } from '../context/EditorContext';
-import { Sparkles, ArrowRight, Loader2, CheckCircle2 } from 'lucide-react';
+import { Sparkles, ArrowRight, Loader2, CheckCircle2, XCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export const MagicBar = () => {
     const { isMagicBarOpen, setMagicBarOpen, runAI } = useEditor();
     const [input, setInput] = useState('');
-    const [status, setStatus] = useState<'idle' | 'thinking' | 'generating' | 'done'>('idle');
+    const [status, setStatus] = useState<'idle' | 'thinking' | 'generating' | 'done' | 'error'>('idle');
     const [feedback, setFeedback] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
 
@@ -49,9 +49,17 @@ export const MagicBar = () => {
                 setInput('');
                 isRunning.current = false;
             }, 1500);
-        } catch {
-            setStatus('idle');
-            isRunning.current = false;
+        } catch (err: any) {
+            // UX-18 [PERMANENT]: Never silently swallow AI errors.
+            // Show red overlay with the actual message for 3s, then reset to idle.
+            const msg = err?.message ?? 'Something went wrong. Please try again.';
+            setFeedback(msg);
+            setStatus('error');
+            setTimeout(() => {
+                setStatus('idle');
+                setFeedback('');
+                isRunning.current = false;
+            }, 3000);
         }
     };
 
@@ -80,6 +88,7 @@ export const MagicBar = () => {
                                 {status === 'thinking' && "Analyzing Prompt..."}
                                 {status === 'generating' && "Writing Code..."}
                                 {status === 'done' && "Completed"}
+                                {status === 'error' && "Generation Failed"}
                             </span>
                         </div>
 
@@ -93,11 +102,15 @@ export const MagicBar = () => {
                             disabled={status !== 'idle'}
                         />
 
-                        {/* Status Feedback Overlay */}
-                        {status === 'done' && (
-                            <div className="absolute inset-0 bg-[#09090b]/90 flex items-center justify-center gap-2 text-green-400 font-medium">
-                                <CheckCircle2 size={20} />
-                                <span>{feedback}</span>
+                        {/* Status Feedback Overlay — success (green) or error (red) */}
+                        {(status === 'done' || status === 'error') && (
+                            <div className={`absolute inset-0 bg-[#09090b]/90 flex items-center justify-center gap-2 font-medium px-6 text-center ${
+                                status === 'error' ? 'text-red-400' : 'text-green-400'
+                            }`}>
+                                {status === 'error'
+                                    ? <XCircle size={20} className="shrink-0" />
+                                    : <CheckCircle2 size={20} className="shrink-0" />}
+                                <span className="text-sm">{feedback}</span>
                             </div>
                         )}
 

@@ -6,6 +6,11 @@ import { cn } from '../../lib/utils';
 // ── DnD state lives outside React to avoid closure capture issues during drag ──
 let _dragNodeId: string | null = null;
 
+// UX-12 [PERMANENT]: Module-level search query — avoids prop-drilling through
+// recursive LayerNode tree. Same pattern as _dragNodeId above.
+// LayerNode reads this directly on each render — zero extra context subscriptions.
+let _layerSearch = '';
+
 interface LayerNodeProps {
     nodeId: string;
     depth: number;
@@ -30,6 +35,16 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
 
     const isSelected = selectedId === nodeId;
     const hasChildren = element.children && element.children.length > 0;
+
+    // UX-12: When search is active, hide leaf nodes that don't match.
+    // Container nodes (with children) always show so their matching
+    // descendants remain reachable — the tree stays navigable.
+    if (_layerSearch && !hasChildren) {
+        if (!element.name.toLowerCase().includes(_layerSearch)) return null;
+    }
+
+    // Auto-expand all nodes when search is active so matches are visible.
+    const effectiveExpanded = _layerSearch ? true : isExpanded;
     const isContainer = ['container', 'page', 'section', 'canvas', 'webpage', 'app',
         'grid', 'card', 'stack_v', 'stack_h', 'hero', 'navbar', 'pricing'].includes(element.type);
 
@@ -146,7 +161,7 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
 
                 {/* Expand Toggle */}
                 <button
-                    onClick={(e) => { e.stopPropagation(); setIsExpanded(!isExpanded); }}
+                    onClick={(e) => { e.stopPropagation(); if (!_layerSearch) setIsExpanded(!isExpanded); }}
                     className={cn("w-4 h-4 flex items-center justify-center mr-1 opacity-50 hover:opacity-100", !hasChildren && "invisible")}
                 >
                     {isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -179,7 +194,7 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
             </div>
 
             {/* Children */}
-            {hasChildren && isExpanded && element.children?.map(childId => (
+            {hasChildren && effectiveExpanded && element.children?.map(childId => (
                 <LayerNode key={childId} nodeId={childId} depth={depth + 1} parentId={nodeId} />
             ))}
 
@@ -223,6 +238,10 @@ const MenuBtn = ({ icon: Icon, label, onClick, danger }: {
 
 export const LayersPanel = () => {
     const { elements, activePageId } = useEditor();
+    const [search, setSearch] = useState('');
+    // UX-12: Keep module-level var in sync with React state so LayerNode
+    // reads the latest query on each render without needing it as a prop.
+    _layerSearch = search.toLowerCase().trim();
     const root = elements[activePageId];
 
     if (!root) return <div className="p-4 text-xs text-[#666]">No active page</div>;
@@ -232,6 +251,27 @@ export const LayersPanel = () => {
             <div className="p-3 border-b border-[#252526] flex items-center justify-between">
                 <span className="text-xs font-bold text-[#ccc]">Layers</span>
                 <span className="text-[10px] text-[#666]">{Object.keys(elements).length} Elements</span>
+            </div>
+            {/* UX-12: Search input — filters layer nodes by name in real time */}
+            <div className="px-2 py-1.5 border-b border-[#2a2a2c]">
+                <div className="relative">
+                    <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-[#555]" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                    <input
+                        type="text"
+                        value={search}
+                        onChange={e => setSearch(e.target.value)}
+                        placeholder="Search layers…"
+                        className="w-full bg-[#1e1e1e] border border-[#3e3e42] rounded pl-6 pr-6 py-1 text-[11px] text-white outline-none focus:border-[#007acc]/50 placeholder-[#444] transition-colors"
+                    />
+                    {search && (
+                        <button
+                            onClick={() => setSearch('')}
+                            className="absolute right-1.5 top-1/2 -translate-y-1/2 text-[#555] hover:text-[#999] transition-colors"
+                        >
+                            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                        </button>
+                    )}
+                </div>
             </div>
             <div className="py-2">
                 {root.children?.map(childId => (

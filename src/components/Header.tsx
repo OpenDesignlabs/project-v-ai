@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useEditor } from '../context/EditorContext';
@@ -101,6 +101,28 @@ export const Header = () => {
     const [copied, setCopied] = useState(false);
     const [isExporting, setIsExporting] = useState(false);
     const [exportDone, setExportDone] = useState(false);
+
+    // UX-28 [PERMANENT]: Live save-state indicator.
+    // Driven by vectra:save-state events from useFileSync — zero coupling to sync internals.
+    const [isSaving, setIsSaving] = useState(false);
+    const [justSaved, setJustSaved] = useState(false);
+    const justSavedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    useEffect(() => {
+        const handle = (e: Event) => {
+            const saving = (e as CustomEvent<{ saving: boolean }>).detail.saving;
+            setIsSaving(saving);
+            if (!saving) {
+                if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
+                setJustSaved(true);
+                justSavedTimerRef.current = setTimeout(() => setJustSaved(false), 2000);
+            }
+        };
+        window.addEventListener('vectra:save-state', handle);
+        return () => {
+            window.removeEventListener('vectra:save-state', handle);
+            if (justSavedTimerRef.current) clearTimeout(justSavedTimerRef.current);
+        };
+    }, []);
 
     // ── GitHub Publish state ───────────────────────────────────────────────────
     const GH_CONFIG_KEY = 'vectra_gh_config';
@@ -610,6 +632,19 @@ export const Header = () => {
                         <button onClick={history.undo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Undo"><Undo size={14} /></button>
                         <button onClick={history.redo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Redo"><Redo size={14} /></button>
                         <button onClick={() => window.dispatchEvent(new CustomEvent('vectra:zoom-to-fit'))} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Zoom to Fit (⌘0)"><Maximize size={14} /></button>
+                        {/* UX-28: Save state pill — appears only when saving or just saved */}
+                        {(isSaving || justSaved) && (
+                            <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ml-1 ${
+                                isSaving
+                                    ? 'text-[#888] bg-[#2a2a2d]'
+                                    : 'text-green-400 bg-green-500/10'
+                            }`}>
+                                {isSaving
+                                    ? <><span className="w-1.5 h-1.5 rounded-full bg-[#666] animate-pulse" />Saving…</>
+                                    : <><span className="w-1.5 h-1.5 rounded-full bg-green-400" />Saved</>
+                                }
+                            </div>
+                        )}
                     </div>
 
                     {/* AI Magic Bar Toggle */}

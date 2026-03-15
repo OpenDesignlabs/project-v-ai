@@ -38,7 +38,7 @@ import React, {
     createContext, useContext, useState, useEffect,
     useCallback, useRef, useMemo, type ReactNode,
 } from 'react';
-import type { VectraProject, VectraNode, Page, ApiRoute, HttpMethod, Framework, ProjectMeta, SnapResult } from '../types';
+import type { VectraProject, VectraNode, Page, ApiRoute, HttpMethod, Framework, ProjectMeta, SnapResult } from '../types/index.js';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 export const FRAMEWORK_KEY = 'vectra_framework';
 import { mergeAIContent } from '../utils/aiHelpers';
@@ -171,7 +171,7 @@ interface ProjectContextType {
      * Merge-update the SEO fields for a specific page.
      * Only the fields provided are changed — all others are preserved.
      */
-    updatePageSEO: (pageId: string, seo: Partial<import('../types').PageSEO>) => void;
+    updatePageSEO: (pageId: string, seo: Partial<import('../types/index.js').PageSEO>) => void;
 
     // ── History ───────────────────────────────────────────────────────────────
     /** @deprecated Use flat `undo`/`redo` — `history` object re-creates on every render */
@@ -907,7 +907,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     }) => {
         // PC-SAFE-1: sanitize strings — VFS hydration can produce undefined
         const safeName = typeof pageName === 'string' && pageName.trim() ? pageName.trim() : 'Imported Page';
-        const safeSlug = typeof slug    === 'string' && slug.trim()    ? slug.trim()    : '/imported';
+        const safeSlug = typeof slug === 'string' && slug.trim() ? slug.trim() : '/imported';
 
         const pageId = `page-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
@@ -1538,7 +1538,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Direction D: updatePageSEO — merge-update SEO fields for a specific page.
     // All fields are optional; only the provided keys are changed.
     const updatePageSEO = useCallback(
-        (pageId: string, seo: Partial<import('../types').PageSEO>) => {
+        (pageId: string, seo: Partial<import('../types/index.js').PageSEO>) => {
             setPages(prev => prev.map(p =>
                 p.id === pageId ? { ...p, seo: { ...p.seo, ...seo } } : p
             ));
