@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState, useEffect, useMemo, Suspense, lazy, Component } from 'react';
+import React, { useRef, useState, useEffect, useMemo, Suspense, lazy, Component, useCallback } from 'react';
 import type { ErrorInfo } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
@@ -496,6 +496,132 @@ const LiveComponent = ({
         </ComponentErrorBoundary>
     );
 };
+// ─── UX-1: CANVAS CONTEXT MENU ─────────────────────────────────────────────────────────────────
+// Portal-rendered fixed context menu for right-click on canvas elements.
+// UX-1-1 [PERMANENT]: MUST use fixed positioning — artboard is overflow:hidden.
+interface CanvasContextMenuProps {
+    x: number; y: number; elementId: string;
+    isLocked: boolean; isHidden: boolean; isArtboard: boolean;
+    onClose: () => void; onDuplicate: () => void; onDelete: () => void;
+    onLock: () => void; onHide: () => void;
+    onWrapInContainer: () => void; onSelectParent: () => void; onCopy: () => void;
+}
+const CtxBtn: React.FC<{ label: string; onClick: () => void; danger?: boolean; icon: string }> = ({ label, onClick, danger, icon }) => (
+    <button
+        onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+        onClick={(e) => { e.stopPropagation(); onClick(); }}
+        className={`flex items-center gap-2 px-3 py-1.5 text-[11px] w-full text-left transition-colors ${
+            danger ? 'text-red-400 hover:bg-red-500/15 hover:text-red-300'
+                   : 'text-[#ccc] hover:bg-[#007acc] hover:text-white'
+        }`}
+    >
+        <span className="w-3 text-center opacity-70 text-[10px]">{icon}</span>
+        {label}
+    </button>
+);
+const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
+    x, y, elementId, isLocked, isHidden, isArtboard,
+    onClose, onDuplicate, onDelete, onLock, onHide, onWrapInContainer, onSelectParent, onCopy,
+}) => {
+    useEffect(() => {
+        const close = () => onClose();
+        const timer = setTimeout(() => window.addEventListener('mousedown', close), 50);
+        return () => { clearTimeout(timer); window.removeEventListener('mousedown', close); };
+    }, [onClose]);
+    const menuW = 172; const menuH = 260;
+    const clampedX = Math.min(x, window.innerWidth  - menuW - 8);
+    const clampedY = Math.min(y, window.innerHeight - menuH - 8);
+    return (
+        <div
+            className="fixed z-[9999] bg-[#252526] border border-[#3f3f46] shadow-2xl rounded-lg py-1 flex flex-col"
+            style={{ left: clampedX, top: clampedY, width: menuW }}
+            onContextMenu={(e) => e.preventDefault()}
+        >
+            <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider border-b border-[#3f3f46] mb-1 font-mono truncate">
+                {elementId.slice(0, 22)}
+            </div>
+            <CtxBtn icon="⍘"  label="Duplicate"          onClick={onDuplicate} />
+            <CtxBtn icon="C" label="Copy"               onClick={onCopy} />
+            {!isArtboard && <CtxBtn icon="⊞" label="Wrap in Container" onClick={onWrapInContainer} />}
+            <CtxBtn icon="↑"  label="Select Parent"       onClick={onSelectParent} />
+            <div className="h-px bg-[#3f3f46] my-1" />
+            <CtxBtn icon={isLocked ? "🔓" : "🔒"} label={isLocked ? 'Unlock' : 'Lock'} onClick={onLock} />
+            <CtxBtn icon={isHidden ? "👁" : "◌"}  label={isHidden ? 'Show'  : 'Hide'}  onClick={onHide} />
+            <div className="h-px bg-[#3f3f46] my-1" />
+            {!isArtboard && <CtxBtn icon="✕" label="Delete" onClick={onDelete} danger />}
+        </div>
+    );
+};
+
+// ─── UX-9: FLOATING TEXT FORMAT BAR ────────────────────────────────────────────────────
+// Anchors above a text element when it enters contentEditable editing mode.
+// UX-9-1 [PERMANENT]: MUST use onMouseDown (not onClick) — onClick fires after
+// the contentEditable blur, losing the selection before execCommand runs.
+const FORMAT_CMDS = [
+    { cmd: 'bold',      label: 'B', title: 'Bold (Ctrl+B)',      fw: 700 },
+    { cmd: 'italic',    label: 'I', title: 'Italic (Ctrl+I)',    fw: 400 },
+    { cmd: 'underline', label: 'U', title: 'Underline (Ctrl+U)', fw: 400 },
+] as const;
+const FloatingFormatBar: React.FC<{ anchorId: string; onClose: () => void }> = ({ anchorId, onClose }) => {
+    const barRef = useRef<HTMLDivElement>(null);
+    const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+    useEffect(() => {
+        const update = () => {
+            const anchor = document.querySelector(`[data-vid="${anchorId}"]`) as HTMLElement | null;
+            if (!anchor || !barRef.current) return;
+            const rect = anchor.getBoundingClientRect();
+            const barW = barRef.current.offsetWidth || 168;
+            setPos({ top: rect.top - 44, left: Math.max(8, Math.min(rect.left, window.innerWidth - barW - 8)) });
+        };
+        update();
+        window.addEventListener('resize', update);
+        window.addEventListener('scroll', update, true);
+        return () => { window.removeEventListener('resize', update); window.removeEventListener('scroll', update, true); };
+    }, [anchorId]);
+    if (!pos) return null;
+    return (
+        <div
+            ref={barRef}
+            className="fixed z-[9999] flex items-center gap-0.5 px-2 py-1 bg-[#1e1e1e] border border-[#3f3f46] rounded-lg shadow-2xl"
+            style={{ top: pos.top, left: pos.left }}
+            onMouseDown={(e) => e.preventDefault()}
+        >
+            {FORMAT_CMDS.map(({ cmd, label, title }) => (
+                <button key={cmd} title={title}
+                    onMouseDown={(e) => { e.preventDefault(); document.execCommand(cmd, false); }}
+                    className="w-7 h-7 rounded flex items-center justify-center text-[#aaa] hover:text-white hover:bg-[#3e3e42] transition-colors text-[12px]"
+                    style={cmd === 'bold' ? { fontWeight: 700 } : cmd === 'italic' ? { fontStyle: 'italic' } : { textDecoration: 'underline' }}
+                >{label}</button>
+            ))}
+            <div className="w-px h-4 bg-[#3e3e42] mx-0.5" />
+            {(['12', '16', '24', '32'] as const).map(sz => (
+                <button key={sz} title={`Font size ${sz}px`}
+                    onMouseDown={(e) => {
+                        e.preventDefault();
+                        document.execCommand('styleWithCSS', false, 'true');
+                        document.execCommand('fontSize', false, '7');
+                        const sel = window.getSelection();
+                        if (sel && sel.rangeCount > 0) {
+                            const span = sel.getRangeAt(0).commonAncestorContainer.parentElement;
+                            if (span?.tagName === 'FONT') { span.removeAttribute('size'); span.style.fontSize = `${sz}px`; }
+                        }
+                    }}
+                    className="px-1.5 h-7 rounded text-[10px] text-[#777] hover:text-white hover:bg-[#3e3e42] transition-colors font-mono"
+                >{sz}</button>
+            ))}
+            <div className="w-px h-4 bg-[#3e3e42] mx-0.5" />
+            <label title="Text color" className="w-7 h-7 rounded flex items-center justify-center hover:bg-[#3e3e42] cursor-pointer transition-colors">
+                <span className="text-[10px] text-[#aaa] font-bold border-b-2 border-blue-400">A</span>
+                <input type="color" className="sr-only" onMouseDown={(e) => e.stopPropagation()}
+                    onChange={(e) => { document.execCommand('styleWithCSS', false, 'true'); document.execCommand('foreColor', false, e.target.value); }} />
+            </label>
+            <div className="w-px h-4 bg-[#3e3e42] mx-0.5" />
+            <button title="Done (Escape)" onMouseDown={(e) => { e.preventDefault(); onClose(); }}
+                className="w-7 h-7 rounded flex items-center justify-center text-[#555] hover:text-[#ccc] hover:bg-[#3e3e42] transition-colors text-[11px]">✕</button>
+        </div>
+    );
+};
+
 interface RenderNodeProps { elementId: string; isMobileMirror?: boolean; }
 
 export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirror = false }) => {
@@ -504,7 +630,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     // useUI:      re-renders when UI state changes (selection, hover, tool, zoom)
     // Keeping them separate means hovering an element doesn't re-render every
     // RenderNode that only uses project data, and vice-versa.
-    const { elements, setElements, elementsRef, updateProject, pushHistory, instantiateTemplate, syncLayoutEngine, parentMap } = useProject();
+    const { elements, setElements, elementsRef, updateProject, pushHistory, instantiateTemplate, syncLayoutEngine, parentMap, duplicateElement, deleteElement } = useProject();
     const {
         selectedId, setSelectedId,
         previewMode, dragData, setDragData,
@@ -580,6 +706,46 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     }, [element?.props?.animation, styleAny?.['--anim-trigger'], previewMode]);
 
     const dragStart = useRef({ x: 0, y: 0, left: 0, top: 0 });
+
+    // ── UX-1: Canvas context menu state ────────────────────────────────────────────────────
+    const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
+    const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
+
+    const handleContextMenu = useCallback((e: React.MouseEvent) => {
+        if (previewMode || isMobileMirror) return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!element?.locked) setSelectedId(elementId);
+        setCtxMenu({ x: e.clientX, y: e.clientY });
+    }, [previewMode, isMobileMirror, element?.locked, setSelectedId, elementId]);
+
+    const handleWrapInContainer = useCallback(() => {
+        const el = elementsRef.current[elementId];
+        if (!el) return;
+        const wrapperId = `container-${crypto.randomUUID().replace(/-/g,'').slice(0,10)}`;
+        const s = (el.props?.style || {}) as Record<string, any>;
+        const cur = elementsRef.current;
+        const pid = parentMap.get(elementId);
+        if (!pid) { closeCtxMenu(); return; }
+        updateProject({
+            ...cur,
+            [wrapperId]: {
+                id: wrapperId, type: 'container', name: 'Container',
+                children: [elementId],
+                props: { layoutMode: 'canvas', style: { position: 'absolute', left: s.left ?? '0px', top: s.top ?? '0px', width: s.width ?? '200px', height: s.height ?? '100px' }, className: '' },
+            },
+            [elementId]: { ...el, props: { ...el.props, style: { ...s, left: '0px', top: '0px' } } },
+            [pid]: { ...cur[pid], children: (cur[pid].children || []).map((c: string) => c === elementId ? wrapperId : c) },
+        });
+        setSelectedId(wrapperId);
+        closeCtxMenu();
+    }, [elementId, elementsRef, parentMap, updateProject, setSelectedId, closeCtxMenu]);
+
+    const handleSelectParent = useCallback(() => {
+        const pid = parentMap.get(elementId);
+        if (pid) setSelectedId(pid);
+        closeCtxMenu();
+    }, [elementId, parentMap, setSelectedId, closeCtxMenu]);
 
     if (!element) return null;
     if (previewMode && element.type === 'canvas') return null;
@@ -1398,11 +1564,50 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             style={finalStyle}
             onPointerOver={(e: any) => { if (previewMode || dragData) return; e.stopPropagation(); setHoveredId(elementId); }}
             onPointerOut={() => { if (!previewMode) setHoveredId(null); }}
+            onContextMenu={handleContextMenu}
         >
             {isSelected && !isMobileMirror && !isEditing && !element.locked && (isParentCanvas || isArtboard) && !previewMode && (
                 <Resizer elementId={elementId} />
             )}
             {content}
+
+            {/* UX-9: Floating format bar — shown when editing a text/heading/button node */}
+            {isEditing && !previewMode && (
+                <FloatingFormatBar anchorId={elementId} onClose={() => setIsEditing(false)} />
+            )}
+
+            {/* UX-1: Canvas context menu — fixed-position portal */}
+            {ctxMenu && !previewMode && (
+                <CanvasContextMenu
+                    x={ctxMenu.x} y={ctxMenu.y}
+                    elementId={elementId}
+                    isLocked={!!element.locked}
+                    isHidden={!!element.hidden}
+                    isArtboard={isArtboard}
+                    onClose={closeCtxMenu}
+                    onDuplicate={() => {
+                        const newId = duplicateElement(elementId);
+                        if (newId) setSelectedId(newId);
+                        closeCtxMenu();
+                    }}
+                    onCopy={() => {
+                        // UX-1-2 [PERMANENT]: write to global clipboard so Cmd+V in App.tsx picks it up.
+                        (window as any).__vectra_clipboard = elementId;
+                        closeCtxMenu();
+                    }}
+                    onDelete={() => { deleteElement(elementId); closeCtxMenu(); }}
+                    onLock={() => {
+                        updateProject({ ...elementsRef.current, [elementId]: { ...element, locked: !element.locked } });
+                        closeCtxMenu();
+                    }}
+                    onHide={() => {
+                        updateProject({ ...elementsRef.current, [elementId]: { ...element, hidden: !element.hidden } });
+                        closeCtxMenu();
+                    }}
+                    onWrapInContainer={handleWrapInContainer}
+                    onSelectParent={handleSelectParent}
+                />
+            )}
         </motion.div>
     );
 };

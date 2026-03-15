@@ -162,11 +162,18 @@ const EditorLayout = () => {
       if (e.key === 'i' && !isTyping && !e.ctrlKey && !e.metaKey) { e.preventDefault(); setActivePanel(prev => prev === 'add' ? null : 'add'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'i' && !isTyping) { e.preventDefault(); setIsImportOpen(true); }
 
-      // Item 1: Copy
+      // Item 1: Copy — also writes to window.__vectra_clipboard for context-menu symmetry (UX-1-2)
       if ((e.metaKey || e.ctrlKey) && e.key === 'c' && !isTyping) {
         if (selectedId && !PROTECTED.has(selectedId)) {
           clipboardRef.current = selectedId;
+          (window as any).__vectra_clipboard = selectedId;
         }
+      }
+      // UX-1-2 [PERMANENT]: Sync context-menu Copy into clipboardRef so Cmd+V works after right-click Copy.
+      // Checked on every keydown — cost is a single property read.
+      if ((window as any).__vectra_clipboard && (window as any).__vectra_clipboard !== clipboardRef.current) {
+        clipboardRef.current = (window as any).__vectra_clipboard;
+        (window as any).__vectra_clipboard = null;
       }
 
       // Item 1: Paste
