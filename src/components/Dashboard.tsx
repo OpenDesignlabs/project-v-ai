@@ -6,13 +6,14 @@
  * Framework selector flow (View 2) is preserved verbatim from Phase E.
  */
 
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useEditor } from '../context/EditorContext';
 import type { ProjectMeta } from '../types';
 import {
     Plus, Layout, Github, Code2, Cpu, Search, ArrowLeft,
     Zap, Globe, Server, Box, CheckCircle2, Star, ChevronRight,
     Copy, Trash2, Pencil, Clock, MoreHorizontal, X, FolderOpen,
+    Upload, FileDown, Sparkles, Monitor, LayoutTemplate,
 } from 'lucide-react';
 import { cn } from '../lib/utils';
 
@@ -49,7 +50,38 @@ const FW_META: Record<string, { label: string; badgeCls: string; iconEl: React.R
     },
 };
 
-// ─── FRAMEWORK METADATA (Phase E — preserved exactly) ─────────────────────────
+// ─── UX-26: .vectra FILE FORMAT ──────────────────────────────────────────────
+// UX-26 [PERMANENT]: version MUST be 2. Importer MUST reject version !== 2.
+interface VectraFile {
+    version: 2;
+    framework: string;
+    elements: Record<string, any>;
+    pages: any[];
+    theme: Record<string, string>;
+    exportedAt: number;
+    name: string;
+}
+
+// ─── UX-27: DESIGN TEMPLATES ─────────────────────────────────────────────────
+// UX-27 [PERMANENT]: Template selection stores AI prompt in sessionStorage key
+// 'vectra_initial_prompt'. Key MUST be cleared by runAI after first use.
+interface DesignTemplate {
+    id: string;
+    label: string;
+    description: string;
+    icon: React.ReactNode;
+    accent: string;
+}
+const DESIGN_TEMPLATES: DesignTemplate[] = [
+    { id: 'blank',     label: 'Blank Canvas',  description: 'Start from scratch with an empty artboard',          icon: <Box size={20} />,           accent: 'border-zinc-700 bg-zinc-900/30' },
+    { id: 'landing',   label: 'Landing Page',  description: 'Hero + features + CTA sections ready to edit',       icon: <LayoutTemplate size={20} />, accent: 'border-purple-500/30 bg-purple-900/10' },
+    { id: 'dashboard', label: 'Dashboard',     description: 'Sidebar nav + stat cards + content area',            icon: <Monitor size={20} />,       accent: 'border-blue-500/30 bg-blue-900/10' },
+    { id: 'portfolio', label: 'Portfolio',     description: 'Clean hero + project grid + contact section',        icon: <Star size={20} />,          accent: 'border-emerald-500/30 bg-emerald-900/10' },
+    { id: 'saas',      label: 'SaaS',          description: 'Pricing + features + testimonials layout',            icon: <Zap size={20} />,           accent: 'border-amber-500/30 bg-amber-900/10' },
+    { id: 'blog',      label: 'Blog',          description: 'Article list + post header + sidebar',               icon: <Sparkles size={20} />,      accent: 'border-pink-500/30 bg-pink-900/10' },
+];
+
+// ─── FRAMEWORK METADATA (Phase E — preserved exactly) —————————————————
 const FRAMEWORKS = [
     {
         id: 'nextjs',
@@ -160,10 +192,11 @@ interface ProjectCardProps {
     onRename: (newName: string) => void;
     onDuplicate: () => void;
     onDelete: () => void;
+    onExport: () => void;
 }
 
 const ProjectCard: React.FC<ProjectCardProps> = ({
-    meta, isActive, onOpen, onRename, onDuplicate, onDelete,
+    meta, isActive, onOpen, onRename, onDuplicate, onDelete, onExport,
 }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
@@ -294,6 +327,12 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                                         className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition-colors text-left"
                                     >
                                         <Copy size={12} className="shrink-0" /> Duplicate
+                                    </button>
+                                    <button
+                                        onClick={() => { setIsMenuOpen(false); onExport(); }}
+                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition-colors text-left"
+                                    >
+                                        <FileDown size={12} className="shrink-0" /> Export .vectra
                                     </button>
                                     <div className="h-px bg-white/5 my-1" />
                                     <button
@@ -459,7 +498,11 @@ export const Dashboard = () => {
     const [view, setView] = useState<'home' | 'templates'>('home');
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedFramework, setSelectedFramework] = useState<string>('nextjs');
+    const [selectedTemplate, setSelectedTemplate] = useState<string>('blank');
     const [isCreating, setIsCreating] = useState(false);
+    const [isImporting, setIsImporting] = useState(false);
+    const [importError, setImportError] = useState<string | null>(null);
+    const importFileRef = useRef<HTMLInputElement>(null);
 
     // ── Sprint 2: soft-delete state + handlers ─────────────────────────────
     const UNDO_WINDOW_MS = 5000;
@@ -503,11 +546,79 @@ export const Dashboard = () => {
     const handleCreate = async () => {
         if (isCreating) return;
         setIsCreating(true);
-        await new Promise(r => setTimeout(r, 120)); // let button state render
+        await new Promise(r => setTimeout(r, 120));
+        // UX-27 [PERMANENT]: non-blank templates store an AI prompt hint in sessionStorage.
+        // ProjectContext.runAI reads 'vectra_initial_prompt' once on first open, then clears it.
+        if (selectedTemplate !== 'blank') {
+            const tpl = DESIGN_TEMPLATES.find(t => t.id === selectedTemplate);
+            if (tpl) {
+                try {
+                    sessionStorage.setItem(
+                        'vectra_initial_prompt',
+                        `Build a complete, stunning ${tpl.label} website with multiple polished sections. Dark theme, modern design, smooth animations.`
+                    );
+                } catch { /* storage unavailable */ }
+            }
+        }
         createNewProject(selectedFramework);
-        // UIContext will switch to 'editor' because createNewProject dispatches
-        // the same flow that ContainerProvider initiates.
     };
+
+    // ── UX-26: Export project as .vectra ──────────────────────────────────────
+    // UX-26-1 [PERMANENT]: version MUST be 2. Export uses createObjectURL + anchor
+    // click — no server involved. Dashboard-level export is a metadata stub;
+    // full element data requires an in-editor session where elements are live.
+    const handleExportProject = useCallback((meta: ProjectMeta) => {
+        const payload: VectraFile = {
+            version: 2,
+            framework: meta.framework,
+            name: meta.name,
+            elements: {},
+            pages: [],
+            theme: {},
+            exportedAt: Date.now(),
+        };
+        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${meta.name.replace(/\s+/g, '-').toLowerCase()}.vectra`;
+        a.click();
+        URL.revokeObjectURL(url);
+    }, []);
+
+    // ── UX-26: Import .vectra file ────────────────────────────────────────────
+    // UX-26-2 [PERMANENT]: MUST call restoreProjectToIndex() THEN loadProject()
+    // in that order. Never call loadProject() on an orphan not in the index.
+    const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setImportError(null);
+        setIsImporting(true);
+        try {
+            const text = await file.text();
+            const parsed: VectraFile = JSON.parse(text);
+            if (parsed.version !== 2) throw new Error('Unsupported .vectra version. Re-export from Vectra v2+.');
+            if (!parsed.framework) throw new Error('Missing framework field in .vectra file.');
+            const newMeta: ProjectMeta = {
+                id: `proj_${crypto.randomUUID().replace(/-/g, '')}`,
+                name: parsed.name || file.name.replace('.vectra', ''),
+                framework: parsed.framework as 'nextjs' | 'vite',
+                createdAt: parsed.exportedAt || Date.now(),
+                lastEditedAt: Date.now(),
+                pageCount: parsed.pages?.length || 1,
+            };
+            await restoreProjectToIndex(newMeta);
+            if (parsed.elements && Object.keys(parsed.elements).length > 0) {
+                await loadProject(newMeta);
+                window.dispatchEvent(new CustomEvent('vectra:open-project'));
+            }
+        } catch (err) {
+            setImportError(err instanceof Error ? err.message : 'Invalid .vectra file.');
+        } finally {
+            setIsImporting(false);
+            if (importFileRef.current) importFileRef.current.value = '';
+        }
+    }, [restoreProjectToIndex, loadProject]);
 
     /**
      * Opens an existing project from the Dashboard.
@@ -559,13 +670,46 @@ export const Dashboard = () => {
                         >
                             <Github size={20} />
                         </a>
-                        <button
-                            id="header-new-project-btn"
-                            onClick={() => setView('templates')}
-                            className="flex items-center gap-2 px-4 py-2 bg-white text-black text-sm font-bold rounded-lg hover:bg-zinc-100 transition-all shadow-sm active:scale-95"
-                        >
-                            <Plus size={16} /> New Project
-                        </button>
+                        <div className="flex items-center gap-2">
+                            {/* UX-26: Import .vectra file */}
+                            <label
+                                title="Import .vectra project"
+                                className={cn(
+                                    'flex items-center gap-2 px-3 py-2 border border-white/10 text-zinc-400 hover:text-white hover:border-white/20 text-sm font-medium rounded-lg transition-all cursor-pointer select-none',
+                                    isImporting && 'opacity-50 cursor-wait'
+                                )}
+                            >
+                                {isImporting
+                                    ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                                    : <Upload size={15} />}
+                                <span className="hidden sm:inline">Import</span>
+                                <input
+                                    ref={importFileRef}
+                                    type="file"
+                                    accept=".vectra,application/json"
+                                    className="sr-only"
+                                    onChange={handleImportFile}
+                                    disabled={isImporting}
+                                />
+                            </label>
+
+                            <button
+                                id="header-new-project-btn"
+                                onClick={() => setView('templates')}
+                                className="flex items-center gap-2 px-4 py-2 bg-white text-black text-sm font-bold rounded-lg hover:bg-zinc-100 transition-all shadow-sm active:scale-95"
+                            >
+                                <Plus size={16} /> New Project
+                            </button>
+                        </div>
+
+                        {/* UX-26: Import error toast */}
+                        {importError && (
+                            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-4 py-3 bg-red-950 border border-red-500/30 rounded-xl shadow-2xl text-sm text-red-300 max-w-sm">
+                                <span className="text-red-400">⚠</span>
+                                <span className="flex-1">{importError}</span>
+                                <button onClick={() => setImportError(null)} className="text-red-500 hover:text-red-300 text-xs">✕</button>
+                            </div>
+                        )}
                     </div>
                 </header>
 
@@ -630,6 +774,7 @@ export const Dashboard = () => {
                                     onRename={name => renameProject(meta.id, name)}
                                     onDuplicate={() => duplicateProject(meta)}
                                     onDelete={() => handleSoftDelete(meta)}
+                                    onExport={() => handleExportProject(meta)}
                                 />
                             ))}
 
@@ -749,6 +894,41 @@ export const Dashboard = () => {
                             </button>
                         );
                     })}
+                </div>
+
+                {/* UX-27: Design Template Picker ──────────────────────────────── */}
+                <div className="mb-8">
+                    <h2 className="text-lg font-bold text-white mb-1">Choose a starter template</h2>
+                    <p className="text-zinc-500 text-sm mb-5">Start blank or pick a layout — all templates are fully editable.</p>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                        {DESIGN_TEMPLATES.map(tpl => {
+                            const isSel = selectedTemplate === tpl.id;
+                            return (
+                                <button
+                                    key={tpl.id}
+                                    onClick={() => setSelectedTemplate(tpl.id)}
+                                    className={cn(
+                                        'relative flex flex-col items-start gap-2 p-4 rounded-xl border text-left transition-all duration-150',
+                                        tpl.accent,
+                                        isSel
+                                            ? 'ring-2 ring-white/30 scale-[1.02] shadow-lg'
+                                            : 'hover:scale-[1.01] hover:brightness-110 opacity-75 hover:opacity-100'
+                                    )}
+                                >
+                                    {isSel && (
+                                        <div className="absolute top-2.5 right-2.5 w-4 h-4 rounded-full bg-white flex items-center justify-center">
+                                            <CheckCircle2 size={12} className="text-black" />
+                                        </div>
+                                    )}
+                                    <div className="text-zinc-300">{tpl.icon}</div>
+                                    <div>
+                                        <div className="text-sm font-bold text-white">{tpl.label}</div>
+                                        <div className="text-[11px] text-zinc-500 mt-0.5 leading-snug">{tpl.description}</div>
+                                    </div>
+                                </button>
+                            );
+                        })}
+                    </div>
                 </div>
 
                 {/* Selected framework summary bar */}
