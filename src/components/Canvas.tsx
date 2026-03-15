@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
 import { useEditor } from '../context/EditorContext';
@@ -97,6 +97,9 @@ export const Canvas = () => {
     // ── Slow-changing project data ─────────────────────────────────────────────
     const {
         elements, updateProject, activePageId, instantiateTemplate, history, addFrame,
+        // FIX-6: parentMap for world-space multi-select bbox. Canvas already re-renders
+        // on elements change (PERF-2 safe — parentMap rebuilds on structuralKey only).
+        parentMap,
     } = useProject();
 
     // ── High-frequency viewport + UI state ────────────────────────────────────
@@ -116,6 +119,8 @@ export const Canvas = () => {
         restorePageViewport,
         // Item 2 — multi-select
         clearSelection, addToSelection,
+        // FIX-6: selectedIds drives the bounding box overlay.
+        selectedIds,
     } = useUI();
 
     // ── Assembled bridge values (componentRegistry merges static + dynamic) ───
@@ -132,6 +137,43 @@ export const Canvas = () => {
     // Item 2 — box-select state
     const boxSelectRef = useRef<{ active: boolean; startX: number; startY: number; worldStartX: number; worldStartY: number } | null>(null);
     const [boxSelectRect, setBoxSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+
+    // ── FIX-6: Multi-select bounding box ─────────────────────────────────────
+    // Computed in world space — rendered inside the transform div so world-space
+    // coords are automatically scaled + panned. Cost: O(selectedIds.size).
+    const multiSelBBox = useMemo(() => {
+        if (selectedIds.size < 2 || previewMode) return null;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let anyFound = false;
+        selectedIds.forEach(id => {
+            const el = elements[id];
+            if (!el?.props?.style) return;
+            const s = el.props.style as Record<string, any>;
+            const elLeft = parseFloat(String(s.left ?? '0'));
+            const elTop  = parseFloat(String(s.top  ?? '0'));
+            const elW    = parseFloat(String(s.width ?? '0'));
+            const elH    = parseFloat(String(s.height ?? s.minHeight ?? '0'));
+            if (elW <= 0 && elH <= 0) return;
+            // Walk one level to artboard for offset (H-1: O(1) parentMap lookup)
+            const parentId = parentMap.get(id);
+            const parent = parentId ? elements[parentId] : null;
+            let ax = 0, ay = 0;
+            if (parent?.props?.style) {
+                const ps = parent.props.style as Record<string, any>;
+                ax = parseFloat(String(ps.left ?? '0'));
+                ay = parseFloat(String(ps.top  ?? '0'));
+            }
+            minX = Math.min(minX, ax + elLeft);
+            minY = Math.min(minY, ay + elTop);
+            maxX = Math.max(maxX, ax + elLeft + elW);
+            maxY = Math.max(maxY, ay + elTop + elH);
+            anyFound = true;
+        });
+        if (!anyFound) return null;
+        const PAD = 3;
+        return { x: minX - PAD, y: minY - PAD, w: maxX - minX + PAD * 2, h: maxY - minY + PAD * 2, count: selectedIds.size };
+    }, [selectedIds, elements, parentMap, previewMode]);
+    // ── End FIX-6 ─────────────────────────────────────────────────────────────
 
     // ── 1. WHEEL — zoom & pan ─────────────────────────────────────────────────
     // Isolated to Canvas. Only Canvas re-renders on wheel events.
@@ -644,6 +686,36 @@ export const Canvas = () => {
                             style={{ left: boxSelectRect.x, top: boxSelectRect.y, width: boxSelectRect.w, height: boxSelectRect.h }}
                         />
                     )}
+                    {/* FIX-6: Multi-select group bounding box
+                        Inside world transform div → world-space coords auto-scale with zoom.
+                        pointer-events-none — never intercepts clicks on canvas elements. */}
+                    {multiSelBBox && (
+                        <div
+                            className="absolute pointer-events-none border border-dashed border-blue-400/80 bg-blue-500/[0.04]"
+                            style={{ left: multiSelBBox.x, top: multiSelBBox.y, width: multiSelBBox.w, height: multiSelBBox.h, zIndex: 9997 }}
+                        >
+                            <div
+                                className="absolute left-1/2 -translate-x-1/2 -top-5 bg-blue-500 text-white text-[9px] font-bold px-2 py-0.5 rounded-full whitespace-nowrap select-none"
+                                style={{ zIndex: 9998 }}
+                            >
+                                {multiSelBBox.count} selected
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+            {/* FIX-8: Zoom level badge — outer container (not world div) so it never scales.
+                Click fires zoom-to-fit. Matches Header button behaviour exactly. */}
+            {!previewMode && (
+                <div className="absolute bottom-4 left-4 z-[9990] pointer-events-none select-none">
+                    <button
+                        className="pointer-events-auto flex items-center gap-1 px-2 py-1 bg-[#252526]/90 border border-[#3f3f46] rounded text-[10px] font-mono text-[#666] hover:text-white hover:bg-[#2d2d2d] transition-colors backdrop-blur-sm"
+                        onClick={() => window.dispatchEvent(new CustomEvent('vectra:zoom-to-fit'))}
+                        title="Zoom to fit (⌘0 / Ctrl+0)"
+                    >
+                        {Math.round(zoom * 100)}%
+                    </button>
                 </div>
             )}
 

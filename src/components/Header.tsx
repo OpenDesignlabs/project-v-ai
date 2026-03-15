@@ -3,7 +3,7 @@ import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { useEditor } from '../context/EditorContext';
 import { useContainer } from '../context/ContainerContext';
-import { generateCode, copyToClipboard, generateNextProjectCode, generateProjectCode, generateGridPage } from '../utils/codeGenerator';
+import { generateCode, copyToClipboard, generateNextProjectCode, generateProjectCode, generateGridPage, generateRootLayout, deduplicatePageSlugs } from '../utils/codeGenerator';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 import {
     Play, Undo, Redo, Code, Grid,
@@ -543,6 +543,17 @@ export const Header = () => {
             const projectName = framework === 'nextjs' ? 'vectra-nextjs' : 'vectra-vite';
             console.log(`[Vectra] 📦 Building ${projectName} ZIP from VFS...`);
             await addDir('/', zip);
+
+            // FIX-17 [PERMANENT]: addDir wrote app/layout.tsx from the VFS, which has
+            // tokens.css commented-out (VFS never has tokens.css — it's ZIP-only).
+            // Override that file with a zipMode=true layout that activates the import,
+            // so the exported project works out-of-the-box without manual edits.
+            // zip.file() is last-write-wins — cleanly replaces the VFS version.
+            if (framework === 'nextjs') {
+                const safeZipPages = deduplicatePageSlugs(pages);
+                zip.file('app/layout.tsx', generateRootLayout(safeZipPages, theme, true));
+                console.log('[Vectra] 🎨 layout.tsx overridden: tokens.css import active in ZIP');
+            }
 
             const blob = await zip.generateAsync({
                 type: 'blob',

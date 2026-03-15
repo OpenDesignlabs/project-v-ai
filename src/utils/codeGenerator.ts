@@ -1183,7 +1183,11 @@ export default function Navbar({ className }: { className?: string }) {
  */
 export const generateRootLayout = (
   pages: Page[],
-  theme?: { primary?: string; secondary?: string; accent?: string; font?: string }
+  theme?: { primary?: string; secondary?: string; accent?: string; font?: string },
+  // FIX-17 [PERMANENT]: zipMode=true → active tokens.css import.
+  // Dev-server VFS has no tokens.css (ZIP-only), so zipMode stays falsy for all
+  // useFileSync.ts call sites. Header.tsx passes zipMode:true after writing tokens.css.
+  zipMode?: boolean
 ): string => {
   const hasMultiplePages = pages.length > 1;
   const navbarImport = hasMultiplePages
@@ -1192,16 +1196,19 @@ export const generateRootLayout = (
   const navbarJsx = hasMultiplePages ? '\n        <Navbar />' : '';
 
   // C-2 FIX: cssVarsAttr is a single-line attribute starting with a space (not \n).
-  // `style = {{…}}` (space around =) is rejected by SWC; `style={{…}}` is correct.
-  // Inline-style on <body> is valid React — CSS custom properties are supported.
   const cssVarsAttr = theme
     ? ` style={{ '--primary': '${theme.primary || '#3b82f6'}', '--secondary': '${theme.secondary || '#8b5cf6'}', '--accent': '${theme.accent || '#ec4899'}' } as React.CSSProperties}`
     : '';
 
+  // FIX-17: Active import in zipMode; commented-out stub in dev-server mode.
+  const tokensCssLine = zipMode
+    ? `import './tokens.css';`
+    : `/* import './tokens.css'; // Uncomment to use design tokens from ZIP export */`;
+
   return `import type { Metadata } from 'next';
 import type React from 'react';
 ${navbarImport}import './globals.css';
-/* import './tokens.css'; // Uncomment to use design tokens from ZIP export */
+${tokensCssLine}
 
 export const metadata: Metadata = {
   title: 'Vectra App',

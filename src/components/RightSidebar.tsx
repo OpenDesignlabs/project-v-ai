@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import React from 'react';
 import { useEditor } from '../context/EditorContext';
 import { useUI } from '../context/UIContext';
@@ -118,7 +118,6 @@ export const RightSidebar = () => {
     // Direction A: read activeBreakpoint and setDevice from UIContext
     const { activeBreakpoint, setDevice, selectedIds } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
-    const [fillMode, setFillMode] = useState<FillMode>('solid');
     const [animScope, setAnimScope] = useState<'single' | 'all'>('single');
     // NM-7 FIX: track whether the user is actively dragging a slider so we can skip
     // history entries during the drag and commit exactly ONE entry on pointerUp.
@@ -144,6 +143,20 @@ export const RightSidebar = () => {
 
     // Get element
     const element = selectedId ? elements[selectedId] : null;
+
+    // FIX-13: Derive fillMode from element's actual background style (after element is declared).
+    // derivedFillMode reflects the element's real fill every render.
+    // fillModeOverride is set when the user manually clicks a fill-type tab.
+    // fillMode = override ?? derived. Override cleared on element.id switch.
+    const derivedFillMode = useMemo((): FillMode => {
+        const bg = String(element?.props?.style?.background ?? element?.props?.style?.backgroundImage ?? '');
+        if (bg.includes('gradient')) return 'gradient';
+        if (bg.includes('url(')) return 'image';
+        return 'solid';
+    }, [element?.props?.style?.background, element?.props?.style?.backgroundImage]);
+    const [fillModeOverride, setFillModeOverride] = useState<FillMode | null>(null);
+    const fillMode = fillModeOverride ?? derivedFillMode;
+    useEffect(() => { setFillModeOverride(null); }, [element?.id]);
 
     // ── Code Tab: isCodeNode ──────────────────────────────────────────────────
     // True for AI-generated and manually-imported custom_code nodes that carry
@@ -1053,9 +1066,9 @@ export const RightSidebar = () => {
                         {/* FILL & GRADIENT */}
                         <Section title="Fill & Gradient">
                             <div className="flex bg-[#252526] p-0.5 rounded border border-[#3e3e42] mb-3">
-                                <button onClick={() => setFillMode('solid')} className={cn("flex-1 py-1 rounded text-[10px] font-medium transition-all", fillMode === 'solid' ? "bg-[#3e3e42] text-white" : "text-[#858585]")}><PaintBucket size={10} className="inline mr-1" />Solid</button>
-                                <button onClick={() => setFillMode('gradient')} className={cn("flex-1 py-1 rounded text-[10px] font-medium transition-all", fillMode === 'gradient' ? "bg-[#3e3e42] text-white" : "text-[#858585]")}><Sun size={10} className="inline mr-1" />Gradient</button>
-                                <button onClick={() => setFillMode('image')} className={cn("flex-1 py-1 rounded text-[10px] font-medium transition-all", fillMode === 'image' ? "bg-[#3e3e42] text-white" : "text-[#858585]")}><ImageIcon size={10} className="inline mr-1" />Image</button>
+                                <button onClick={() => setFillModeOverride('solid')} className={cn("flex-1 py-1 rounded text-[10px] font-medium transition-all", fillMode === 'solid' ? "bg-[#3e3e42] text-white" : "text-[#858585]")}><PaintBucket size={10} className="inline mr-1" />Solid</button>
+                                <button onClick={() => setFillModeOverride('gradient')} className={cn("flex-1 py-1 rounded text-[10px] font-medium transition-all", fillMode === 'gradient' ? "bg-[#3e3e42] text-white" : "text-[#858585]")}><Sun size={10} className="inline mr-1" />Gradient</button>
+                                <button onClick={() => setFillModeOverride('image')} className={cn("flex-1 py-1 rounded text-[10px] font-medium transition-all", fillMode === 'image' ? "bg-[#3e3e42] text-white" : "text-[#858585]")}><ImageIcon size={10} className="inline mr-1" />Image</button>
                             </div>
 
                             {(fillMode === 'solid' || fillMode === 'gradient') && (
