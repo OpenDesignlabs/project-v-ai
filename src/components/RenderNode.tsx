@@ -1536,20 +1536,39 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             contentEditable={isEditing}
             suppressContentEditableWarning
             onBlur={(e) => {
-                if (isEditing) {
-                    setIsEditing(false);
-                    // NS-6 FIX: spread props separately to prevent aliasing. Without this,
-                    // elements[elementId].props is the same reference in the new state object
-                    // — any mutation of props.style later becomes a C-1-class direct mutation.
-                    updateProject({
-                        ...elements,
-                        [elementId]: {
-                            ...elements[elementId],
-                            props: { ...elements[elementId].props },
-                            content: e.currentTarget.innerText,
-                        },
-                    });
+                if (!isEditing) return;
+
+                // SPRINT-E-FIX-10: Guard against sidebar clicks during text editing.
+                // When a user double-clicks text to edit, then clicks a RightSidebar
+                // control (e.g. ColorPicker) to change text styling, the contentEditable
+                // div loses focus and onBlur fires — prematurely committing the text
+                // content and exiting edit mode before the style change is applied.
+                //
+                // Fix: if focus is moving into #right-sidebar, keep isEditing=true.
+                // relatedTarget is the element receiving focus. closest() walks the DOM.
+                // Null-guarded: relatedTarget is null when focus moves to a non-focusable
+                // element (canvas background). In that case, commit normally.
+                const focusingIntoSidebar = !!(e.relatedTarget as Element | null)
+                    ?.closest?.('#right-sidebar');
+
+                if (focusingIntoSidebar) {
+                    // Keep isEditing=true — the user is still conceptually editing.
+                    // They'll blur fully when they click the canvas or another element.
+                    return;
                 }
+
+                setIsEditing(false);
+                // NS-6 FIX: spread props separately to prevent aliasing. Without this,
+                // elements[elementId].props is the same reference in the new state object
+                // — any mutation of props.style later becomes a C-1-class direct mutation.
+                updateProject({
+                    ...elements,
+                    [elementId]: {
+                        ...elements[elementId],
+                        props: { ...elements[elementId].props },
+                        content: e.currentTarget.innerText,
+                    },
+                });
             }}
             className={cn(
                 finalClass,

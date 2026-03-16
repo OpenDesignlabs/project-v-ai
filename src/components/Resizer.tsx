@@ -2,7 +2,7 @@
 // useMemo componentRegistry + interaction handlers). During a resize at 60fps, elements
 // updates every frame — Resizer re-rendered even though it only needs 3 values.
 // Direct context calls keep the subscription scope minimal.
-import React from 'react';
+import React, { useRef } from 'react';
 import { useProject } from '../context/ProjectContext';
 import { useUI } from '../context/UIContext';
 
@@ -11,12 +11,17 @@ interface ResizerProps {
 }
 
 export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
-    const { elements } = useProject();
+    const { elements, updateProject, pushHistory, elementsRef } = useProject();
     // NM-8 FIX: zoomRef instead of zoom — startResize only reads zoom inside a
     // pointer event handler, not at render time. Subscribing to zoom state caused
     // Resizer to re-render on every 60fps wheel tick with no visual benefit.
     const { setInteraction, zoomRef, device } = useUI();
     const element = elements[elementId];
+
+    // SPRINT-E-FIX-7: corner-radius drag state.
+    // Same ref pattern as ArtboardResizeHandle — avoids closure over stale React state.
+    // NM-7: skipHistory:true at 60fps, pushHistory ONCE on pointerUp.
+    const radiusDrag = useRef<{ startX: number; startRadius: number } | null>(null);
 
     if (!element) return null;
 
@@ -70,6 +75,50 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
     // Increased size from w-2.5 (10px) to w-4 (16px) for better clickability
     const handleStyle = "absolute w-4 h-4 bg-white border-2 border-blue-600 rounded-full z-50 shadow-md hover:scale-125 transition-transform hover:bg-blue-50";
 
+    // SPRINT-E-FIX-7: only show radius handle for non-artboard, non-text nodes.
+    // Text nodes rarely need border-radius and it clutters the editing experience.
+    const isArtboard = element.type === 'canvas' || element.type === 'webpage';
+    const isTextNode = ['text', 'heading', 'link'].includes(element.type);
+    const showRadiusHandle = !isArtboard && !isTextNode;
+
+    const startRadiusDrag = (e: React.PointerEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        const style = element.props.style || {};
+        const currentRadius = parseFloat(String(style.borderRadius ?? '0')) || 0;
+        radiusDrag.current = { startX: e.clientX, startRadius: currentRadius };
+    };
+
+    const onRadiusPointerMove = (e: React.PointerEvent) => {
+        if (!radiusDrag.current) return;
+        // Drag right → larger radius, drag left → smaller. Divide by zoom.
+        const delta = (e.clientX - radiusDrag.current.startX) / zoomRef.current;
+        const newRadius = Math.max(0, Math.min(
+            Math.round(radiusDrag.current.startRadius + delta),
+            999
+        ));
+        // C-1/C-2: spread-clone at every level
+        updateProject({
+            ...elementsRef.current,
+            [elementId]: {
+                ...element,
+                props: {
+                    ...element.props,
+                    style: { ...element.props.style, borderRadius: `${newRadius}px` },
+                },
+            },
+        }, { skipHistory: true }); // NM-7: no history during motion
+    };
+
+    const onRadiusPointerUp = (e: React.PointerEvent) => {
+        if (!radiusDrag.current) return;
+        radiusDrag.current = null;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        // NM-7: commit ONE history entry on release — reads live ref (H-4)
+        pushHistory(elementsRef.current);
+    };
+
     // Adjusted offsets from -1.5 (6px) to -2 (8px) to keep the larger handles centered
     return (
         <>
@@ -99,6 +148,35 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
                     <div className={`${handleStyle} -bottom-2 left-1/2 -translate-x-1/2 cursor-ns-resize`} onPointerDown={(e) => startResize(e, 's')} />
                     <div className={`${handleStyle} -top-2 left-1/2 -translate-x-1/2 cursor-n-resize`} onPointerDown={(e) => startResize(e, 'n')} />
                 </>
+            )}
+
+            {/* SPRINT-E-FIX-7: Corner-radius drag handle
+                Positioned at top-right, offset outside the NE resize handle (+22px X).
+                Amber circle — visually distinct from blue resize handles.
+                Drag right → larger radius; drag left → smaller. Cursor: ew-resize.
+                Tooltip shows current value in px.
+                pointer-events-auto ensures capture despite parent overflow:hidden. */}
+            {showRadiusHandle && (
+                <div
+                    title={`Border radius: ${parseFloat(String(element.props.style?.borderRadius ?? '0')) || 0}px — drag to adjust`}
+                    className="absolute z-[60] w-3.5 h-3.5 bg-amber-400 border-2 border-amber-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform hover:bg-amber-300 pointer-events-auto"
+                    style={{ top: '-10px', right: '-30px' }}
+                    onPointerDown={startRadiusDrag}
+                    onPointerMove={onRadiusPointerMove}
+                    onPointerUp={onRadiusPointerUp}
+                >
+                    {/* Tiny arc icon suggesting a rounded corner */}
+                    <svg
+                        viewBox="0 0 8 8"
+                        className="absolute inset-0.5 w-2.5 h-2.5 opacity-60 pointer-events-none"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="1.5"
+                        strokeLinecap="round"
+                    >
+                        <path d="M1 6 Q1 1 6 1" className="text-amber-900" />
+                    </svg>
+                </div>
             )}
         </>
     );

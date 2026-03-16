@@ -7,7 +7,7 @@ import {
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
     Trash2, Hexagon, Palette, Wand2, Database, Globe,
     Server, Zap, CheckCircle2, Rocket, Link2, FileArchive, Figma, Cpu,
-    Send, TerminalSquare, ChevronUp,
+    Send, TerminalSquare, ChevronUp, Settings2,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
 import { DeployPanel } from './DeployPanel';
@@ -693,6 +693,19 @@ export const LeftSidebar = () => {
     const [testError, setTestError] = useState<string | null>(null);
     const [showResponseHeaders, setShowResponseHeaders] = useState(false);
 
+    // Settings submenu
+    const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+    const settingsMenuRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!showSettingsMenu) return;
+        const handler = (e: MouseEvent) => {
+            if (settingsMenuRef.current && !settingsMenuRef.current.contains(e.target as Node))
+                setShowSettingsMenu(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showSettingsMenu]);
+
     // Reset tester state when selected route changes
     useEffect(() => {
         setTestResponse(null);
@@ -871,7 +884,6 @@ export const LeftSidebar = () => {
                 <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
                 <NavButton icon={Folder} active={activePanel === 'files'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('files'); }} tooltip="Explorer" />
                 <NavButton icon={Box} active={activePanel === 'npm'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('npm'); }} tooltip="NPM Packages" />
-                <NavButton icon={File} active={activePanel === 'pages'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('pages'); }} tooltip="Pages" />
                 <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
                 <NavButton icon={Database} active={activePanel === 'data'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('data'); }} tooltip="Data Sources" />
                 {framework === 'nextjs' && (
@@ -885,35 +897,45 @@ export const LeftSidebar = () => {
                 {/* Gap B2 — Deploy nav button */}
                 {/* Phase B: @vectra/loader — Connect Codebase */}
                 <NavButton
-                    icon={Link2}
-                    active={activePanel === 'loader'}
-                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('loader'); }}
-                    tooltip="Connect Codebase"
-                />
-                <NavButton
                     icon={Rocket}
                     active={activePanel === 'deploy'}
                     onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('deploy'); }}
                     tooltip="Deploy"
                 />
-                <NavButton
-                    icon={FileArchive}
-                    active={activePanel === 'stitch'}
-                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('stitch'); }}
-                    tooltip="Stitch Import (ZIP)"
-                />
-                <NavButton
-                    icon={Figma}
-                    active={activePanel === 'figma'}
-                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('figma'); }}
-                    tooltip="Figma Import"
-                />
-                <NavButton
-                    icon={Cpu}
-                    active={activePanel === 'mcp'}
-                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('mcp'); }}
-                    tooltip="MCP Server"
-                />
+                {/* Bottom-pinned Settings button with submenu */}
+                <div className="mt-auto" />
+                <div className="relative" ref={settingsMenuRef}>
+                    <button
+                        onClick={() => setShowSettingsMenu(p => !p)}
+                        className={cn(
+                            "w-10 h-10 rounded flex items-center justify-center transition-all duration-100 relative group",
+                            showSettingsMenu ? "text-white opacity-100 border-l-2 border-[#007acc] bg-[#252526]" : "text-[#999999] opacity-70 hover:opacity-100 hover:text-white"
+                        )}
+                    >
+                        <Settings2 size={22} strokeWidth={1.5} />
+                        <span className="absolute left-full ml-3 px-2 py-1 bg-[#252526] text-white text-[10px] rounded border border-[#3f3f46] opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap pointer-events-none z-[60] shadow-md">Settings</span>
+                    </button>
+
+                    {showSettingsMenu && (
+                        <div className="absolute left-[52px] bottom-0 mb-0 w-48 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg shadow-2xl z-[60] py-1">
+                            <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider">Integrations</div>
+                            <button
+                                onClick={() => { setActivePanel('loader'); setShowSettingsMenu(false); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                            >
+                                <Link2 size={13} className="text-sky-400 shrink-0" />
+                                <span className="font-medium">Code Connect</span>
+                            </button>
+                            <button
+                                onClick={() => { setActivePanel('mcp'); setShowSettingsMenu(false); }}
+                                className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                            >
+                                <Cpu size={13} className="text-purple-400 shrink-0" />
+                                <span className="font-medium">MCP Server</span>
+                            </button>
+                        </div>
+                    )}
+                </div>
             </div>
 
             {/* --- PANELS --- */}
@@ -1082,29 +1104,6 @@ export const LeftSidebar = () => {
                 </div>
             )}
 
-            {activePanel === 'pages' && (
-                <div className="absolute left-[60px] top-0 bottom-0 w-[300px] bg-[#252526] border-r border-[#3f3f46] shadow-xl z-40 flex flex-col">
-                    <div className="p-4 border-b border-[#3f3f46] flex items-center justify-between">
-                        <h2 className="font-bold text-[#cccccc] text-xs uppercase tracking-wide flex items-center gap-2">
-                            <File size={14} className="text-purple-400" /> Pages
-                        </h2>
-                        <button onClick={() => addPage('New Page')} className="p-1 hover:bg-[#333] rounded text-[#007acc]"><Plus size={16} /></button>
-                    </div>
-                    <div className="flex-1 overflow-y-auto flex flex-col custom-scrollbar">
-                        {pages.filter(p => !p.hidden).map((page) => (
-                            <PageRow
-                                key={page.id}
-                                page={page}
-                                isActive={realPageId === page.id}
-                                canDelete={pages.length > 1}
-                                onSwitch={() => switchPage(page.id)}
-                                onDelete={() => deletePage(page.id)}
-                                onUpdateSEO={(seo) => updatePageSEO(page.id, seo)}
-                            />
-                        ))}
-                    </div>
-                </div>
-            )}
 
             {activePanel === 'icons' && (
                 <div className="absolute left-[60px] top-0 bottom-0 w-[420px] bg-[#252526] border-r border-[#3f3f46] shadow-xl z-40 flex flex-col">

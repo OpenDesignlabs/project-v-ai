@@ -408,7 +408,7 @@ export const RightSidebar = () => {
     const handleBoxModelChange = (field: string, value: string) => updateStyle(field, parseInt(value) || 0);
 
     return (
-        <div className="w-[320px] bg-[#333333] border-l border-[#252526] h-full flex flex-col">
+        <div id="right-sidebar" className="w-[320px] bg-[#333333] border-l border-[#252526] h-full flex flex-col">
 
             {/* UX-4 [PERMANENT]: Multi-select alignment toolbar.
                 Only shown when 2+ elements are selected. All ops use elementsRef.current (H-4)

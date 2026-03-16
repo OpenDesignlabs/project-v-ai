@@ -103,6 +103,9 @@ const EditorLayout = () => {
   const [showShortcuts, setShowShortcuts] = useState(false);
   // UX-3: session clipboard — stores last copied node ID.
   const clipboardRef = useRef<string | null>(null);
+  // SPRINT-E-FIX-9: tracks that a nudge keydown is in-progress so the keyUp
+  // handler knows to commit one history entry. Ref (not state) — zero re-renders.
+  const nudgeActiveRef = useRef(false);
 
   useFileSync();
   useAssetSync();
@@ -117,26 +120,47 @@ const EditorLayout = () => {
 
       // UX-2 [PERMANENT]: Arrow key nudge — 1px per tap, 10px with Shift.
       // Reads elementsRef.current (H-4 pattern) — no stale closure on elements state.
-      // Guard: position === 'absolute' only — flex/grid children have no left/top.
-      // skipHistory:true during motion — one undo entry per gesture, not per pixel.
+      // skipHistory:true during hold; one undo entry per gesture via keyUp handler.
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
         if (isTyping || !selectedId) return;
         const el = elementsRef.current[selectedId];
         if (!el?.props?.style) return;
-        const s = el.props.style as Record<string, string>;
-        if (s.position !== 'absolute') return;
         e.preventDefault();
         const NUDGE = e.shiftKey ? 10 : 1;
-        const left = parseFloat(s.left ?? '0');
-        const top  = parseFloat(s.top  ?? '0');
-        const newLeft = e.key === 'ArrowLeft'  ? left - NUDGE
-                      : e.key === 'ArrowRight' ? left + NUDGE : left;
-        const newTop  = e.key === 'ArrowUp'    ? top  - NUDGE
-                      : e.key === 'ArrowDown'  ? top  + NUDGE : top;
-        updateProject({
-          ...elementsRef.current,
-          [selectedId]: { ...el, props: { ...el.props, style: { ...s, left: `${newLeft}px`, top: `${newTop}px` } } },
-        }, { skipHistory: true });
+        const s = el.props.style as Record<string, string | number>;
+
+        if (String(s.position ?? '') === 'absolute') {
+          // ── Original absolute-positioned nudge (UX-2 PERMANENT) ────────────
+          const left = parseFloat(String(s.left ?? '0'));
+          const top  = parseFloat(String(s.top  ?? '0'));
+          const newLeft = e.key === 'ArrowLeft'  ? left - NUDGE
+                        : e.key === 'ArrowRight' ? left + NUDGE : left;
+          const newTop  = e.key === 'ArrowUp'    ? top  - NUDGE
+                        : e.key === 'ArrowDown'  ? top  + NUDGE : top;
+          nudgeActiveRef.current = true;
+          updateProject({
+            ...elementsRef.current,
+            [selectedId]: { ...el, props: { ...el.props, style: { ...s, left: `${newLeft}px`, top: `${newTop}px` } } },
+          }, { skipHistory: true }); // NM-7: skipHistory during keydown hold
+        } else {
+          // ── SPRINT-E-FIX-9: flex/grid children — nudge via margin ──────────
+          // For in-flow elements (flex/grid), left/top have no effect.
+          // Adjusting margin offsets them visually without breaking the layout flow.
+          //   Left/Right → marginLeft (horizontal spacing offset)
+          //   Up/Down    → marginTop  (vertical spacing offset)
+          const isHorizontal = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
+          const marginKey = isHorizontal ? 'marginLeft' : 'marginTop';
+          const currentMargin = parseFloat(String((s as any)[marginKey] ?? '0')) || 0;
+          const delta = (e.key === 'ArrowLeft' || e.key === 'ArrowUp') ? -NUDGE : NUDGE;
+          nudgeActiveRef.current = true;
+          updateProject({
+            ...elementsRef.current,
+            [selectedId]: {
+              ...el,
+              props: { ...el.props, style: { ...s, [marginKey]: `${currentMargin + delta}px` } },
+            },
+          }, { skipHistory: true }); // NM-7: skipHistory during keydown hold
+        }
         return;
       }
 
@@ -359,7 +383,29 @@ const EditorLayout = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [history, deleteElement, duplicateElement, selectedId, selectedIds, setSelectedId,
     clearSelection, addToSelection, isImportOpen, elementsRef, updateProject, pushHistory,
-    showShortcuts, importPage, parentMap]);
+    showShortcuts, importPage, parentMap, nudgeActiveRef]);
+
+  // SPRINT-E-FIX-9: Commit ONE history entry when arrow key is released after a nudge.
+  // Mirrors the NM-7 slider pattern:
+  //   keydown (held) → skipHistory:true repeated updates
+  //   keyUp         → ONE pushHistory(elementsRef.current)
+  //
+  // nudgeActiveRef ensures we only push when a nudge actually happened — not on
+  // every arrow-key release (e.g. scrolling a textarea, navigating a dropdown).
+  // H-4: read elementsRef.current in keyUp, not the stale elements state.
+  useEffect(() => {
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
+      if (!nudgeActiveRef.current) return;
+      nudgeActiveRef.current = false;
+      // Guard: element may have been deleted during a long nudge hold
+      if (selectedId && elementsRef.current[selectedId]) {
+        pushHistory(elementsRef.current);
+      }
+    };
+    window.addEventListener('keyup', handleKeyUp);
+    return () => window.removeEventListener('keyup', handleKeyUp);
+  }, [selectedId, elementsRef, pushHistory]);
 
   if (status === 'booting' || status === 'mounting') {
     let message = "Initializing...";

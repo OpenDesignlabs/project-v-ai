@@ -8,8 +8,9 @@ import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 import {
     Play, Undo, Redo, Code, Grid,
     Check, X, Copy, Trash2,
-    Layers, Palette, RotateCcw, Home, Wand2, Download, Loader2, PackageCheck,
-    Cpu, Maximize, Github, ExternalLink, Eye, EyeOff, ChevronDown, Plus, FileText
+    RotateCcw, Home, Wand2, Download, Loader2, PackageCheck,
+    Cpu, Maximize, Github, ExternalLink, Eye, EyeOff, ChevronDown, Plus, FileText,
+    Upload, Send, FileArchive, Figma, Rocket, Globe
 } from 'lucide-react';
 import {
     publishToGitHub,
@@ -177,13 +178,13 @@ export const Header = () => {
         history, previewMode, setPreviewMode, elements, setElements,
         activePageId, setSelectedId, viewMode, setViewMode, selectedId,
         deleteElement, exitProject, setMagicBarOpen,
-        pages, dataSources, framework,
-        theme, projectId, // Direction 2 + Gap 2
+        pages, dataSources, framework, setActivePanel,
+        theme, projectId,
         realPageId, switchPage, addPage,
-        projectName,  // SPRINT-C-FIX-18: human-readable project name for README
+        projectName,
     } = useEditor();
 
-    const { instance, status } = useContainer();
+    const { instance, status, url: containerUrl } = useContainer();
     const [showCode, setShowCode] = useState(false);
     const [code, setCode] = useState('');
     const [copied, setCopied] = useState(false);
@@ -257,6 +258,32 @@ export const Header = () => {
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
+
+    // ── Import dropdown ───────────────────────────────────────────────────────
+    const [showImportMenu, setShowImportMenu] = useState(false);
+    const importMenuRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!showImportMenu) return;
+        const handler = (e: MouseEvent) => {
+            if (importMenuRef.current && !importMenuRef.current.contains(e.target as Node))
+                setShowImportMenu(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showImportMenu]);
+
+    // ── Publish dropdown ──────────────────────────────────────────────────────
+    const [showPublishMenu, setShowPublishMenu] = useState(false);
+    const publishMenuRef = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        if (!showPublishMenu) return;
+        const handler = (e: MouseEvent) => {
+            if (publishMenuRef.current && !publishMenuRef.current.contains(e.target as Node))
+                setShowPublishMenu(false);
+        };
+        document.addEventListener('mousedown', handler);
+        return () => document.removeEventListener('mousedown', handler);
+    }, [showPublishMenu]);
 
     // ── Phase F2: Grid converter state ──────────────────────────────────────
     // ── Item 3: Multi-page grid results ─────────────────────────────────────────
@@ -645,11 +672,9 @@ export const Header = () => {
             }
 
             // SPRINT-C-FIX-18: README.md — first thing a developer sees after unzipping.
-            // buildReadme is a pure function (no side effects, no VFS reads).
-            // zip.file() is last-write-wins — safe to call after addDir.
             zip.file('README.md', buildReadme(
                 framework,
-                projectName || zipFileName,    // prefer context name, fallback to zip filename
+                projectName || zipFileName,
                 pages,
                 dataSources ?? [],
             ));
@@ -664,7 +689,6 @@ export const Header = () => {
             saveAs(blob, `${zipFileName}-project.zip`);
             console.log(`[Vectra] ✅ ${zipFileName}-project.zip downloaded!`);
 
-            // Show green checkmark briefly
             setExportDone(true);
             setTimeout(() => setExportDone(false), 3000);
 
@@ -678,12 +702,11 @@ export const Header = () => {
 
     return (
         <>
-            {/* TOP BAR: VS Code Theme Match (#333333) */}
-            <div className="h-[50px] bg-[#333333] border-b border-[#252526] grid grid-cols-[1fr_auto_1fr] items-center px-4 shrink-0 z-50 text-[#cccccc]">
+            {/* TOP BAR */}
+            <div className="h-[50px] bg-[#333333] border-b border-[#252526] flex items-center justify-between px-4 shrink-0 z-50 text-[#cccccc]">
 
-                {/* LEFT: Branding & Reset */}
-                <div className="flex items-center gap-4">
-                    {/* NEW HOME BUTTON */}
+                {/* LEFT: Branding + Page Switcher */}
+                <div className="flex items-center gap-3">
                     <button
                         onClick={exitProject}
                         className="p-2 hover:bg-[#3e3e42] rounded text-[#858585] hover:text-white transition-colors"
@@ -693,7 +716,7 @@ export const Header = () => {
                     </button>
 
                     <div className="flex items-center gap-2">
-                        <svg width="32" height="32" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <svg width="28" height="28" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
                             <rect x="0" y="0" width="40" height="40" rx="10" fill="#a5b4fc" />
                             <svg x="6" y="6" width="28" height="28" viewBox="0 0 24 24">
                                 <path d="M5 6L12 20" stroke="#1e1b4b" strokeWidth="2.5" strokeLinecap="round" strokeDasharray="3 3" />
@@ -703,34 +726,21 @@ export const Header = () => {
                                 <rect x="10.5" y="18.5" width="3" height="3" fill="#1e1b4b" />
                             </svg>
                         </svg>
-                        <div className="flex flex-col justify-center">
-                            <span className="text-sm font-bold text-[#cccccc]">Vectra Project</span>
-                        </div>
+                        <span className="text-sm font-bold text-[#cccccc] hidden md:block">Vectra</span>
                     </div>
 
-                    {/* Reset Action */}
-                    <button
-                        onClick={handleReset}
-                        className="flex items-center gap-1.5 px-2 py-1 text-[10px] font-medium text-[#858585] hover:text-[#cccccc] hover:bg-[#3e3e42] rounded transition-colors"
-                        title="Reset to factory settings"
-                    >
-                        <RotateCcw size={10} /> Reset
-                    </button>
+                    <div className="h-4 w-px bg-[#3e3e42]" />
 
-                    {/* Phase E: Framework Badge */}
+                    {/* Framework Badge */}
                     <div className={`flex items-center gap-1.5 px-2 py-1 rounded border text-[10px] font-bold ${framework === 'nextjs'
                         ? 'bg-white/5 border-white/10 text-[#999]'
                         : 'bg-blue-500/10 border-blue-500/20 text-blue-400'
                         }`}>
-                        {framework === 'nextjs' ? <Cpu size={10} /> : <Code size={10} />}
+                        <Cpu size={10} />
                         {framework === 'nextjs' ? 'Next.js 14' : 'Vite + React'}
                     </div>
-                </div>
 
-                {/* CENTER: View Switcher + Page Switcher */}
-                <div className="flex items-center justify-center gap-3">
-
-                    {/* UX-22: Page Switcher Dropdown */}
+                    {/* Page Switcher */}
                     <div className="relative" ref={pageDropRef}>
                         <button
                             onClick={() => setPageDropOpen(p => !p)}
@@ -740,7 +750,7 @@ export const Header = () => {
                                     ? "bg-[#007acc]/15 border-[#007acc]/40 text-white"
                                     : "bg-[#252526] border-[#3e3e42] text-[#ccc] hover:text-white hover:border-[#555]"
                             )}
-                            title="Switch page (pages)"
+                            title="Switch page"
                         >
                             <FileText size={11} className="text-[#007acc] shrink-0" />
                             <span className="truncate max-w-[90px]">
@@ -781,43 +791,19 @@ export const Header = () => {
                             </div>
                         )}
                     </div>
-
-                    {/* View Mode (Layout | Design) */}
-                    <div className="flex items-center bg-[#252526] rounded-md p-0.5 border border-[#3e3e42]">
-                        <button
-                            onClick={() => setViewMode('skeleton')}
-                            className={cn(
-                                "flex items-center gap-1.5 px-2.5 py-1 rounded-sm text-[10px] font-medium transition-all",
-                                viewMode === 'skeleton' ? "bg-[#3e3e42] text-white shadow-sm" : "text-[#858585] hover:text-[#cccccc]"
-                            )}
-                        >
-                            <Layers size={12} /> Layout
-                        </button>
-                        <button
-                            onClick={() => setViewMode('visual')}
-                            className={cn(
-                                "flex items-center gap-1.5 px-2.5 py-1 rounded-sm text-[10px] font-medium transition-all",
-                                viewMode === 'visual' ? "bg-[#3e3e42] text-white shadow-sm" : "text-[#858585] hover:text-[#cccccc]"
-                            )}
-                        >
-                            <Palette size={12} /> Design
-                        </button>
-                    </div>
                 </div>
 
-                {/* RIGHT: Actions — justify-self-end so it hugs the right edge */}
-                <div className="flex items-center gap-2 justify-self-end">
+                {/* RIGHT: Actions */}
+                <div className="flex items-center gap-2">
                     {/* History & Zoom */}
                     <div className="flex items-center gap-0.5 opacity-80">
                         <button onClick={history.undo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Undo"><Undo size={14} /></button>
                         <button onClick={history.redo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Redo"><Redo size={14} /></button>
                         <button onClick={() => window.dispatchEvent(new CustomEvent('vectra:zoom-to-fit'))} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Zoom to Fit (⌘0)"><Maximize size={14} /></button>
-                        {/* UX-28: Save state pill — appears only when saving or just saved */}
+                        {/* UX-28: Save state pill */}
                         {(isSaving || justSaved) && (
                             <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ml-1 ${
-                                isSaving
-                                    ? 'text-[#888] bg-[#2a2a2d]'
-                                    : 'text-green-400 bg-green-500/10'
+                                isSaving ? 'text-[#888] bg-[#2a2a2d]' : 'text-green-400 bg-green-500/10'
                             }`}>
                                 {isSaving
                                     ? <><span className="w-1.5 h-1.5 rounded-full bg-[#666] animate-pulse" />Saving…</>
@@ -839,7 +825,6 @@ export const Header = () => {
 
                     <div className="h-4 w-px bg-[#3e3e42] mx-1" />
 
-
                     {/* Delete Button */}
                     <button
                         onClick={() => {
@@ -859,23 +844,14 @@ export const Header = () => {
                         <Trash2 size={14} />
                     </button>
 
-                    <div className="h-4 w-px bg-[#3e3e42] mx-2" />
+                    <div className="h-4 w-px bg-[#3e3e42] mx-1" />
 
-                    {/* Export Code */}
-                    <button onClick={handleGenerate} className="p-2 text-[#858585] hover:text-white hover:bg-[#3e3e42] rounded transition-colors" title="Export Code">
-                        <Code size={16} />
-                    </button>
-
-                    {/* ── Phase F2: Convert to Grid ──────────────────────────────── */}
+                    {/* ── To Grid ───────────────────────────────────── */}
                     <button
                         id="convert-to-grid-btn"
                         onClick={handleConvertToGrid}
-                        disabled={isConvertingGrid || !(window as any).vectraWasm?.absolute_to_grid}
-                        title={
-                            !(window as any).vectraWasm?.absolute_to_grid
-                                ? 'WASM engine not loaded — run: cd vectra-engine && wasm-pack build --target web'
-                                : 'Convert canvas layout to responsive CSS Grid'
-                        }
+                        disabled={isConvertingGrid || status !== 'ready'}
+                        title="Convert canvas layout to responsive CSS Grid"
                         className={cn(
                             'flex items-center gap-1.5 px-2 py-1.5 rounded text-[10px] font-bold transition-all border',
                             isConvertingGrid
@@ -889,41 +865,142 @@ export const Header = () => {
                         }
                     </button>
 
-                    {/* ── Push to GitHub Button ─────────────────────────── */}
-                    <button
-                        onClick={() => { setPublishResult(null); setPublishError(null); setShowGitHubModal(true); }}
-                        className={cn(
-                            'flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-bold transition-all border',
-                            'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-white hover:border-[#6e40c9]'
-                        )}
-                        title="Publish project to a GitHub repository"
-                    >
-                        <Github size={12} />
-                        <span>Push to GitHub</span>
-                    </button>
+                    {/* ── Import Dropdown ────────────────────────────── */}
+                    <div className="relative" ref={importMenuRef}>
+                        <button
+                            onClick={() => { setShowImportMenu(p => !p); setShowPublishMenu(false); }}
+                            className={cn(
+                                'flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-bold transition-all border',
+                                showImportMenu
+                                    ? 'bg-[#3e3e42] border-[#5e5e62] text-white'
+                                    : 'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-white hover:border-[#5e5e62]'
+                            )}
+                            title="Import from Figma or Stitch"
+                        >
+                            <Upload size={12} />
+                            <span>Import</span>
+                            <ChevronDown size={10} className={cn('transition-transform', showImportMenu && 'rotate-180')} />
+                        </button>
 
-                    {/* ── Download ZIP Button ────────────────────────────── */}
-                    <button
-                        onClick={handleExportZip}
-                        disabled={isExporting || status !== 'ready'}
-                        title={status !== 'ready' ? 'Waiting for VFS...' : 'Download production-ready ZIP'}
-                        className={cn(
-                            'flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-bold transition-all border',
-                            exportDone
-                                ? 'bg-green-500/20 border-green-500/50 text-green-400'
-                                : isExporting
-                                    ? 'bg-[#252526] border-[#3e3e42] text-blue-400 cursor-wait'
-                                    : 'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-white hover:border-[#007acc] disabled:opacity-40 disabled:cursor-not-allowed'
+                        {showImportMenu && (
+                            <div className="absolute right-0 top-full mt-1.5 w-52 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg shadow-2xl z-[300] overflow-hidden py-1">
+                                <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider">Import from</div>
+
+                                <button
+                                    onClick={() => { setActivePanel('figma'); setShowImportMenu(false); }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                                >
+                                    <Figma size={13} className="text-pink-400 shrink-0" />
+                                    <div className="text-left">
+                                        <div className="font-semibold">Figma</div>
+                                        <div className="text-[10px] text-[#666]">Import frames from Figma</div>
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => { setActivePanel('stitch'); setShowImportMenu(false); }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                                >
+                                    <FileArchive size={13} className="text-amber-400 shrink-0" />
+                                    <div className="text-left">
+                                        <div className="font-semibold">Stitch</div>
+                                        <div className="text-[10px] text-[#666]">Import ZIP component bundle</div>
+                                    </div>
+                                </button>
+                            </div>
                         )}
-                    >
-                        {isExporting ? (
-                            <><Loader2 size={12} className="animate-spin" /><span>Zipping...</span></>
-                        ) : exportDone ? (
-                            <><PackageCheck size={12} /><span>Downloaded!</span></>
-                        ) : (
-                            <><Download size={12} /><span>Export ZIP</span></>
+                    </div>
+
+                    {/* ── Publish Dropdown ───────────────────────────── */}
+                    <div className="relative" ref={publishMenuRef}>
+                        <button
+                            onClick={() => { setShowPublishMenu(p => !p); setShowImportMenu(false); }}
+                            className={cn(
+                                'flex items-center gap-1.5 px-3 py-1.5 rounded text-xs font-bold transition-all border',
+                                showPublishMenu
+                                    ? 'bg-purple-600 border-purple-500 text-white'
+                                    : 'bg-[#252526] border-[#3e3e42] text-[#858585] hover:text-white hover:border-purple-500/60 hover:bg-purple-600/10'
+                            )}
+                            title="Publish project"
+                        >
+                            <Send size={12} />
+                            <span>Publish</span>
+                            <ChevronDown size={10} className={cn('transition-transform', showPublishMenu && 'rotate-180')} />
+                        </button>
+
+                        {showPublishMenu && (
+                            <div className="absolute right-0 top-full mt-1.5 w-56 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg shadow-2xl z-[300] overflow-hidden py-1">
+
+                                <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider">Version Control</div>
+                                <button
+                                    onClick={() => { setPublishResult(null); setPublishError(null); setShowGitHubModal(true); setShowPublishMenu(false); }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                                >
+                                    <Github size={13} className="text-purple-400 shrink-0" />
+                                    <div className="text-left">
+                                        <div className="font-semibold">Push to GitHub</div>
+                                        <div className="text-[10px] text-[#666]">Commit to a repository</div>
+                                    </div>
+                                </button>
+
+                                <div className="h-px bg-[#2a2a2c] my-1 mx-3" />
+                                <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider">Deploy</div>
+
+                                <button
+                                    onClick={() => { window.open('https://vercel.com/new', '_blank', 'noopener'); setShowPublishMenu(false); }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                                >
+                                    <Globe size={13} className="text-blue-400 shrink-0" />
+                                    <div className="text-left flex-1">
+                                        <div className="font-semibold">Deploy to Vercel</div>
+                                        <div className="text-[10px] text-[#666]">One-click serverless deploy</div>
+                                    </div>
+                                    <ExternalLink size={10} className="text-[#444]" />
+                                </button>
+
+                                <button
+                                    onClick={() => { window.open('https://app.netlify.com/start', '_blank', 'noopener'); setShowPublishMenu(false); }}
+                                    className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white transition-colors"
+                                >
+                                    <Rocket size={13} className="text-teal-400 shrink-0" />
+                                    <div className="text-left flex-1">
+                                        <div className="font-semibold">Deploy to Netlify</div>
+                                        <div className="text-[10px] text-[#666]">Drag-and-drop or CI deploy</div>
+                                    </div>
+                                    <ExternalLink size={10} className="text-[#444]" />
+                                </button>
+
+                                <div className="h-px bg-[#2a2a2c] my-1 mx-3" />
+                                <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider">Export</div>
+
+                                <button
+                                    onClick={() => { handleExportZip(); setShowPublishMenu(false); }}
+                                    disabled={isExporting || status !== 'ready'}
+                                    className={cn(
+                                        'w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors',
+                                        isExporting || status !== 'ready'
+                                            ? 'text-[#555] cursor-not-allowed'
+                                            : exportDone
+                                                ? 'text-green-400 hover:bg-green-500/5'
+                                                : 'text-[#cccccc] hover:bg-[#2a2a2d] hover:text-white'
+                                    )}
+                                >
+                                    {isExporting
+                                        ? <Loader2 size={13} className="animate-spin shrink-0" />
+                                        : exportDone
+                                            ? <PackageCheck size={13} className="shrink-0 text-green-400" />
+                                            : <Download size={13} className="shrink-0" />
+                                    }
+                                    <div className="text-left">
+                                        <div className="font-semibold">
+                                            {isExporting ? 'Zipping…' : exportDone ? 'Downloaded!' : 'Download Project ZIP'}
+                                        </div>
+                                        <div className="text-[10px] text-[#666]">Production-ready source code</div>
+                                    </div>
+                                </button>
+                            </div>
                         )}
-                    </button>
+                    </div>
 
                     <div className="h-4 w-px bg-[#3e3e42] mx-2" />
 
@@ -948,6 +1025,26 @@ export const Header = () => {
                         <Play size={10} fill={previewMode ? "currentColor" : "none"} />
                         {previewMode ? 'Running' : 'Preview'}
                     </button>
+
+                    {/* SPRINT-E-FIX-24: Open in Browser — opens the live WebContainer
+                        server URL in a new tab so multi-page navigation actually works.
+                        The instant preview iframe uses a sandboxed srcdoc that can't
+                        follow React Router <Link> navigation between pages.
+                        containerUrl comes from the server-ready event (MCP-WC-1) —
+                        never a hardcoded localhost port. Only rendered when the dev
+                        server is running (containerUrl non-null). */}
+                    {containerUrl && (
+                        <a
+                            href={containerUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            title="Open live dev server in new tab — supports multi-page navigation"
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-bold transition-all bg-[#252526] border border-[#3e3e42] text-[#858585] hover:text-emerald-300 hover:border-emerald-500/50 hover:bg-emerald-500/8 active:scale-95 ml-1"
+                        >
+                            <ExternalLink size={11} />
+                            <span className="hidden xl:inline">Open in Browser</span>
+                        </a>
+                    )}
                 </div>
             </div >
 
