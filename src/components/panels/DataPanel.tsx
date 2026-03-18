@@ -22,6 +22,7 @@ import {
 import { useEditor } from '../../context/EditorContext';
 import { cn } from '../../lib/utils';
 import type { DataSource } from '../../context/ProjectContext';
+import type { DragData } from '../../types';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -39,7 +40,7 @@ const relTime = (iso: string): string => {
 const JsonTree: React.FC<{
     data: unknown;
     parentKey?: string;
-    setDragData: (d: unknown) => void;
+    setDragData: (d: DragData | null) => void;
     searchTerm?: string;
 }> = ({ data, parentKey = '', setDragData, searchTerm = '' }) => {
     const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -238,7 +239,7 @@ const HeaderEditor: React.FC<{
 const SourceCard: React.FC<{
     ds: DataSource;
     onRemove: (id: string) => void;
-    setDragData: (d: unknown) => void;
+    setDragData: (d: DragData | null) => void;
     onRefresh: (ds: DataSource) => Promise<void>;
 }> = ({ ds, onRemove, setDragData, onRefresh }) => {
     const [expanded, setExpanded]         = useState(true);

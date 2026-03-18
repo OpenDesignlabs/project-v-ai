@@ -244,12 +244,11 @@ export const FigmaPanel: React.FC = () => {
                     // Component mode — import as hidden staging page (FIG-A: hidden flag)
                     const hiddenSlug = `/__figma_comp__${info.id.slice(0, 8)}`;
                     importPage({ nodes: result.nodes, rootId: result.rootId, pageName: `__figma_comp__${info.name}`, slug: hiddenSlug });
-                    registerComponent({
-                        id:   `figma-${info.id}`,
-                        name: info.name,
+                    registerComponent(`figma-${info.id}`, {
+                        label: info.name,
                         type: 'figma-frame',
                         importMeta: { source: 'figma', fileKey, frameId: info.id },
-                    });
+                    } as any);
                     componentsCreated++;
                 }
 

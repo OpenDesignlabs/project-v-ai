@@ -350,6 +350,12 @@ export interface EditorContextType {
     /** Flat stable reference — safe in useEffect dep arrays (S-2) */
     redo: () => void;
 
+    // ── Interaction engine ────────────────────────────────────────────────────
+    /** 60fps pointer-move handler — updates element rect without pushing history */
+    handleInteractionMove: (e: PointerEvent) => void;
+    /** pointer-up handler — commits one history entry and clears interaction state */
+    handleInteractionEnd: () => void;
+
     // ── Snapping / layout engine ──────────────────────────────────────────────
     /** Loads siblings of the dragged node into the WASM snapping engine */
     syncLayoutEngine: (draggedId: string) => void;

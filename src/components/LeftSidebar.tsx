@@ -2,10 +2,10 @@ import React, { useRef, useState, lazy, Suspense, useEffect, useCallback } from 
 import { useEditor } from '../context/EditorContext';
 import { useContainer } from '../context/ContainerContext';
 import {
-    Plus, Layers, File, Image as ImageIcon,
+    Plus, Layers, Image as ImageIcon,
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
     ChevronRight, ChevronDown, Folder, Code2, Box, DownloadCloud, Loader2,
-    Trash2, Hexagon, Palette, Wand2, Database, Globe,
+    Trash2, Hexagon, Palette, Wand2, Database,
     Server, Zap, CheckCircle2, Rocket, Link2, FileArchive, Figma, Cpu,
     Send, TerminalSquare, ChevronUp, Settings2,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
@@ -527,123 +527,12 @@ const ApiRouteEditor: React.FC<ApiRouteEditorProps> = ({ route, onUpdate }) => {
         </div>
     );
 };
-
-// ─── Direction D: Page Row with SEO accordion ───────────────────────────────
-// Extracted as a named component so useState can be called at the correct hook level.
-// Each page gets its own independent seoOpen state via this sub-component.
-interface PageRowProps {
-    page: import('../types').Page;
-    isActive: boolean;
-    canDelete: boolean;
-    onSwitch: () => void;
-    onDelete: () => void;
-    onUpdateSEO: (seo: Partial<import('../types').PageSEO>) => void;
-}
-
-const PageRow: React.FC<PageRowProps> = ({ page, isActive, canDelete, onSwitch, onDelete, onUpdateSEO }) => {
-    const [seoOpen, setSeoOpen] = React.useState(false);
-    const hasSEO = !!(page.seo?.title || page.seo?.description || page.seo?.ogImage);
-
-    return (
-        <div className="border-b border-[#3f3f46] last:border-0">
-            {/* Page row */}
-            <div
-                onClick={onSwitch}
-                className={cn(
-                    'group flex items-center justify-between p-2 cursor-pointer transition-colors',
-                    isActive ? 'bg-[#37373d] text-white' : 'text-[#999] hover:bg-[#2a2d2e] hover:text-[#ccc]'
-                )}
-            >
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                    <File size={12} className={isActive ? 'text-[#007acc]' : 'text-[#666]'} />
-                    <div className="flex flex-col min-w-0">
-                        <span className="text-xs font-medium truncate">{page.name}</span>
-                        <span className="text-[9px] opacity-50 font-mono truncate">{page.slug}</span>
-                    </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                    {/* Globe icon = SEO editor toggle; turns green when SEO is filled */}
-                    <button
-                        onClick={(e) => { e.stopPropagation(); setSeoOpen(o => !o); }}
-                        title="SEO Settings"
-                        className={cn(
-                            'p-1 rounded hover:bg-[#444] transition-colors',
-                            hasSEO ? 'text-emerald-400' : 'text-[#555] hover:text-[#888]'
-                        )}
-                    >
-                        <Globe size={11} />
-                    </button>
-                    {canDelete && (
-                        <button
-                            onClick={(e) => { e.stopPropagation(); onDelete(); }}
-                            className="opacity-0 group-hover:opacity-100 p-1 hover:text-red-400 transition-opacity"
-                        >
-                            <Trash2 size={12} />
-                        </button>
-                    )}
-                </div>
-            </div>
-
-            {/* Inline SEO Editor — Direction D */}
-            {seoOpen && (
-                <div className="bg-[#1e1e1e] border-t border-[#3f3f46] p-3 space-y-2">
-                    <div className="flex items-center gap-1.5 mb-2">
-                        <Globe size={10} className="text-emerald-400" />
-                        <span className="text-[9px] text-emerald-400 font-bold uppercase tracking-wider">SEO Settings</span>
-                    </div>
-                    <div className="space-y-1.5">
-                        {([
-                            { key: 'title', label: 'Page Title', placeholder: `${page.name} | My App` },
-                            { key: 'description', label: 'Description', placeholder: 'Describe this page in 1-2 sentences' },
-                            { key: 'ogImage', label: 'OG Image URL', placeholder: 'https://example.com/og.png' },
-                            { key: 'canonical', label: 'Canonical URL', placeholder: 'https://example.com/page' },
-                        ] as const).map(({ key, label, placeholder }) => (
-                            <div key={key}>
-                                <label className="text-[9px] text-[#666] uppercase font-bold mb-0.5 block">{label}</label>
-                                <input
-                                    type="text"
-                                    value={(page.seo as any)?.[key] || ''}
-                                    onChange={(e) => onUpdateSEO({ [key]: e.target.value })}
-                                    placeholder={placeholder}
-                                    className="w-full bg-[#2a2a2a] border border-[#3e3e42] rounded px-2 py-1 text-[10px] text-[#ccc] placeholder-[#444] outline-none focus:border-[#007acc] transition-colors"
-                                />
-                            </div>
-                        ))}
-                        <div className="flex items-center justify-between pt-1">
-                            <span className="text-[9px] text-[#666] uppercase font-bold">No Index</span>
-                            <button
-                                onClick={() => onUpdateSEO({ noIndex: !page.seo?.noIndex })}
-                                className={cn(
-                                    'w-8 h-4 rounded-full transition-colors flex items-center px-0.5',
-                                    page.seo?.noIndex ? 'bg-amber-500' : 'bg-[#3e3e42]'
-                                )}
-                            >
-                                <div className={cn(
-                                    'w-3 h-3 rounded-full bg-white shadow-sm transition-transform',
-                                    page.seo?.noIndex ? 'translate-x-4' : 'translate-x-0'
-                                )} />
-                            </button>
-                        </div>
-                        {page.seo?.noIndex && (
-                            <p className="text-[8px] text-amber-400/70 leading-relaxed">
-                                ⚠ This page will be hidden from search engines (robots: noindex, nofollow)
-                            </p>
-                        )}
-                    </div>
-                </div>
-            )}
-        </div>
-    );
-};
-
 // ─── LEFT SIDEBAR ─────────────────────────────────────────────────────────────
 
 export const LeftSidebar = () => {
     const {
         activePanel, setActivePanel, setDragData, previewMode,
         componentRegistry, registerComponent, recentComponents, addRecentComponent,
-        pages, addPage, switchPage, deletePage, realPageId,
-        updatePageSEO,
         theme, updateTheme, selectedId, elements, setElements,
         apiRoutes, addApiRoute, updateApiRoute, deleteApiRoute,
         isInsertDrawerOpen, toggleInsertDrawer,
@@ -894,14 +783,6 @@ export const LeftSidebar = () => {
                 <NavButton icon={Layers} active={activePanel === 'layers'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('layers'); }} tooltip="Layers" />
                 <NavButton icon={ImageIcon} active={activePanel === 'assets'} onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('assets'); }} tooltip="Assets" />
                 <div className="w-8 h-[1px] bg-[#4f4f4f] my-1" />
-                {/* Gap B2 — Deploy nav button */}
-                {/* Phase B: @vectra/loader — Connect Codebase */}
-                <NavButton
-                    icon={Rocket}
-                    active={activePanel === 'deploy'}
-                    onClick={() => { if (isInsertDrawerOpen) toggleInsertDrawer(); togglePanel('deploy'); }}
-                    tooltip="Deploy"
-                />
                 {/* Bottom-pinned Settings button with submenu */}
                 <div className="mt-auto" />
                 <div className="relative" ref={settingsMenuRef}>

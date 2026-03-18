@@ -29,8 +29,8 @@
 import React, { useState, useCallback, useRef, useMemo } from 'react';
 import {
     Upload, FileArchive, CheckCircle2, AlertTriangle,
-    XCircle, Loader2, Layers, ImageIcon, Palette,
-    ChevronRight, ChevronDown, Code2, Type, Box,
+    XCircle, Loader2, Layers, ImageIcon,
+    ChevronRight, ChevronDown, Code2, Box,
     Edit2, RefreshCw,
 } from 'lucide-react';
 import { useEditor } from '../../context/EditorContext';

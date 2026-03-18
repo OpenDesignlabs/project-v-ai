@@ -166,7 +166,7 @@ export const DeployPanel: React.FC = () => {
             const fw = framework as 'nextjs' | 'vite';
             const { files } = fw === 'nextjs'
                 ? generateNextProjectCode(elements, pages)
-                : generateProjectCode(elements, pages);
+                : generateProjectCode(elements, pages, dataSources ?? []);
             const bytes = Object.values(files).reduce((a, v) => a + v.length, 0);
             return { count: Object.keys(files).length, sizeKb: fmtBytes(bytes) };
         } catch { return null; }

@@ -18,10 +18,10 @@
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import {
-    Cpu, CheckCircle2, XCircle, Loader2,
+    Cpu, XCircle, Loader2,
     Copy, Check, ChevronDown, ChevronRight,
     Zap, Trash2, Terminal, FileCode, Server,
-    Play, AlertCircle, Radio, RefreshCw, Power,
+    Play, AlertCircle, Radio, Power,
     ToggleLeft, ToggleRight,
 } from 'lucide-react';
 import { useContainer } from '../../context/ContainerContext';
