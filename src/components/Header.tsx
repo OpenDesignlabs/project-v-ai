@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 
 import { useEditor } from '../context/EditorContext';
 import { useContainer } from '../context/ContainerContext';
@@ -10,7 +10,8 @@ import {
     Cpu, Maximize, ExternalLink, ChevronDown, Plus, FileText,
     Upload, Send, FileArchive, Figma,
 } from 'lucide-react';
-import { PublishModal } from './PublishModal';
+// PublishModal: 982-line modal, only needed when user clicks Publish
+const PublishModal = lazy(() => import('./PublishModal').then(m => ({ default: m.PublishModal })));
 
 import { cn } from '../lib/utils';
 
@@ -662,7 +663,11 @@ export const Header = () => {
             )}
 
             {/* ── Publish Modal ──────────────────────────────────────────── */}
-            {showPublishModal && <PublishModal onClose={() => setShowPublishModal(false)} />}
+            {showPublishModal && (
+                <Suspense fallback={null}>
+                    <PublishModal onClose={() => setShowPublishModal(false)} />
+                </Suspense>
+            )}
         </>
     );
 };

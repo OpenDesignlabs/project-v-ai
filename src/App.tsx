@@ -7,15 +7,16 @@ import { ContainerProvider, useContainer } from './context/ContainerContext';
 
 import { useFileSync } from './hooks/useFileSync';
 import { useAssetSync } from './hooks/useAssetSync';
-import { Dashboard } from './components/Dashboard';
 
-// 1. LAZY LOAD CHUNKS
-const Header = lazy(() => import('./components/Header').then(module => ({ default: module.Header })));
-const LeftSidebar = lazy(() => import('./components/LeftSidebar').then(module => ({ default: module.LeftSidebar })));
-const RightSidebar = lazy(() => import('./components/RightSidebar').then(module => ({ default: module.RightSidebar })));
-const Canvas = lazy(() => import('./components/Canvas').then(module => ({ default: module.Canvas })));
-const ImportModal = lazy(() => import('./components/ImportModal').then(module => ({ default: module.ImportModal })));
-const MagicBar = lazy(() => import('./components/MagicBar').then(module => ({ default: module.MagicBar })));
+// 1. LAZY LOAD CHUNKS — editor shell (loaded once when entering editor)
+const Header       = lazy(() => import('./components/Header').then(m => ({ default: m.Header })));
+const LeftSidebar  = lazy(() => import('./components/LeftSidebar').then(m => ({ default: m.LeftSidebar })));
+const RightSidebar = lazy(() => import('./components/RightSidebar').then(m => ({ default: m.RightSidebar })));
+const Canvas       = lazy(() => import('./components/Canvas').then(m => ({ default: m.Canvas })));
+const ImportModal  = lazy(() => import('./components/ImportModal').then(m => ({ default: m.ImportModal })));
+const MagicBar     = lazy(() => import('./components/MagicBar').then(m => ({ default: m.MagicBar })));
+// 2. Dashboard — 1188-line route, only loaded on dashboard view
+const Dashboard    = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
 // --- MONOCHROME ANIMATED LOGO ---
 const VectraAnimatedLogo = () => (
   <svg width="120" height="120" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-[logo-float_3s_ease-in-out_infinite]">
@@ -520,7 +521,11 @@ const MainRouter = () => {
   const { framework } = useProject();
 
   if (currentView === 'dashboard') {
-    return <Dashboard />;
+    return (
+      <Suspense fallback={<LoadingScreen message="LOADING DASHBOARD..." />}>
+        <Dashboard />
+      </Suspense>
+    );
   }
 
   return (

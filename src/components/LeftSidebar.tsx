@@ -10,12 +10,6 @@ import {
     Send, TerminalSquare, ChevronUp, Settings2,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
-import { DeployPanel } from './DeployPanel';
-import { LoaderPanel } from './panels/LoaderPanel';
-import { DataPanel } from './panels/DataPanel';
-import { StitchPanel } from './panels/StitchPanel';
-import { FigmaPanel } from './panels/FigmaPanel';
-import { MCPPanel } from './panels/MCPPanel';
 import { cn } from '../lib/utils';
 import { processImportedCode, generateComponentId } from '../utils/importHelpers';
 import { TEMPLATES, type TemplateConfig } from '../data/templates';
@@ -23,6 +17,22 @@ import { ICON_NAMES, getIconComponent } from '../data/iconRegistry';
 import { Store, ShoppingBag as ShoppingBagIcon } from 'lucide-react';
 import { InsertDrawer } from './InsertDrawer';
 import type { ApiRoute, HttpMethod } from '../types';
+
+// ── Panel chunks — each loads only when its tab is first activated ──────────
+const DeployPanel  = lazy(() => import('./DeployPanel').then(m => ({ default: m.DeployPanel })));
+const LoaderPanel  = lazy(() => import('./panels/LoaderPanel').then(m => ({ default: m.LoaderPanel })));
+const DataPanel    = lazy(() => import('./panels/DataPanel').then(m => ({ default: m.DataPanel })));
+const StitchPanel  = lazy(() => import('./panels/StitchPanel').then(m => ({ default: m.StitchPanel })));
+const FigmaPanel   = lazy(() => import('./panels/FigmaPanel').then(m => ({ default: m.FigmaPanel })));
+const MCPPanel     = lazy(() => import('./panels/MCPPanel').then(m => ({ default: m.MCPPanel })));
+
+/** Minimal spinner shown while a panel chunk is downloading */
+const PanelFallback = () => (
+    <div className="flex flex-col items-center justify-center h-full gap-3 text-[#2a2a2c]">
+        <Loader2 size={20} className="animate-spin text-[#3a3a3c]" />
+        <span className="text-[9px] font-mono text-[#2a2a2c] uppercase tracking-widest">Loading…</span>
+    </div>
+);
 
 const MARKETPLACE_ITEMS = [
     {
@@ -1124,7 +1134,9 @@ export const LeftSidebar = () => {
                         </button>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                        <DataPanel />
+                        <Suspense fallback={<PanelFallback />}>
+                            <DataPanel />
+                        </Suspense>
                     </div>
                 </div>
             )}
@@ -1141,7 +1153,9 @@ export const LeftSidebar = () => {
                         </button>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                        <StitchPanel />
+                        <Suspense fallback={<PanelFallback />}>
+                            <StitchPanel />
+                        </Suspense>
                     </div>
                 </div>
             )}
@@ -1158,7 +1172,9 @@ export const LeftSidebar = () => {
                         </button>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                        <FigmaPanel />
+                        <Suspense fallback={<PanelFallback />}>
+                            <FigmaPanel />
+                        </Suspense>
                     </div>
                 </div>
             )}
@@ -1175,7 +1191,9 @@ export const LeftSidebar = () => {
                         </button>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                        <MCPPanel />
+                        <Suspense fallback={<PanelFallback />}>
+                            <MCPPanel />
+                        </Suspense>
                     </div>
                 </div>
             )}
@@ -1586,13 +1604,19 @@ export const LeftSidebar = () => {
                         </button>
                     </div>
                     <div className="flex-1 overflow-hidden">
-                        <DeployPanel />
+                        <Suspense fallback={<PanelFallback />}>
+                            <DeployPanel />
+                        </Suspense>
                     </div>
                 </div>
             )}
 
             {/* Phase B: @vectra/loader — Connect Codebase panel */}
-            {activePanel === 'loader' && <LoaderPanel />}
+            {activePanel === 'loader' && (
+                <Suspense fallback={<PanelFallback />}>
+                    <LoaderPanel />
+                </Suspense>
+            )}
 
             {/* Insert Drawer (Overlay) */}
             <InsertDrawer />

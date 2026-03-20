@@ -1,22 +1,17 @@
 /* ============================================================
-   CHANGE LOG — FIX-4
+   CHANGE LOG
    MODIFIED: vite.config.ts
-   ADDED: manualChunks — splits @webcontainer/api, framer-motion,
-          lucide-react into separate async chunks.
-          Each is only downloaded when the module is first used.
-   ADDED: build.target = 'esnext' — skips legacy polyfill emission
-   ADDED: @vitejs/plugin-react-swc — SWC transpiler (~3x faster
-          than Babel plugin-react for both dev and build)
-   PRESERVED: base, resolve.alias, server headers (COEP required
-              by WebContainer)
+   UPDATED: manualChunks — now splits both vendor libs AND heavy
+            src-level modules into named async chunks.
+   ADDED: jszip/file-saver, react-best-gradient, src-level splits
+          (RenderNode, codeGenerator, aiAgent, panels, PublishModal,
+           Dashboard) — each is its own browser-cacheable file.
+   PRESERVED: base, resolve.alias, server/preview headers (COEP)
    ============================================================ */
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react-swc';
 import path from 'path';
 
-// https://vitejs.dev/config/
-// Use './' for universal deployment (works on any platform)
-// Override with VITE_BASE_URL env variable if needed for specific platforms
 export default defineConfig({
   base: process.env.VITE_BASE_URL || './',
 
@@ -28,45 +23,63 @@ export default defineConfig({
     },
   },
 
-  // ── Build: aggressive chunk splitting ─────────────────────────────────
+  // ── Build: fine-grained chunk splitting ───────────────────────────────
   build: {
-    target: 'esnext',           // No legacy polyfills — all modern browsers
+    target: 'esnext',            // No legacy polyfills — all modern browsers
     chunkSizeWarningLimit: 2500,
     rollupOptions: {
       output: {
-        // FIX-4: Split large dependencies into separate async chunks.
-        // Browser downloads only the chunk it needs, when it needs it.
-        // This cuts the initial JS parse time from ~10s to ~2-3s.
+        // Each return value becomes a separate async JS chunk.
+        // Browser downloads and caches each chunk independently —
+        // only the changed chunk is re-downloaded on updates.
         manualChunks(id) {
-          // WebContainer: only loaded when the editor mounts, heavy (~1.5MB)
-          if (id.includes('@webcontainer/api')) return 'chunk-webcontainer';
-          // Framer Motion: only needed inside the canvas (~500KB)
-          if (id.includes('framer-motion')) return 'chunk-motion';
-          // Lucide: icon library, not needed on dashboard (~800KB)
-          if (id.includes('lucide-react')) return 'chunk-lucide';
-          // Babel standalone: may still appear if imported via legacy path
-          if (id.includes('@babel/standalone')) return 'chunk-babel';
-          // React core: tiny, separate for long-term caching
+          // ── Vendor: heavy 3rd-party libs ────────────────────────────────
+          // WebContainer: only loaded when editor mounts (~1.5 MB)
+          if (id.includes('@webcontainer/api'))       return 'chunk-webcontainer';
+          // Framer Motion: animation engine used in canvas only (~500 KB)
+          if (id.includes('framer-motion'))           return 'chunk-motion';
+          // Lucide: 800-icon library — not needed on dashboard (~800 KB)
+          if (id.includes('lucide-react'))            return 'chunk-lucide';
+          // Babel standalone: compile fence for custom_code preview
+          if (id.includes('@babel/standalone'))       return 'chunk-babel';
+          // JSZip + file-saver: only when publish/download is triggered
+          if (id.includes('jszip') ||
+              id.includes('file-saver'))              return 'chunk-zip';
+          // Color picker: gradient editor inside RightSidebar design tab
+          if (id.includes('react-best-gradient'))     return 'chunk-colorpicker';
+          // React core: tiny, long-lived cache
           if (id.includes('node_modules/react/') ||
-            id.includes('node_modules/react-dom/')) return 'chunk-react';
-          // Everything else from node_modules goes into a generic vendor chunk
-          if (id.includes('node_modules')) return 'chunk-vendor';
+              id.includes('node_modules/react-dom/')) return 'chunk-react';
+          // Remaining node_modules
+          if (id.includes('node_modules'))            return 'chunk-vendor';
+
+          // ── Src: application modules split by feature ──────────────────
+          // RenderNode: 1600-line component tree renderer
+          if (id.includes('src/components/RenderNode'))    return 'chunk-app-rendernode';
+          // Code generator: 1480-line multi-framework export engine
+          if (id.includes('src/utils/codeGenerator'))      return 'chunk-app-codegen';
+          // AI agent: only pulled in when AI features are invoked
+          if (id.includes('src/services/aiAgent'))         return 'chunk-app-ai';
+          // All sidebar panels: 6 panels loaded per-activation
+          if (id.includes('src/components/panels/') ||
+              id.includes('src/components/DeployPanel'))   return 'chunk-app-panels';
+          // Publish modal + deployer utilities
+          if (id.includes('src/components/PublishModal') ||
+              id.includes('src/utils/netlifyDeployer'))    return 'chunk-app-publish';
+          // Dashboard: route-level, lazy-loaded in App.tsx
+          if (id.includes('src/components/Dashboard'))     return 'chunk-app-dashboard';
         },
       },
     },
   },
 
   // ── Dev server: COEP headers required for SharedArrayBuffer (WebContainer) ──
-  // Required for WebContainers (SharedArrayBuffer support in Preview window)
   server: {
     headers: {
       'Cross-Origin-Embedder-Policy': 'require-corp',
       'Cross-Origin-Opener-Policy': 'same-origin',
-      // Prevent MIME-type sniffing
       'X-Content-Type-Options': 'nosniff',
-      // Only send origin (no path) in Referer header for cross-origin requests
       'Referrer-Policy': 'strict-origin-when-cross-origin',
-      // Disable browser features not used by this app
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
     },
   },
