@@ -38,3 +38,6 @@ wasm-pack.log
 inplem-clude.md
 # lock file
 pnpm-lock.yaml
+
+# public
+public/
