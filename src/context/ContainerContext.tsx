@@ -20,7 +20,7 @@ interface ContainerContextType {
     writeFile: (path: string, content: string) => Promise<void>;
     removeFile: (path: string) => Promise<void>;
     fileTree: Record<string, any>;
-    // On-demand: triggers pnpm install + vite dev server when the user explicitly asks
+    // triggers pnpm install + vite dev server when the user explicitly asks
     installPackage: (packageName: string) => Promise<void>;
     startDevServer: () => Promise<void>;
     /**
@@ -130,19 +130,14 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
                 const template = framework === 'vite' ? VITE_REACT_TEMPLATE : NEXTJS_APP_ROUTER_TEMPLATE;
                 const frameworkLabel = framework === 'vite' ? 'Vite + React' : 'Next.js App Router';
 
-                // Item 4: clean stale dirs before mounting new project template.
+                // clean stale dirs before mounting new project template.
                 // Prevents old project files from bleeding into the new VFS.
                 await cleanVfsForFramework(wc, framework);
 
                 log(`📂 Mounting ${frameworkLabel} project files...`);
                 await wc.mount(template);
 
-                // ─── DONE. No npm install. No vite. ──────────────────────────
-                // The WebContainer is now a lightning-fast virtual hard drive.
-                // • useFileSync writes .tsx files to it continuously.
-                // • The Instant Iframe (ContainerPreview) renders AI components.
-                // • startDevServer() / installPackage() are available on-demand
-                //   when the user explicitly clicks "Download" or "Run Server".
+                // ─── DONE. No npm install. No vite. ────────────────────────── The WebContainer is now a lightning-fast virtual hard drive. • useFileSync writes .tsx files to it continuously
                 setStatus('ready');
                 log('✅ Virtual File System ready — instant preview active.');
 
@@ -156,11 +151,7 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
         boot();
     }, [log]);
 
-    // M-8 FIX: `status` removed from readFileTree deps.
-    // Previously: status in deps → new readFileTree identity every status change
-    // → effect re-runs → double read on every transition.
-    // The guard `if (!instance || status !== 'ready')` still works because
-    // `status` is in the effect's own dep array (not the callback's).
+    // `status` removed from readFileTree deps. Previously: status in deps → new readFileTree identity every status change → effect re-runs → double read on every transition
     const readFileTree = useCallback(async () => {
         if (!instance) return;
         try {
@@ -235,7 +226,7 @@ export const ContainerProvider: React.FC<ContainerProviderProps> = ({ children, 
             : ['next', 'dev', '--hostname', '0.0.0.0'];
         log(`🚀 Starting ${framework === 'vite' ? 'Vite' : 'Next.js'} dev server...`);
         const dev = await instance.spawn('npx', devArgs);
-        // Item 4: store process ref so we can kill it on unmount.
+        // store process ref so we can kill it on unmount.
         devServerProcessRef.current = dev;
         dev.output.pipeTo(new WritableStream({ write: d => log(d) }));
 

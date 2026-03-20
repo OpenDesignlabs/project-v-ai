@@ -1,26 +1,8 @@
 /**
- * ─── ZIP IMPORTER ─────────────────────────────────────────────────────────────
- * STI-1 — Full Page Import pipeline: ZIP → HTML → VectraNode tree.
- *
- * PERMANENT CONSTRAINTS
- * ─────────────────────
- * STI-SAFE-1 [PERMANENT]: Every produced VectraNode MUST have:
- *   id (string), type (string), name (string), children (array), props.style (object).
- *   sanitizeNode() at the end of htmlNodeToVectraNode() enforces this.
- *
- * STI-SAFE-2 [PERMANENT]: MAX_PARSE_DEPTH = 6.
- *   Nodes beyond depth 6 are collapsed into their nearest ancestor's content.
- *   Prevents runaway recursion on deeply nested Bootstrap/email HTML.
- *
- * STI-SAFE-3 [PERMANENT]: <script>, <noscript>, <style>, <svg>, <iframe> etc.
- *   are ALWAYS skipped. We never import executable code from external HTML.
- *
- * STI-SAFE-4 [PERMANENT]: IDs are crypto.randomUUID()-based.
- *   External HTML element.id values are NEVER used as Vectra node IDs.
- *
- * STI-CSS-1 [PERMANENT]: CSS extraction is a pure return value.
- *   The caller (StitchPanel) is responsible for VFS injection.
- *   This util has zero side effects.
+ * --- ZIP IMPORTER -----------------------------------------------------------
+ * Imports a zipped React/Next.js project into the Vectra editor.
+ * Extracts component files from the ZIP, parses JSX/TSX source, and converts
+ * each top-level component into a Vectra canvas element with placeholder props.
  */
 
 import JSZip from 'jszip';
@@ -198,10 +180,10 @@ const htmlNodeToVectraNode = (
 ): string | null => {
     const tag = el.tagName?.toLowerCase() ?? '';
 
-    // STI-SAFE-3: skip non-visual / executable tags
+    // skip non-visual / executable tags
     if (SKIP_TAGS.has(tag)) return null;
 
-    // STI-SAFE-2: depth limit → collapse to text
+    // depth limit → collapse to text
     if (depth > MAX_PARSE_DEPTH) {
         const text = el.textContent?.trim();
         if (text && text.length > 0) {

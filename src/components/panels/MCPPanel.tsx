@@ -1,19 +1,8 @@
 /**
- * ─── MCP PANEL v2 ─────────────────────────────────────────────────────────────
- * MCP-1 + MCP-3 — Server control + IDE connector UI.
- *
- * Change Log v2:
- * ADDED: Built-in Tool Runner — pick tool, edit JSON args, execute, see raw response
- *   Uses POST /mcp/message → tools/call (existing endpoint, no server changes needed)
- * ADDED: SSE connection badge — dedicated status indicator, separate from server status
- * ADDED: Auto-reconnect SSE — exponential backoff (500→1000→2000ms), max 3 attempts
- * ADDED: Copy SSE URL button — one-click
- * ADDED: Auto-start toggle — starts server when VFS becomes ready (localStorage)
- * ADDED: Health pulse — /health ping every 30s while server is running
- * PRESERVED: MCP-PORT-1, MCP-READ-1, MCP-WRITE-1, MCP-SEC-1, MCP-IDLE-1, MCP-WC-1
- *
- * MCP-WC-1 FIX: resolvedBaseUrl stores the container-forwarded URL from server-ready.
- * localhost:3002 is NEVER used directly from this component.
+ * --- MCP PANEL --------------------------------------------------------------
+ * Left-sidebar panel for the Model Context Protocol server integration.
+ * Provides controls to start/stop the local MCP server, view its status,
+ * and inspect tool definitions exposed to AI agents via the MCP protocol.
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';

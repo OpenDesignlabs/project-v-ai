@@ -1,35 +1,9 @@
 /**
- * ─── LAYOUT WIREFRAME THUMBNAIL GENERATOR ────────────────────────────────────
- * Converts a VectraProject element tree into a compact SVG wireframe thumbnail.
- *
- * WHY SVG, NOT html2canvas OR SCREENSHOTS
- * ─────────────────────────────────────────
- * html2canvas adds ~200KB to the bundle, requires a live DOM render session,
- * and fails on WebContainer iframes. A screenshot of a 14px heading at 300px
- * width is illegible and provides no recognition value.
- *
- * An SVG wireframe derived directly from element data:
- *   • Adds 0KB to the bundle (pure TypeScript)
- *   • Works from saved localStorage/IDB data — no editor session required
- *   • Produces ~400-600 byte SVG strings (vs. 50-100KB base64 PNGs)
- *   • Shows layout STRUCTURE — the primary recognition signal at thumbnail scale
- *   • Generates in <1ms even on 200-node projects
- *
- * OUTPUT
- * ───────
- * A 300×180 SVG string. Callers store it in localStorage and render it as:
- *   <img src={`data:image/svg+xml,${encodeURIComponent(svgString)}`} />
- *
- * STORAGE KEY
- * ────────────
- * Use thumbKey(projectId) as the localStorage key — mirrors snapKey() in
- * ProjectContext. Both are cleaned up together in purgeProjectData().
- *
- * NM-THUMB [PERMANENT CONSTRAINT]:
- *   Thumbnails MUST be generated via this function — never via html2canvas,
- *   never via DOM capture, never via screenshot API.
- *   thumbKey(id) = 'vectra_thumb_${id}' — canonical, single source of truth.
- *   Display: data:image/svg+xml URI in <img> — no blob URLs, no workers.
+ * --- GENERATE THUMBNAIL -----------------------------------------------------
+ * Generates an SVG wireframe thumbnail of the current canvas artboard.
+ * Walks the element tree and draws simplified shapes for each node type.
+ * The resulting SVG data URL is stored in localStorage as the project preview
+ * image shown on the Dashboard.
  */
 
 import type { VectraProject, Page } from '../types';

@@ -1,32 +1,4 @@
-/**
- * ─── FIGMA VFS PROXY ──────────────────────────────────────────────────────────
- * FIG-1 — Solves FIGMA-CORS-1: Figma API blocks direct browser fetches.
- *
- * ARCHITECTURE
- * ────────────
- * A minimal Node.js http server (zero npm deps — uses built-ins only) is written
- * into the WebContainer VFS at `/proxy.mjs` and spawned via `node proxy.mjs`.
- * It runs on port 3001. All FigmaPanel.tsx Figma API calls route through:
- *   http://localhost:3001/figma-proxy/v1/...
- *
- * SECURITY CONSTRAINTS
- * ─────────────────────
- * FIGMA-SEC-1 [PERMANENT]: PAT stored in sessionStorage ONLY. Never localStorage.
- *   Key = 'vectra_figma_token'. Tab-close = token gone.
- *
- * FIGMA-SEC-2 [PERMANENT]: Token passed as `X-Figma-Token` request header only.
- *   Never in URL query params (visible in server logs).
- *   Never written to the proxy source file (would persist in VFS).
- *   The proxy reads it from the incoming request header and forwards it as
- *   `Authorization: Bearer` to api.figma.com.
- *
- * FIGMA-PROXY-1 [PERMANENT]: Proxy port = 3001. Dev server port = 3000.
- *   These must never collide.
- *
- * FIGMA-PROXY-2 [PERMANENT]: Proxy is written to VFS only once per session.
- *   ensureProxy() health-checks before re-writing. proxyBootPromise singleton
- *   prevents double-spawns under React Strict Mode double-invoke.
- */
+// Server-side proxy that forwards requests to api.figma.com inside a WebContainer to bypass browser CORS.
 
 import type { WebContainer } from '@webcontainer/api';
 
@@ -34,8 +6,7 @@ import type { WebContainer } from '@webcontainer/api';
 
 export const PROXY_PORT = 3001;
 
-// FIG-WC-1 [PERMANENT]: WebContainer servers are NOT reachable via localhost:PORT
-// from the browser. Use the container-forwarded URL from the server-ready event.
+// WebContainer proxy base URL — updated to the container-forwarded URL from the server-ready event.
 let proxyBaseUrl = `http://localhost:${PROXY_PORT}/figma-proxy`;
 export const getProxyBaseUrl = () => proxyBaseUrl;
 
@@ -44,14 +15,7 @@ let proxyBootPromise: Promise<string> | null = null;
 let proxyIsRunning = false;
 
 // ─── PROXY SOURCE ─────────────────────────────────────────────────────────────
-// Written to WebContainer VFS as /proxy.mjs.
-// Uses ONLY Node.js built-ins (http, https) — no npm install required.
-// This means zero install latency: proxy boots instantly.
-//
-// FIGMA-SEC-2 implementation:
-//   token ← req.headers['x-figma-token']
-//   forwarded as: Authorization: Bearer {token}
-//   never stored, never logged.
+// Written to the WebContainer VFS as /proxy.mjs. Uses only Node.js built-ins — no install needed.
 
 const PROXY_SOURCE = `
 import http from 'http';
@@ -67,10 +31,7 @@ const resetIdle = () => { clearTimeout(idleTimer); idleTimer = setTimeout(() => 
 const server = http.createServer((req, res) => {
     resetIdle();
 
-    // FIG-CORS-2: cors object passed directly into every res.writeHead() call.
-    // res.setHeader() before writeHead() is silently discarded by Node.js —
-    // writeHead with a status code resets all previously set headers unless
-    // headers are passed as its second argument.
+    // CORS headers must be passed into writeHead() directly — setHeader() before writeHead() is silently discarded by Node.js.
     const cors = {
         'Access-Control-Allow-Origin': '*',
         'Access-Control-Allow-Methods': 'GET, OPTIONS',
@@ -91,10 +52,7 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // FIG-SHUTDOWN-1: graceful shutdown endpoint.
-    // resetProxy() calls this before clearing singleton state, ensuring the
-    // old process exits before ensureProxy() spawns a fresh one on the same port.
-    // Without this: EADDRINUSE on re-spawn.
+    // Shutdown endpoint — signals the proxy process to exit before the port is re-used by ensureProxy().
     if (req.url === '/figma-proxy/shutdown') {
         res.writeHead(200, { ...cors, 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ ok: true }));
@@ -107,7 +65,7 @@ const server = http.createServer((req, res) => {
         res.writeHead(404, cors); res.end('Not found'); return;
     }
 
-    // FIGMA-SEC-2: read token from header, never from URL or stored file
+    // read token from header, never from URL or stored file
     const token = req.headers['x-figma-token'];
     if (!token) {
         res.writeHead(401, { ...cors, 'Content-Type': 'application/json' });
@@ -152,12 +110,7 @@ server.listen(PORT, () => {
 
 // ─── PUBLIC API ───────────────────────────────────────────────────────────────
 
-/**
- * checkProxyHealth
- * ─────────────────
- * Fast check — returns true if proxy already running and healthy.
- * Skips re-writing VFS + re-spawning on every panel open.
- */
+// Returns true quickly if the proxy is already running and healthy. Skips VFS write and respawn on every panel open.
 export const checkProxyHealth = async (): Promise<boolean> => {
     if (!proxyIsRunning) return false;
     try {
@@ -170,20 +123,7 @@ export const checkProxyHealth = async (): Promise<boolean> => {
     }
 };
 
-/**
- * ensureProxy
- * ───────────
- * Guarantees the Figma CORS proxy is running. Idempotent — safe to call many
- * times. Module-level singleton prevents duplicate spawns.
- *
- * Steps:
- *   1. Fast health check → return if already up.
- *   2. Write /proxy.mjs to VFS (deterministic content, overwrite is safe).
- *   3. Spawn `node proxy.mjs` inside the WebContainer.
- *   4. Poll /figma-proxy/health until ready (max 8 s).
- *
- * @throws Error if proxy does not become healthy within timeout.
- */
+// Ensures the Figma CORS proxy is running inside the WebContainer. Idempotent — uses a module-level singleton to prevent duplicate spawns.
 export const ensureProxy = async (instance: WebContainer): Promise<string> => {
     if (await checkProxyHealth()) return proxyBaseUrl;
     if (proxyBootPromise) { await proxyBootPromise; return proxyBaseUrl; }
@@ -193,7 +133,7 @@ export const ensureProxy = async (instance: WebContainer): Promise<string> => {
             await instance.fs.writeFile('/proxy.mjs', PROXY_SOURCE);
             console.log('[figma-proxy] proxy.mjs written to VFS');
 
-            // FIG-WC-1: subscribe to server-ready BEFORE spawning
+            // subscribe to server-ready BEFORE spawning
             const serverReadyPromise = new Promise<string>((resolve) => {
                 instance.on('server-ready', (port, url) => {
                     if (port === PROXY_PORT) {
@@ -228,24 +168,7 @@ export const ensureProxy = async (instance: WebContainer): Promise<string> => {
     return proxyBaseUrl;
 };
 
-/**
- * resetProxy
- * ──────────
- * Clears the module-level singleton so the next call to ensureProxy()
- * will re-spawn the proxy process.
- *
- * Call this when:
- *   - The user clicks "Reconnect" after a proxy error
- *   - The WebContainer instance is recycled
- *   - The proxy process has exited (MCP-IDLE style auto-exit)
- *
- * NOTE: This does NOT kill the running proxy process — the WebContainer
- * process lifecycle is managed by the container. It only resets the
- * TypeScript singleton state so ensureProxy() will re-try.
- */
-// FIG-SHUTDOWN-1: resetProxy is now async — it calls the /shutdown endpoint
-// first so the running Node process exits cleanly before we clear singleton
-// state. This prevents EADDRINUSE when ensureProxy() re-spawns on the same port.
+// Calls the /shutdown endpoint first so the running Node process exits cleanly before the port is re-used.
 export const resetProxy = async (): Promise<void> => {
     if (proxyIsRunning) {
         try {
@@ -265,16 +188,7 @@ export const resetProxy = async (): Promise<void> => {
     console.log('[figma-proxy] Singleton reset. Next ensureProxy() will re-spawn.');
 };
 
-/**
- * figmaFetch
- * ──────────
- * Makes an authenticated Figma API call through the VFS proxy.
- * FIGMA-SEC-2: token passed as X-Figma-Token header — never in the URL.
- *
- * @param path   Figma API path, e.g. '/v1/files/{key}'
- * @param token  Figma PAT (caller retrieves from sessionStorage)
- * @param signal Optional AbortSignal for cancellation
- */
+// Makes an authenticated Figma API call through the VFS proxy. Token is passed as X-Figma-Token header, never in the URL.
 export const figmaFetch = async <T>(
     path: string,
     token: string,

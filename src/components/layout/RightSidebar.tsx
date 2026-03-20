@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+﻿import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import React from 'react';
 import { useEditor } from '../../context/EditorContext';
 import { useUI } from '../../context/UIContext';
@@ -22,19 +22,13 @@ import {
     resolveControlType,
 } from '../../utils/vectraLoaderBridge';
 
-// --- TYPES ---
-// CODE-TAB-1 [PERMANENT]: 'code' tab is only shown/active for custom_code nodes.
-// It is never the default tab for structural elements (containers, text, images).
+// --- TYPES --- 'code' tab is only shown/active for custom_code nodes. It is never the default tab for structural elements (containers, text, images)
 type Tab = 'design' | 'interact' | 'settings' | 'props' | 'code';
 type FillMode = 'solid' | 'gradient' | 'image';
 
 // --- SUB-COMPONENTS ---
 
-/**
- * AddPropRow — isolated sub-component so useState is called at the correct
- * hook level. PROPS-TAB-3 [PERMANENT]: hooks must not be called inside
- * callbacks, conditionals, or IIFEs. Extracting here keeps the parent clean.
- */
+/** AddPropRow \u2014 isolated sub-component so useState is called at the correct hook level. */
 const AddPropRow: React.FC<{ onAdd: (key: string, value: string) => void }> = ({ onAdd }) => {
     const [newKey, setNewKey] = React.useState('');
     const [newVal, setNewVal] = React.useState('');
@@ -119,10 +113,7 @@ export const RightSidebar = () => {
     const { activeBreakpoint, setDevice, selectedIds } = useUI();
     const [activeTab, setActiveTab] = useState<Tab>('design');
     const [animScope, setAnimScope] = useState<'single' | 'all'>('single');
-    // NM-7 FIX: track whether the user is actively dragging a slider so we can skip
-    // history entries during the drag and commit exactly ONE entry on pointerUp.
-    // Previously every onChange called updateProject() without skipHistory — dragging
-    // opacity 100→50 produced ~50 undo steps, evicting all prior structural changes.
+    // Tracks drag state so history is skipped during slider movement and committed once on pointerUp.
     const isSliderDragging = useRef(false);
 
     // Local state for glassmorphism effects
@@ -144,10 +135,7 @@ export const RightSidebar = () => {
     // Get element
     const element = selectedId ? elements[selectedId] : null;
 
-    // FIX-13: Derive fillMode from element's actual background style (after element is declared).
-    // derivedFillMode reflects the element's real fill every render.
-    // fillModeOverride is set when the user manually clicks a fill-type tab.
-    // fillMode = override ?? derived. Override cleared on element.id switch.
+    // derivedFillMode mirrors the element's current background. fillModeOverride is set when the user picks a fill type manually; reset on element switch.
     const derivedFillMode = useMemo((): FillMode => {
         const bg = String(element?.props?.style?.background ?? element?.props?.style?.backgroundImage ?? '');
         if (bg.includes('gradient')) return 'gradient';
@@ -158,19 +146,13 @@ export const RightSidebar = () => {
     const fillMode = fillModeOverride ?? derivedFillMode;
     useEffect(() => { setFillModeOverride(null); }, [element?.id]);
 
-    // ── Code Tab: isCodeNode ──────────────────────────────────────────────────
-    // True for AI-generated and manually-imported custom_code nodes that carry
-    // inline source. Loader-registered components (importMeta path) do NOT set
-    // element.code — they render via the registry. Mutually exclusive with Props tab.
+    // True for AI-generated/custom nodes with inline code. Mutually exclusive with the Props tab (importMeta path).
     const isCodeNode = !!(
         (element?.type === 'custom_code' || element?.type === 'custom_component') &&
         element?.code
     );
 
-    // Local textarea buffer — avoids calling setElements on every keystroke.
-    // CODE-TAB-2 [PERMANENT]: write to elements only on blur or Cmd+Enter,
-    // same pattern as PROPS-TAB-2. Keystroke-level setElements at 60wpm would
-    // push ~8 state updates/sec and thrash the Babel worker queue.
+    // Local textarea buffer — avoids calling setElements on every keystroke. write to elements only on blur or Cmd+Enter, same pattern as PROPS-TAB-2. Keystroke-level setElements at 60wpm would
     const [localCode, setLocalCode] = useState<string>('');
     const [isAiFixing, setIsAiFixing] = useState(false);
     const [codeCopied, setCodeCopied] = useState(false);
@@ -211,25 +193,18 @@ export const RightSidebar = () => {
 
     }, [
         element?.id,
-        // NS-5 FIX: re-parse whenever these specific style values change, not just on selection.
-        // AI generation, Cmd+Z, and programmatic setElements can all update transform/filter
-        // without changing the selected element ID — sliders showed stale values while canvas
-        // rendered correctly.
+        // Re-parse when style values change externally (AI, undo, setElements) so sliders reflect the current canvas state.
         element?.props?.style?.transform,
         element?.props?.style?.backdropFilter,
         // eslint-disable-next-line react-hooks/exhaustive-deps
     ]);
 
-    // ── Code Tab: sync localCode when element or its code changes ─────────────
-    // Deps: element.id (selection change) + element.code (external fix applied
-    // by ComponentErrorBoundary auto-fix loop). Both cases must reset localCode.
+    // Syncs localCode with element.code when the selection changes or an external fix is applied.
     useEffect(() => {
         setLocalCode(element?.code ?? '');
     }, [element?.id, element?.code]);
 
-    // ── Code Tab: auto-switch to 'code' tab when a code node is selected ──────
-    // Only fires on selection change (element.id), not on every code update.
-    // Does NOT auto-switch away — user's manual tab choice is respected.
+    // Auto-switches to the Code tab when a code node is selected; respects the user's manual tab choice thereafter.
     useEffect(() => {
         if (!element) return;
         if (element.id === prevElementIdRef.current) return;
@@ -238,12 +213,7 @@ export const RightSidebar = () => {
         if (isCode) setActiveTab('code');
     }, [element?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Code Tab: commitCode ──────────────────────────────────────────────────
-    // HOOKS-ORDER-1 [PERMANENT]: declared HERE, before ALL early returns.
-    // useCallback must never appear after an early return — React counts hooks
-    // in render order; a conditional early-return that skips a hook causes
-    // "Rendered more hooks than during the previous render" crash.
-    // Internal `if (!element) return` guards the null case safely.
+    // ── Code Tab: commitCode ────────────────────────────────────────────────── declared HERE, before ALL early returns. useCallback must never appear after an early return — React counts hooks
     const commitCode = useCallback(() => {
         if (!element) return;
         const code = localCode;
@@ -255,7 +225,7 @@ export const RightSidebar = () => {
     }, [element, localCode, setElements, pushHistory, elementsRef]);
 
     // ── Code Tab: handleAiFix ─────────────────────────────────────────────────
-    // HOOKS-ORDER-1 [PERMANENT]: same constraint — before all early returns.
+    // same constraint — before all early returns.
     const handleAiFix = useCallback(async () => {
         if (!element || !localCode || isAiFixing) return;
         setIsAiFixing(true);
@@ -303,7 +273,7 @@ export const RightSidebar = () => {
         let targetIds = [element.id];
 
         if (animScope === 'all' && key.startsWith('animation')) {
-            // M-7 FIX: O(1) lookup via parentMap instead of O(N) Object.keys().find().
+            // O(1) lookup via parentMap instead of O(N) Object.keys().find().
             const parentId = parentMap.get(element.id);
             if (parentId) {
                 const parent = elements[parentId];
@@ -313,7 +283,7 @@ export const RightSidebar = () => {
             }
         }
 
-        // C-2 FIX: build the updated element map without mutating any existing reference.
+        // build the updated element map without mutating any existing reference.
         // Each node in targetIds is fully cloned along its mutation path.
         const next = { ...elements };
         targetIds.forEach(id => {
@@ -351,7 +321,7 @@ export const RightSidebar = () => {
         updateProject(next, { skipHistory: isSliderDragging.current });
     };
 
-    // NM-7: call on slider pointerUp to commit one stable history entry.
+    // call on slider pointerUp to commit one stable history entry.
     const commitSliderHistory = () => {
         isSliderDragging.current = false;
         pushHistory(elementsRef.current);
@@ -363,7 +333,7 @@ export const RightSidebar = () => {
         onDragEnd: commitSliderHistory,
     };
 
-    // C-2 FIX: clone the node chain — don't mutate newElements[element.id].props in-place.
+    // clone the node chain — don't mutate newElements[element.id].props in-place.
     const updateProp = (key: string, value: any) => {
         const el = elements[element.id];
         const updatedNode = { ...el, props: { ...el.props, [key]: value } };
@@ -410,9 +380,7 @@ export const RightSidebar = () => {
     return (
         <div id="right-sidebar" className="w-[320px] bg-[#333333] border-l border-[#252526] h-full flex flex-col">
 
-            {/* UX-4 [PERMANENT]: Multi-select alignment toolbar.
-                Only shown when 2+ elements are selected. All ops use elementsRef.current (H-4)
-                and call updateProject() once per action — never per-element in a loop. */}
+            {/* Multi-select alignment toolbar \u2014 shown when 2+ elements are selected. All ops call updateProject() once. */}
             {selectedIds.size > 1 && (() => {
                 const ids = Array.from(selectedIds);
                 const boxes = ids.map(id => {
@@ -584,16 +552,7 @@ export const RightSidebar = () => {
                 activeTab === 'code' ? 'overflow-hidden flex flex-col' : 'overflow-y-auto'
             )}>
 
-                {/* ════════════════════════════════════════════════════════════
-                    TAB: CODE
-                    Visible only for custom_code / AI-generated section nodes.
-                    Inline editor: view, edit, Tab-indent, Cmd+Enter live commit,
-                    blur commit, copy, AI Fix, Regenerate via MagicBar.
-                    CODE-TAB-1 [PERMANENT]: never shown for importMeta nodes.
-                    CODE-TAB-2 [PERMANENT]: writes via setElements on commit only.
-                    CODE-TAB-3 [PERMANENT]: outer div is overflow:hidden so the
-                      absolute-fill textarea has no double-scrollbar.
-                    ════════════════════════════════════════════════════════════ */}
+                {/* Code tab - inline source editor for AI-generated and custom_code nodes. */}
                 {activeTab === 'code' && isCodeNode && (() => {
                     const fnName =
                         element.code?.match(/export\s+default\s+function\s+(\w+)/)?.[1]
@@ -690,15 +649,7 @@ export const RightSidebar = () => {
                     );
                 })()}
 
-                {/* ════════════════════════════════════════════════════════════
-                    TAB: PROPS
-                    Visible only when element.importMeta is set (loader/imported).
-                    Schema-driven controls when propSchema present;
-                    raw key-value editor fallback otherwise.
-                    PROPS-TAB-1 [PERMANENT]: never shows style/className/breakpoints.
-                    PROPS-TAB-2 [PERMANENT]: writes directly to element.props via
-                      setElements (not updateProject — avoids history thrash at 60fps).
-                    ════════════════════════════════════════════════════════════ */}
+                {/* Props tab - schema-driven controls for loader/imported components (importMeta nodes). */}
                 {activeTab === 'props' && element?.importMeta && (() => {
                     const conf = componentRegistry[element.type];
                     const schema: Record<string, VectraLoaderPropSchema> | undefined =
@@ -711,7 +662,7 @@ export const RightSidebar = () => {
                         'animationDelay', 'hoverEffect', 'id',
                     ]);
 
-                    // PROPS-TAB-2: direct setElements write, NOT updateProject
+                    // direct setElements write, NOT updateProject
                     const updatePropKey = (key: string, value: unknown) => {
                         setElements(prev => ({
                             ...prev,
@@ -1278,12 +1229,7 @@ export const RightSidebar = () => {
                         </Section>
 
                         <Section title="Prototyping">
-                            {/* SPRINT-C-FIX-14: On Click now supports External URL.
-                                '__external__' is a sentinel stored in linkTo.
-                                Guard in generateNodeCode prevents it reaching
-                                React Router <Link> (would produce broken route).
-                                When '__external__' is selected, props.href is the
-                                actual URL and props.target controls tab behaviour. */}
+                            {/* '__external__' sentinel: linkTo is a real URL (props.href), not a React Router path. Generated code guards against passing it to <Link>. */}
                             <div className="space-y-3">
                                 <Row label="On Click">
                                     <SelectInput
@@ -1353,12 +1299,7 @@ export const RightSidebar = () => {
                 )}
 
                 {/* --- TAB: SETTINGS --- */}
-                {/* SPRINT-C-FIX-11: Settings tab fully implemented.
-                    All writes use updateProject (C-1/C-2 spread-clone).
-                    aria-label/role/tabIndex write into element.props —
-                    RenderNode spreads these onto native DOM elements immediately
-                    so accessibility is live on the canvas without an export.
-                    data-testid / data-cy stored in props for Playwright/Cypress. */}
+                {/* Settings tab \u2014 writes aria-label/role/tabIndex/data-testid into element.props for live accessibility on the canvas. */}
                 {activeTab === 'settings' && (
                     <>
                         {/* ── Metadata ─────────────────────────────────── */}

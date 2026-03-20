@@ -30,7 +30,7 @@ interface AIResponse {
     message: string;
 }
 
-// NH-3 FIX: aligned with project-wide crypto.randomUUID() standard (M-5 / aiHelpers.ts fix).
+// aligned with project-wide crypto.randomUUID() standard (M-5 / aiHelpers.ts fix).
 const uid = () => `ai_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
 
 // ─── TIER 1: LOCAL HEURISTICS (Instant, zero-cost) ───────────────────────────
@@ -40,12 +40,7 @@ const processLocalIntent = (
 ): AIResponse | null => {
     const p = prompt.toLowerCase().trim();
 
-    // ── 1. Color changes (SPRINT-B-FIX-3: expanded patterns) ─────────────────
-    // Patterns covered:
-    //   a) "change/make/set/turn X color/background/bg/text to VALUE"  (original)
-    //   b) "make/set/turn X blue/red/..."                              (NEW — no 'color' word)
-    //   c) "change/set [the] background [color] to VALUE"              (NEW — bg-only shorthand)
-    //   d) "make all text/headings white/black/..."                    (NEW — bulk text color)
+    // ── 1. Color changes (SPRINT-B-FIX-3: expanded patterns) ───────────────── Patterns covered: a) "change/make/set/turn X color/background/bg/text to VALUE"  (original)
     const CSS_COLORS = ['blue', 'red', 'green', 'white', 'black', 'dark', 'light',
         'gray', 'grey', 'purple', 'pink', 'yellow', 'orange', 'teal', 'indigo', 'violet'];
 
@@ -271,18 +266,7 @@ const callDirectAPI = async (
     throw new Error(`AI failed after ${MAX_RETRIES} retries. Last error: ${lastError}`);
 };
 
-// ─── STREAMING API GATEWAY ─────────────────────────────────────────────────
-// SPRINT-B-FIX-4: SSE streaming variant used by processCloudLLM.
-// Dispatches 'vectra:ai-stream-chunk' CustomEvents as tokens arrive so
-// MagicBar can render a live section-name ticker without polling or prop drilling.
-//
-// FALLBACK: If the provider responds with Content-Type: application/json
-// (some HF Router upstreams ignore stream:true), we parse it as a normal
-// JSON response and dispatch one synthetic chunk event for MagicBar progress.
-//
-// SPRINT-B-FIX-4-PERM: This function MUST NOT be used for the SRE Agent.
-// SRE calls require temperature=0.1 determinism — streaming adds latency with
-// no UX benefit for a 2s fix call. The SRE Agent keeps using callDirectAPI.
+// ─── STREAMING API GATEWAY ───────────────────────────────────────────────── SSE streaming variant used by processCloudLLM. Dispatches 'vectra:ai-stream-chunk' CustomEvents as tokens arrive so
 const callDirectAPIWithStreaming = async (
     systemPrompt: string,
     userPrompt: string,
@@ -334,9 +318,7 @@ const callDirectAPIWithStreaming = async (
                 throw new Error(`API Error ${res.status}: ${errText.slice(0, 120)}`);
             }
 
-            // ── Fallback: provider returned JSON despite stream:true ───────────
-            // Some HF Router upstreams (cheapest tag) ignore the stream parameter.
-            // Detect by Content-Type header or absent body.
+            // ── Fallback: provider returned JSON despite stream:true ─────────── Some HF Router upstreams (cheapest tag) ignore the stream parameter. Detect by Content-Type header or absent body
             const contentType = res.headers.get('content-type') ?? '';
             if (contentType.includes('application/json') || !res.body) {
                 const data = await res.json();
@@ -729,7 +711,7 @@ ${canvasContext}
     let content = '';
     try {
         console.log('🤖 [Generator] Calling primary model (section-first, streaming)...');
-        // SPRINT-B-FIX-4: Use streaming variant so MagicBar gets live section ticker.
+        // Use streaming variant so MagicBar gets live section ticker.
         // SRE Agent (fixComponentError) keeps callDirectAPI — see SPRINT-B-FIX-4-PERM.
         content = await callDirectAPIWithStreaming(systemPrompt, `Generate: ${prompt}`, AI_CONFIG.primaryModel, 0.65, AI_CONFIG.primaryApiKey);
     } catch (e) {
@@ -761,12 +743,7 @@ ${canvasContext}
         catch { console.warn('🔧 JSON malformed — attempting repairJSON...'); parsed = JSON.parse(repairJSON(rawJson)); }
         if (!parsed?.elements || !parsed?.rootId) throw new Error('Invalid JSON structure (missing elements or rootId)');
 
-        // Inject section code into matching custom_code nodes.
-        // SHARED-CODE-REF [PERMANENT]: deep-clone each element BEFORE assigning
-        // .code. The injection loop mutates el.code in-place. If mergeAIContent
-        // (or sanitizeAIElements) is ever called twice on the same result object
-        // (StrictMode, retry, double-click), shallow-cloned nodes all end up
-        // pointing at the last-written code string. Deep-clone breaks the alias.
+        // Inject section code into matching custom_code nodes. deep-clone each element BEFORE assigning .code. The injection loop mutates el.code in-place. If mergeAIContent
         let injectedCount = 0;
         const hasMultipleSections = sectionMap.size > 2;
 
@@ -810,7 +787,7 @@ ${canvasContext}
         }
 
         console.log(`✅ [Generator] ${Object.keys(parsed.elements).length} node(s), ${injectedCount} section(s) injected.`);
-        // SHARED-CODE-REF [PERMANENT]: return a final shallow-clone of elements
+        // return a final shallow-clone of elements
         // so the caller cannot mutate the result between sanitize passes.
         return {
             action: 'create',

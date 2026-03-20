@@ -101,11 +101,7 @@ export const COMPONENT_TYPES: Record<string, ComponentConfig> = {
         defaultContent: 'Data Table'
     },
 
-    // --- MARKETPLACE ---
-    // CIS-1 BACKFILL: importMeta added so CIS-1 stamps these correctly at drag time.
-    // Previously conf.importMeta was undefined → no importMeta on node → legacy
-    // codeGenerator hardcoded array handled export. Now importMeta is canonical.
-    // component field is intentionally ABSENT — lazy refs live in RenderNode.
+    // --- MARKETPLACE --- CIS-1 BACKFILL: importMeta added so CIS-1 stamps these correctly at drag time. Previously conf.importMeta was undefined → no importMeta on node → legacy
     hero_geometric: {
         icon: Sparkles, label: 'Geometric Hero', category: 'sections' as any,
         defaultProps: {}, defaultContent: '',
@@ -194,8 +190,7 @@ export const COMPONENT_TYPES: Record<string, ComponentConfig> = {
     },
 };
 
-// MOBILE-ARCH-1 [PERMANENT]:
-// frame-mobile is NOT a sibling of frame-desktop in the element tree.
+// // frame-mobile is NOT a sibling of frame-desktop in the element tree.
 // It is a read-only mirror frame auto-rendered by RenderNode alongside
 // frame-desktop. It never receives AI content — it clones frame-desktop.children
 // rendered at 375px with isMobileMirror=true, so section CSS handles reflow.

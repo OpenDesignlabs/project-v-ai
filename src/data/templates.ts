@@ -16,9 +16,7 @@ export interface TemplateConfig {
 
 export const TEMPLATES: Record<string, TemplateConfig> = {
 
-    // ==============================================
-    // CATEGORY: LANDING PAGE
-    // ==============================================
+    // ============================================== CATEGORY: LANDING PAGE ==============================================
 
     hero_saas: {
         name: 'SaaS Hero',
@@ -76,9 +74,7 @@ export const TEMPLATES: Record<string, TemplateConfig> = {
         }
     },
 
-    // ==============================================
-    // CATEGORY: PORTFOLIO
-    // ==============================================
+    // ============================================== CATEGORY: PORTFOLIO ==============================================
 
     portfolio_hero: {
         name: 'Creative Profile',
@@ -128,9 +124,7 @@ export const TEMPLATES: Record<string, TemplateConfig> = {
         }
     },
 
-    // ==============================================
-    // CATEGORY: E-COMMERCE
-    // ==============================================
+    // ============================================== CATEGORY: E-COMMERCE ==============================================
 
     ecommerce_product: {
         name: 'Product Detail',
@@ -158,9 +152,7 @@ export const TEMPLATES: Record<string, TemplateConfig> = {
         }
     },
 
-    // ==============================================
-    // CATEGORY: contact
-    // ==============================================
+    // ============================================== CATEGORY: contact ==============================================
 
     contact_split: {
         name: 'Contact Split',
@@ -184,9 +176,7 @@ export const TEMPLATES: Record<string, TemplateConfig> = {
         }
     },
 
-    // ==============================================
-    // SECTIONS & MISC (Preserving existing)
-    // ==============================================
+    // ============================================== SECTIONS & MISC (Preserving existing) ==============================================
 
     pricing_tables: {
         name: 'Pricing Tables',

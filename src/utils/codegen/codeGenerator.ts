@@ -5,7 +5,7 @@ export interface GeneratedFileMap {
   dependencies: Set<string>;
 }
 
-// ── Phase F2: CSS Grid layout descriptor (mirrors Rust GridLayout struct) ─────
+// ── CSS Grid layout descriptor (mirrors Rust GridLayout struct) ─────
 // Field names are camelCase because the Rust struct uses #[serde(rename_all = "camelCase")].
 export interface GridLayout {
   templateColumns: string;       // e.g. "120px 360px 240px"
@@ -54,11 +54,7 @@ class ImportManager {
 const cleanClass = (c: string) => c ? c.replace(/\s+/g, ' ').trim() : '';
 const injectBindings = (t: string) => t ? t.replace(/{{([^}]+)}}/g, (_, p) => `{data?.${p.split('.').join('?.')} ?? ''}`) : '';
 
-// ─── CSS Unitless Properties Allowlist ───────────────────────────────────────
-// React does NOT append 'px' to these when they are plain numbers at runtime.
-// All OTHER numeric CSS properties require a unit — we inject 'px' here in the
-// generator so the exported standalone code is correct without React's runtime.
-// Source: react-dom/src/shared/CSSProperty.js
+// CSS properties that React treats as unitless numbers. All others get 'px' appended in the generator so exported HTML is valid without React's runtime.
 const CSS_UNITLESS_PROPERTIES = new Set([
   'animationIterationCount', 'aspectRatio', 'borderImageOutset',
   'borderImageSlice', 'borderImageWidth', 'boxFlex', 'boxFlexGroup',
@@ -73,17 +69,7 @@ const CSS_UNITLESS_PROPERTIES = new Set([
   'strokeDashoffset', 'strokeMiterlimit', 'strokeOpacity', 'strokeWidth',
 ]);
 
-/**
- * serializeStyle — converts a React CSSProperties object to a JSX style attr.
- *
- * UNIT GUARD: numeric values on dimensional CSS properties (width, height,
- * left, top, fontSize, padding, margin…) are coerced to "${v}px" so the
- * exported JSX is valid standalone React. Unitless properties (opacity, zIndex,
- * lineHeight, fontWeight, flexGrow…) are passed through as numbers.
- * Zero is always exempt — `left: 0` is valid CSS without a unit (spec + React).
- *
- * FILTERS: undefined | null | '' | animationName → dropped.
- */
+// Converts React CSSProperties to a JSX style attribute string. Appends 'px' to dimensional values; unitless props and zero pass through as-is.
 const serializeStyle = (styleObj: any): string => {
   if (!styleObj || Object.keys(styleObj).length === 0) return '';
   const clean: Record<string, string | number> = {};
@@ -154,12 +140,7 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
   let tagName = 'div';
   let content = '';
 
-  // \u2500\u2500 CIS-1: Component Identity System \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-  // importMeta present  \u2192 general path: any npm package or relative component.
-  // Legacy fallback     \u2192 hardcoded marketplace array for nodes saved before CIS-1.
-  //                       Keeps all existing projects working with zero migration.
-  //                       FROZEN \u2014 do NOT add new entries to the legacy array.
-  // Neither             \u2192 raw HTML element path (switch below).
+  // Routing: importMeta present -> npm/relative component; legacy type -> old marketplace node; neither -> raw HTML element.
   const importMeta = node.importMeta;
   const isLegacyMarketplace = !importMeta &&
     ['hero_geometric', 'feature_hover', 'geometric_shapes'].includes(node.type);
@@ -178,10 +159,7 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
       imports.dependencies.add(importMeta.packageName);
     }
   } else if (isLegacyMarketplace) {
-    // \u2500\u2500 Legacy backward-compat path \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-    // Nodes created before CIS-1 have no importMeta. Map type string \u2192
-    // PascalCase and emit the hardcoded marketplace relative import.
-    // This block drains naturally as projects re-save nodes with importMeta.
+    // Legacy backward-compat for nodes saved before CIS-1 — maps type string to PascalCase and emits a hardcoded marketplace import.
     const name = node.type
       .split('_')
       .map(s => s.charAt(0).toUpperCase() + s.slice(1))
@@ -211,10 +189,7 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
   }
 
   const props: string[] = [];
-  // Phase F: append 'vectra-stack-mobile' class for stack-on-mobile export override.
-  // This class is targeted by the @media block injected by generateNextPage()
-  // and generateProjectCode(). It does not affect canvas rendering — it is
-  // only meaningful in the exported HTML/CSS output.
+  // Appends 'vectra-stack-mobile' class for stack-on-mobile exports. Has no effect on live canvas rendering.
   const baseClass = cleanClass(node.props.className || '');
   const stackClass = node.props.stackOnMobile === true ? 'vectra-stack-mobile' : '';
   const mergedClass = [baseClass, stackClass].filter(Boolean).join(' ');
@@ -222,13 +197,7 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
   const styleStr = serializeStyle(node.props.style);
   if (styleStr) props.push(styleStr);
 
-  // P2-A2 FIX: emit data-vid on every non-marketplace element.
-  // buildBreakpointCSS() generates [data-vid="id"] selectors — without this
-  // attribute on the exported DOM element those selectors have zero targets
-  // and all breakpoint overrides are silently dead in the exported page.
-  // Marketplace components are excluded: their internal DOM is opaque to Vectra.
-  // motion.* elements: Framer Motion forwards unknown props to the DOM element,
-  // so data-vid passes through correctly as a standard HTML data attribute.
+  // emit data-vid on every non-marketplace element. buildBreakpointCSS() generates [data-vid="id"] selectors — without this attribute on the exported DOM element those selectors have zero targets
   if (!isComponent) props.push(`data-vid="${node.id}"`);
 
   if (node.type === 'image') props.push(`src="${node.src || 'https://via.placeholder.com/150'}"`);
@@ -264,17 +233,13 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
     }
   }
 
-  // Internal page navigation (React Router) — guard excludes '__external__' sentinel.
-  // SPRINT-C-FIX-14: '__external__' in linkTo means props.href is the real URL.
-  // Passing '__external__' to <Link to="..."> produces a broken route.
+  // Internal page navigation: React Router Link. '__external__' sentinel means props.href is the real URL — skip Link wrapping.
   if (node.props.linkTo && node.props.linkTo !== '__external__') {
     imports.add('react-router-dom', 'Link');
     return `${indent}<Link to="${node.props.linkTo}" className="contents">\n${code}${indent}</Link>\n`;
   }
 
-  // SPRINT-C-FIX-14: External URL — wrap in a standard <a> tag.
-  // target="_blank" always gets rel="noopener noreferrer" (security best practice).
-  // className="contents" preserves the child element's layout identity.
+  // External URL — wrap in a standard <a> tag. target="_blank" always gets rel="noopener noreferrer" (security best practice). className="contents" preserves the child element's layout identity
   if (node.props.href) {
     const target = String(node.props.target ?? '_self');
     const relAttr = target === '_blank' ? ' rel="noopener noreferrer"' : '';
@@ -306,13 +271,13 @@ export const generateProjectCode = (
     let rootFrameId = rootNode?.children?.find(cid => project[cid]?.type === 'webpage');
     if (!rootFrameId && rootNode?.children?.length) rootFrameId = rootNode.children[0];
 
-    // ── Phase F: Read canvas dimensions from the frame node ───────────────
+    // ── Read canvas dimensions from the frame node ───────────────
     const frameNode = rootFrameId ? project[rootFrameId] : null;
     const frameStyle = frameNode?.props?.style || {};
     const canvasWidth: number = parseFloat(String((frameStyle as any).width || 1440)) || 1440;
     const canvasHeight: number = parseFloat(String((frameStyle as any).height || 900)) || 900;
 
-    // ── Phase F: Collect stack-on-mobile nodes for this page ──────────────
+    // ── Collect stack-on-mobile nodes for this page ──────────────
     const mobileNodeIds = rootFrameId
       ? collectStackOnMobileIds(project, rootFrameId)
       : new Set<string>();
@@ -405,21 +370,7 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
   }
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE F — RESPONSIVE CANVAS EXPORT: LAYER 1 + LAYER 2
-//
-// Layer 1: Responsive Canvas Wrapper
-//   Every exported page wraps its canvas frame in overflow-x:auto so the
-//   absolute layout is horizontally scrollable on small screens rather than
-//   clipping silently. The canvas width is preserved exactly — no transform.
-//
-// Layer 2: Stack-on-Mobile
-//   Nodes with props.stackOnMobile === true receive the 'vectra-stack-mobile'
-//   CSS class in the generated JSX. A <style> block injected into the page
-//   overrides their position/left/top/width/height at @media (max-width:768px).
-//   !important is required and correct here — it is the only way to override
-//   React inline styles from a stylesheet rule.
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════ PHASE F — RESPONSIVE CANVAS EXPORT: LAYER 1 + LAYER 2 Layer 1: Responsive Canvas Wrapper
 
 /**
  * Recursively walks the VectraProject tree from a given root node,
@@ -548,28 +499,9 @@ export const buildBreakpointCSS = (
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// PHASE F2 — CSS GRID LAYER 3 (WASM-POWERED RESPONSIVE GRID EXPORT)
-//
-// generateGridPage() takes a VectraProject page + a GridLayout produced by
-// the Rust absolute_to_grid() WASM function and returns a production-ready
-// TypeScript/React page that uses CSS Grid instead of absolute positioning.
-// ═══════════════════════════════════════════════════════════════════════════════
+// CSS Grid export layer — converts absolute-positioned layouts to CSS Grid via the Rust WASM absolute_to_grid().
 
-/**
- * buildFrTemplateStrings
- * ──────────────────────
- * Converts absolute pixel track sizes to CSS fr units.
- *
- * fr_value = track_px / total_px
- *
- * Example: [120, 360, 240] on a 720px canvas →
- *   120/720 = 0.1667fr, 360/720 = 0.5fr, 240/720 = 0.3333fr
- *
- * We round to 4 decimal places to avoid floating-point noise while keeping
- * enough precision that tracks add up to exactly 1fr after browser rounding.
- * Row heights use canvasHeight as the denominator — valid only when the
- * container has an explicit height, which the generator always emits as minHeight.
- */
+// Converts absolute pixel track sizes to CSS fr units for fluid grid layouts.
 const buildFrTemplateStrings = (
   colWidthsPx: number[],
   rowHeightsPx: number[],
@@ -583,32 +515,7 @@ const buildFrTemplateStrings = (
   return { templateColumns, templateRows };
 };
 
-/**
- * deepPatchProjectForGrid
- * ───────────────────────
- * Recursively patches every node in the subtree rooted at `rootId` that has
- * a CSS Grid placement entry. Returns a new VectraProject copy — the
- * original project is NEVER mutated.
- *
- * WHAT IT FIXES (A2)
- * ──────────────────
- * The previous implementation patched only the direct canvas child:
- *   patchedProject = { ...project, [childId]: { ...patchedStyle } }
- *
- * generateNodeCode() recurses into grandchildren reading from patchedProject.
- * But grandchildren still had their original absolute style because the
- * shallow clone only replaced the root child entry.
- *
- * This function walks the FULL subtree and patches every node whose id
- * appears in the placementMap. Nodes not in the placementMap are inserted
- * into the patched map unchanged — same object reference, zero allocation.
- *
- * CYCLE SAFETY
- * ────────────
- * A visited Set prevents infinite loops on malformed trees where a
- * child’s children[] includes an ancestor ID. In practice Vectra’s tree
- * is always a DAG, but the guard costs O(N) memory and prevents a hang.
- */
+// Recursively patches CSS Grid placement props on subtree nodes. Returns a new copy - never mutates the original project.
 const deepPatchProjectForGrid = (
   project: VectraProject,
   rootId: string,
@@ -628,9 +535,7 @@ const deepPatchProjectForGrid = (
 
     const placement = placementMap.get(id);
     if (placement) {
-      // Strip absolute-positioning props; inject grid placement.
-      // All other style props (bg, border, shadow …) are preserved.
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // Strip absolute-positioning props; inject grid placement. All other style props (bg, border, shadow …) are preserved. eslint-disable-next-line @typescript-eslint/no-unused-vars
       const { position: _p, left: _l, top: _t, ...restStyle } = (node.props?.style || {}) as any;
       patched[id] = {
         ...node,
@@ -685,7 +590,7 @@ export const generateGridPage = (
   const canvasWidth = parseFloat(String((canvasFrame?.props?.style as any)?.width || 1440)) || 1440;
   const canvasHeight = parseFloat(String((canvasFrame?.props?.style as any)?.height || 900)) || 900;
 
-  // Sprint 1: resolve template strings — px or fr depending on caller's choice.
+  // resolve template strings — px or fr depending on caller's choice.
   // No WASM re-call needed; colWidthsPx/rowHeightsPx carry the raw pixel data.
   const { templateColumns, templateRows } = frUnits
     ? buildFrTemplateStrings(gridLayout.colWidthsPx, gridLayout.rowHeightsPx, canvasWidth, canvasHeight)
@@ -695,7 +600,6 @@ export const generateGridPage = (
   const colCount = gridLayout.colWidthsPx.length;
   const rowCount = gridLayout.rowHeightsPx.length;
 
-  // ── Direction 1 (A2 fix): Deep-patch each canvas child subtree ───────────
   // deepPatchProjectForGrid() walks the FULL subtree so that grandchildren
   // (nested containers, text nodes, images …) are also correctly patched.
   // Previously we only patched the direct canvas child, leaving grandchildren
@@ -703,9 +607,7 @@ export const generateGridPage = (
   const childJsx = childIds.map(childId => {
     if (!project[childId]) return '';
 
-    // Build one coherent patched copy for this subtree.
-    // All descendants with placement entries get gridColumn/gridRow.
-    // All other descendants are identity-cloned (no allocation).
+    // Build one coherent patched copy for this subtree. All descendants with placement entries get gridColumn/gridRow. All other descendants are identity-cloned (no allocation)
     const patchedProject = deepPatchProjectForGrid(project, childId, placementMap);
 
     return generateNodeCode(childId, patchedProject, imports, 3);
@@ -719,7 +621,7 @@ export const generateGridPage = (
     ? `\nexport const metadata: Metadata = {\n  title: '${page.name} | Vectra App',\n  description: 'Grid layout — generated by Vectra Convert to Grid',\n};\n`
     : '';
 
-  // Sprint 1: hint comment flips based on current unit mode
+  // hint comment flips based on current unit mode
   const hintComment = frUnits
     ? `To lock to pixel sizes, switch off fr units:\n *   "${gridLayout.templateColumns}"`
     : `To make this fluid, convert to fr units:\n *   "${buildFrTemplateStrings(gridLayout.colWidthsPx, gridLayout.rowHeightsPx, canvasWidth, canvasHeight).templateColumns}"`;
@@ -754,18 +656,7 @@ ${childJsx}    </div>
 };
 
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE B — NEXT.JS APP ROUTER CODE GENERATORS
-//
-// Additive exports. All existing Vite generators above are PRESERVED.
-// These functions are imported by useFileSync for Next.js projects,
-// and by Header.tsx for the Next.js ZIP export path.
-//
-// Key files generated:
-//   app/[slug]/page.tsx         page-level SERVER component
-//   components/Navbar.tsx       CLIENT component (multi-page nav)
-//   app/layout.tsx              root layout with theme + Navbar import
-// ═══════════════════════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════════════════ PHASE B — NEXT.JS APP ROUTER CODE GENERATORS Additive exports. All existing Vite generators above are PRESERVED
 
 /**
  * Converts a page slug into the correct Next.js App Router file path.
@@ -804,16 +695,7 @@ const toPascalCaseGen = (raw: string): string => {
 };
 
 // ─── SECTION-FIRST EXPORT HELPERS ────────────────────────────────────────────
-/**
- * collectCustomCodeNodes
- * ──────────────────────
- * DFS walk from `rootId` that returns every `custom_code` node in the subtree,
- * in document order. Does NOT recurse into custom_code children (they have none).
- *
- * EXPORT-1 FIX: Section-first AI generation wraps sections inside a `container`
- * node (PageWrapper / Wrapper). The old canvasChildren loop only saw depth-1
- * children; sections at depth-2+ were silently dropped from the export.
- */
+// DFS walk from rootId that returns all custom_code nodes in document order, including nested ones.
 interface CustomCodeEntry {
   node: VectraNode;
   parentContainerId: string | null;
@@ -848,12 +730,7 @@ const collectCustomCodeNodes = (
   return results;
 };
 
-/**
- * buildSectionWrapperStyle
- * ─────────────────────────
- * Produces a JSX style prop string for a PageWrapper container so the
- * generated page file reproduces the flex-column layout correctly.
- */
+// Produces a JSX style prop string for a PageWrapper container to reproduce its flex-column layout.
 const buildSectionWrapperStyle = (node: VectraNode | undefined): string => {
   if (!node) return '';
   const s: Record<string, string> = {};
@@ -867,11 +744,7 @@ const buildSectionWrapperStyle = (node: VectraNode | undefined): string => {
   return ` style={{ ${entries.map(([k, v]) => `${k}: '${v}'`).join(', ')} }}`;
 };
 
-/**
- * generateNextPage — generates a single app/[slug]/page.tsx file.
- * Page-level files are SERVER components (no 'use client') that import
- * CLIENT components from @/components/.
- */
+// Generates a single Next.js App Router page file (server component) importing client components from @/components/.
 export const generateNextPage = (
   page: Page,
   project: VectraProject
@@ -901,7 +774,7 @@ export const generateNextPage = (
   const canvasWidth: number = parseFloat(String((frameStyle as any).width || 1440)) || 1440;
   const canvasHeight: number = parseFloat(String((frameStyle as any).height || 900)) || 900;
 
-  // ── Phase F: Collect stack-on-mobile node IDs in this page ─────────────
+  // ── Collect stack-on-mobile node IDs in this page ─────────────
   const mobileNodeIds = canvasFrameId
     ? collectStackOnMobileIds(project, canvasFrameId)
     : new Set<string>();
@@ -927,19 +800,7 @@ export const generateNextPage = (
 
   let jsxParts: string[] = [];
 
-  // EXPORT-1 FIX: Section-first architecture places custom_code nodes inside
-  // a PageWrapper container (not as direct artboard children). The old loop
-  // only checked canvasChildren (depth 1). We now walk the full subtree.
-  //
-  // CASE A — Container wrapping sections (PageWrapper / Wrapper):
-  //   Renders as a flex <div> with each section as a component JSX call.
-  //   Import statements are emitted for each section individually.
-  //
-  // CASE B — custom_code as direct canvas child (legacy / manually placed):
-  //   Rendered exactly as before — backward compat preserved.
-  //
-  // CASE C — Non-custom_code direct child (container, text, image, etc.):
-  //   Falls through to generateNodeCode() — existing behaviour unchanged.
+  // Section-first architecture places custom_code nodes inside a PageWrapper container (not as direct artboard children). The old loop only checked canvasChildren (depth 1). We now walk the full subtree
 
   for (const childId of canvasChildren) {
     const child = project[childId];
@@ -974,9 +835,7 @@ export const generateNextPage = (
           const classAttr = (baseClass + stackClass).trim()
             ? ` className="${(baseClass + stackClass).trim()}"`
             : '';
-          // EXPORT-2 [PERMANENT]: Strip position/left/top from section styles.
-          // These are canvas-editor-only geometry values. In the live Next.js
-          // page, sections are in-flow flex children — absolute positioning breaks layout.
+          // Strip position/left/top from section styles. These are canvas-editor-only geometry values. In the live Next.js page, sections are in-flow flex children — absolute positioning breaks layout
           const rawStyle = (sectionNode.props?.style ?? {}) as Record<string, unknown>;
           const { position: _p, left: _l, top: _t, ...inFlowStyle } = rawStyle;
           const styleStr = Object.keys(inFlowStyle).length > 0
@@ -1010,7 +869,7 @@ export const generateNextPage = (
       const classAttr = (baseClass + stackClass).trim()
         ? ` className="${(baseClass + stackClass).trim()}"`
         : '';
-      // P2-A2 FIX: custom_code nodes also need data-vid for breakpoint CSS targeting.
+      // custom_code nodes also need data-vid for breakpoint CSS targeting.
       const dataVid = ` data-vid="${childId}"`;
       jsxParts.push(`        <${compName}${classAttr}${styleStr}${dataVid} />`);
       continue;
@@ -1037,7 +896,7 @@ export const generateNextPage = (
     .filter(Boolean)
     .join('\n');
 
-  // ── Phase F: Direction D — Build SEO metadata block before the template literal
+  // ── Direction D — Build SEO metadata block before the template literal
   // Variables are computed in plain JS so there's no backtick nesting conflict.
   const esc = (s: string) => s.replace(/'/g, "\\'");
   const seoTitle = page.seo?.title || `${page.name} | Vectra App`;
@@ -1062,7 +921,7 @@ export const generateNextPage = (
   },${canonicalLine}${robotsLine}
 };`;
 
-  // ── Phase F: Assemble the responsive page wrapper ──────────────────────
+  // ── Assemble the responsive page wrapper ──────────────────────
   return `${importBlock}
 
 ${metadataBlock}
@@ -1099,20 +958,7 @@ ${jsxContent}
 `;
 };
 
-/**
- * generateNextNavbar — responsive Navbar with Next.js <Link>.
- * 'use client' component (uses useState for mobile toggle).
- * Only generated when project has 2+ pages.
- *
- * C-1 FIX (fourth pass): The previous template literal had three classes of JSX
- * syntax errors that caused `next build` to fail for every multi-page export:
- *   A) `aria - label` — binary subtraction expression, not a JSX attribute.
- *      JSX hyphenated attrs must be written as a continuous string: aria-label="…"
- *   B) `< button`, `< div`, `< span` — space after `<` is an invalid open-tag.
- *      Same class of bug fixed for `< Navbar />` in generateRootLayout (pass 3).
- *   C) `key= { item.href }`, `href = { item.href }` — spaces inside/around {}
- *      JSX expression slots. SWC strict-mode rejects them.
- */
+// Generates the 'use client' Navbar component with Next.js Link routing. Only included when the project has 2+ pages.
 export const generateNextNavbar = (pages: Page[]): string => {
   const navItems = pages
     .map(p => `  { label: '${p.name}', href: '${p.slug}' }`)
@@ -1183,22 +1029,11 @@ export default function Navbar({ className }: { className?: string }) {
 `;
 };
 
-/**
- * generateRootLayout — app/layout.tsx content.
- * Server component (no 'use client'). Imports Navbar only if 2+ pages.
- *
- * C-2 FIX (fourth pass):
- *   - cssVars was `\nstyle = {{` → leading newline + space-around-= breaks SWC JSX.
- *   - lang= "en" had a space before the string value.
- *   - `${navbarImport} import` had a stray space before `import`.
- *   - `{ children }` was at 2-space indent instead of 8.
- */
+// Generates app/layout.tsx (server component). Imports Navbar only when the project has 2+ pages.
 export const generateRootLayout = (
   pages: Page[],
   theme?: { primary?: string; secondary?: string; accent?: string; font?: string },
-  // FIX-17 [PERMANENT]: zipMode=true → active tokens.css import.
-  // Dev-server VFS has no tokens.css (ZIP-only), so zipMode stays falsy for all
-  // useFileSync.ts call sites. Header.tsx passes zipMode:true after writing tokens.css.
+  // zipMode=true enables the tokens.css import (ZIP exports only — dev-server skips it).
   zipMode?: boolean
 ): string => {
   const hasMultiplePages = pages.length > 1;
@@ -1207,12 +1042,12 @@ export const generateRootLayout = (
     : '';
   const navbarJsx = hasMultiplePages ? '\n        <Navbar />' : '';
 
-  // C-2 FIX: cssVarsAttr is a single-line attribute starting with a space (not \n).
+  // cssVarsAttr is a single-line attribute starting with a space (not \n).
   const cssVarsAttr = theme
     ? ` style={{ '--primary': '${theme.primary || '#3b82f6'}', '--secondary': '${theme.secondary || '#8b5cf6'}', '--accent': '${theme.accent || '#ec4899'}' } as React.CSSProperties}`
     : '';
 
-  // FIX-17: Active import in zipMode; commented-out stub in dev-server mode.
+  // Active import in zipMode; commented-out stub in dev-server mode.
   const tokensCssLine = zipMode
     ? `import './tokens.css';`
     : `/* import './tokens.css'; // Uncomment to use design tokens from ZIP export */`;
@@ -1245,34 +1080,7 @@ export default function RootLayout({
 `;
 };
 
-/**
- * deduplicatePageSlugs
- * ────────────────────
- * Guards against slug collisions in the page list before generating
- * Next.js App Router file paths.
- *
- * WHY THIS IS NEEDED (A3)
- * ────────────────────────
- * Every new project starts with page-home at slug '/'. If the user adds
- * a second page and leaves its slug as '/', generateNextProjectCode() would
- * call slugToNextPath('/') twice, writing 'app/page.tsx' twice. The second
- * write silently overwrites the first — the first page's content is lost in
- * the ZIP with no warning.
- *
- * ALGORITHM
- * ──────────
- * 1. Walk the pages array in order (home page at index 0 is always safe).
- * 2. Maintain a Set of slugs already assigned.
- * 3. If a slug collides, append a numeric suffix and increment until the
- *    slug is unique: '/about' → '/about-2' → '/about-3' etc.
- * 4. Return a new Page[] with safe slugs. The original array is not mutated.
- *
- * A console.warn is emitted per collision so developers can see and fix the
- * source data in the Vectra pages panel.
- *
- * @param pages   Original page list — not mutated
- * @returns       New page list with all slugs guaranteed unique
- */
+// Deduplicates page slugs before file generation. Colliding slugs get a numeric suffix (/about -> /about-2). Warns per collision.
 export const deduplicatePageSlugs = (pages: Page[]): Page[] => {
   const seen = new Set<string>();
   return pages.map(page => {
@@ -1283,9 +1091,7 @@ export const deduplicatePageSlugs = (pages: Page[]): Page[] => {
       return page;
     }
 
-    // C-3 FIX: `${slug} -${counter} ` had a literal space before the hyphen and a
-    // trailing space — slugToNextPath would produce `app/about -2 /page.tsx`.
-    // VFS creates directories with spaces; Next.js routing can never resolve them.
+    // Slug deduplication: appends -2, -3, etc. without spaces to produce valid Next.js route paths.
     let counter = 2;
     let candidate = `${slug}-${counter}`;
     while (seen.has(candidate)) {
@@ -1304,18 +1110,7 @@ export const deduplicatePageSlugs = (pages: Page[]): Page[] => {
   });
 };
 
-// ─── SPRINT-C-FIX-16: Next.js App Router page convention files ─────────────────
-//
-// loading.tsx — shown by Next.js Suspense boundary during route transitions.
-//   Server Component (no 'use client') — pure spinner UI, zero JS hydration.
-//
-// error.tsx — React error boundary for the route segment.
-//   MUST be 'use client' (Next.js App Router requirement).
-//   Receives { error, reset } props. reset() re-renders the segment.
-//
-// Both files are idempotent (same content every export) — safe for repeated VFS writes.
-// STI-INJECT-1 does not apply — these are .tsx files, not globals.css/index.css.
-// ───────────────────────────────────────────────────────────────────────
+// Standard Next.js App Router convention files (loading.tsx = Suspense spinner, error.tsx = error boundary).
 
 const NEXT_LOADING_TSX = `/**
  * app/loading.tsx — Auto-generated by Vectra Visual Builder
@@ -1383,10 +1178,7 @@ export default function Error({
 `;
 
 
-/**
- * generateNextProjectCode — full GeneratedFileMap for a Next.js project.
- * Next.js equivalent of the existing generateProjectCode() (Vite).
- */
+// Generates the full file map for a Next.js project. Equivalent of generateProjectCode() for the Next.js App Router.
 export const generateNextProjectCode = (
   project: VectraProject,
   pages: Page[],
@@ -1399,7 +1191,7 @@ export const generateNextProjectCode = (
     'clsx', 'tailwind-merge',
   ]);
 
-  // Item 1: Deduplicate slugs before generating paths.
+  // Deduplicate slugs before generating paths.
   // Prevents silent file overwrites in the ZIP when two pages share a slug.
   const safePages = deduplicatePageSlugs(pages);
 
@@ -1414,49 +1206,22 @@ export const generateNextProjectCode = (
     files['components/Navbar.tsx'] = generateNextNavbar(safePages);
   }
 
-  // SPRINT-C-FIX-16: Standard Next.js App Router conventions.
-  // loading.tsx — Suspense boundary UI (server component, pure spinner).
-  // error.tsx   — Error boundary (must be 'use client' per Next.js requirement).
-  // Both are idempotent writes: same content every export, safe for VFS pre-export flush.
+  // Standard Next.js App Router conventions. loading.tsx — Suspense boundary UI (server component, pure spinner). error.tsx   — Error boundary (must be 'use client' per Next.js requirement)
   files['app/loading.tsx'] = NEXT_LOADING_TSX;
   files['app/error.tsx']   = NEXT_ERROR_TSX;
 
   return { files, dependencies: allDependencies };
 };
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// PHASE D — API ROUTE FILE GENERATOR
-//
-// Produces the content of a Next.js App Router route handler file.
-// Output path in VFS: app/api/[path]/route.ts
-//
-// Next.js App Router Route Handler contract:
-//   • File must be named exactly `route.ts`
-//   • Lives at: app/api/[path]/route.ts
-//   • Exports named functions matching HTTP method names: GET, POST, PUT, etc.
-//   • Each function receives a Request (or NextRequest)
-//   • Returns a Response (native Web API) or NextResponse
-//   • Server-only — no 'use client' directive allowed
-// ═══════════════════════════════════════════════════════════════════════════════
+// ─── API Route File Generator ───────────────────────────────────────────────
 
-/**
- * Converts an ApiRoute path into the correct VFS file path.
- *   'users'        → 'app/api/users/route.ts'
- *   'users/[id]'   → 'app/api/users/[id]/route.ts'
- *   'auth/login'   → 'app/api/auth/login/route.ts'
- */
+// Maps an ApiRoute path string to its Next.js App Router VFS file path.
 export const apiRouteToVfsPath = (path: string): string => {
   const clean = path.replace(/^\/+/, '').replace(/\/+$/, '').trim() || 'unnamed';
   return `app / api / ${clean}/route.ts`;
 };
 
-/**
- * generateApiRouteFile — full content of a Next.js App Router route handler.
- *
- * Two modes:
- *   1. If route.handlerCode is non-empty → use it verbatim (user-authored).
- *   2. If empty → scaffold from route.methods with typed handlers.
- */
+// Generates a Next.js App Router route handler. Uses verbatim handlerCode if provided; otherwise scaffolds typed handlers from route.methods.
 export const generateApiRouteFile = (route: ApiRoute): string => {
   // User-authored code — use verbatim with defensive import injection
   if (route.handlerCode && route.handlerCode.trim().length > 0) {

@@ -1,18 +1,8 @@
 /**
- * ─── LOADER PANEL ─────────────────────────────────────────────────────────────
- * The "Connect Codebase" panel — Phase B of the Code→Design bridge.
- *
- * Developer workflow:
- *   1. Install @vectra/loader in their project, add Vite/Next plugin
- *   2. Start their dev server (e.g. localhost:3000)
- *   3. Open this panel, enter http://localhost:3000, click Connect
- *   4. Their components appear in Vectra's canvas instantly
- *   5. Drag onto canvas → live preview via LiveComponent compiler
- *   6. Export/Publish → correct import paths via CIS-1 importMeta
- *
- * State persistence:
- *   - baseUrl saved to localStorage(LOADER_URL_KEY)
- *   - Auto-reconnects on panel open if URL was previously set
+ * --- LOADER PANEL -----------------------------------------------------------
+ * Left-sidebar panel for managing the Vectra custom component loader.
+ * Allows users to register external React components (via URL or paste) that
+ * become available as draggable elements in the editor canvas.
  */
 
 import React, { useState, useEffect, useCallback } from 'react';

@@ -1,22 +1,4 @@
-/// <reference lib="webworker" />
-// ─── COMPILER WEB WORKER ────────────────────────────────────────────────────
-// Runs ALL heavy work off the main thread:
-//   • Security scan  (BLOCKED patterns)
-//   • Code sanitisation  (import stripping, quote normalisation, icon aliases)
-//   • 3-tier Babel transpilation  (TSX → JSX → bare React)
-//   • Sandbox preamble assembly
-//
-// Returns { id, sandboxCode, cleanCode } on success so the main thread can:
-//   a) execute `sandboxCode` via new Function() — instantaneous
-//   b) persist `cleanCode` back into elements so future passes skip re-sanitising
-//
-// CLASSIC worker (not ES module) because importScripts() is required for Babel.
-// Vite understands classic workers when { type: 'classic' } is passed to
-// new Worker(..., { type: 'classic' }).
-//
-// DO NOT add `export {}` or any `import`/`export` statement — doing so switches
-// TypeScript's module mode ON and makes the worker fail at runtime because
-// classic workers cannot load ES modules via importScripts().
+// / <reference lib="webworker" /> --- COMPILER WEB WORKER --------------------------------------------------- Runs heavy JSX/TSX work off the main thread so the editor stays at 60fps
 
 declare function importScripts(...urls: string[]): void;
 
@@ -45,9 +27,7 @@ const BLOCKED: RegExp[] = [
     /location\s*\.\s*(href|replace|assign)/,
 ];
 
-// ── Code sanitiser ────────────────────────────────────────────────────────────
-// Kept in-sync with codeSanitizer.ts manually.
-// If you update codeSanitizer.ts, update this block too.
+// ── Code sanitiser ──────────────────────────────────────────────────────────── Kept in-sync with codeSanitizer.ts manually. If you update codeSanitizer.ts, update this block too
 function sanitize(code: string): string {
     return code
         .replace(/^[ \t]*import\s+type?\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*$/gm, '')
@@ -149,9 +129,7 @@ self.onmessage = (e: MessageEvent) => {
             transpiled,
         ].join('\n');
 
-        // Return both compiled code AND the cleaned source string.
-        // The main thread uses cleanCode to update element state so the next
-        // compile pass skips re-sanitising already-clean code.
+        // Return both compiled code AND the cleaned source string. The main thread uses cleanCode to update element state so the next compile pass skips re-sanitising already-clean code
         (self as any).postMessage({ id, sandboxCode, cleanCode });
 
     } catch (err: any) {

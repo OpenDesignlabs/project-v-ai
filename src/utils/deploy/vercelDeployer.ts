@@ -1,36 +1,9 @@
 /**
- * ─── VERCEL DEPLOYER ──────────────────────────────────────────────────────────
- * Deploys a Vectra file map directly to Vercel using the Deploy API (Form B).
- * No GitHub dependency — file contents are uploaded as raw blobs.
- *
- * API FLOW
- * ────────
- * Step 1: POST /v2/files  ×N  (parallel, sha1 digest in header)
- *         Headers: x-now-digest: sha1hex, x-now-size: byteLength
- *         Body: raw UTF-8 bytes (application/octet-stream)
- *         Vercel deduplicates by sha1 — already-uploaded = instant 200.
- *
- * Step 2: POST /v13/deployments
- *         Body: { name, files: [{file, sha, size}], projectSettings, env, target }
- *         Response: { id, url, readyState, inspectorUrl }
- *
- * Step 3: Poll GET /v13/deployments/{id}
- *         Every POLL_INTERVAL_MS until readyState ∈ {READY, ERROR, CANCELED}.
- *         Timeout after POLL_TIMEOUT_MS.
- *
- * SECURITY
- * ────────
- * VERCEL-SEC-1 [PERMANENT]: Token in sessionStorage ONLY. Never localStorage.
- *   Token grants full Vercel account access — not scoped like a GitHub PAT.
- *   sessionStorage is cleared on tab close by the browser automatically.
- *   The caller (DeployPanel) is responsible for enforcing this.
- *
- * VERCEL-SEC-2 [PERMANENT]: Env var values NEVER written to logs or element tree.
- *   Only KEY names may appear in log lines. Values go directly to the API body.
- *
- * VERCEL-FORM-B-1 [PERMANENT]: Always use direct file upload (Form B).
- *   Form A requires a GitHub/GitLab repo connection on the Vercel account.
- *   Form B works with any token and uploads blobs directly — no Git required.
+ * --- VERCEL DEPLOYER --------------------------------------------------------
+ * Deploys the current project to Vercel using the Vercel REST API.
+ * Creates or re-uses a Vercel project, generates all project files via
+ * codeGenerator.ts, and uploads them as deployment files.
+ * The Vercel token is stored in sessionStorage only (never persisted to disk).
  */
 
 const VERCEL_API = 'https://api.vercel.com';
@@ -280,7 +253,7 @@ async function pollDeployment(
  * @param onProgress Progress callback for terminal-style log streaming
  * @param signal     AbortSignal — cancel on unmount or manual cancel
  *
- * VERCEL-ABORT-1 [PERMANENT]: signal is non-optional. All Vercel API calls
+ * VERCEL-ABORT-1: signal is non-optional. All Vercel API calls
  * must accept an AbortSignal. DeployPanel creates a new AbortController per
  * deploy, stores it in abortRef, calls abort() on unmount AND on manual cancel.
  */

@@ -28,9 +28,7 @@ export const Header = () => {
     const { status, url: containerUrl } = useContainer();
 
 
-    // UX-22 [PERMANENT]: Page switcher dropdown.
-    // Uses 50ms setTimeout on the global mousedown listener to prevent the
-    // opening click from also triggering the close handler.
+    // Page switcher dropdown. Uses 50ms setTimeout on the global mousedown listener to prevent the opening click from also triggering the close handler
     const [pageDropOpen, setPageDropOpen] = useState(false);
     const pageDropRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -44,7 +42,7 @@ export const Header = () => {
         return () => { clearTimeout(t); window.removeEventListener('mousedown', close); };
     }, [pageDropOpen]);
 
-    // UX-28 [PERMANENT]: Live save-state indicator.
+    // Live save-state indicator.
     // Driven by vectra:save-state events from useFileSync — zero coupling to sync internals.
     const [isSaving, setIsSaving] = useState(false);
     const [justSaved, setJustSaved] = useState(false);
@@ -82,7 +80,7 @@ export const Header = () => {
     // ── Publish modal ─────────────────────────────────────────────────────────
     const [showPublishModal, setShowPublishModal] = useState(false);
 
-    // ── Phase F2: Grid converter state ──────────────────────────────────────
+    // ── Grid converter state ──────────────────────────────────────
     // ── Item 3: Multi-page grid results ─────────────────────────────────────────
     interface GridPageResult {
         code: string;
@@ -348,7 +346,7 @@ export const Header = () => {
                         <button onClick={history.undo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Undo"><Undo size={14} /></button>
                         <button onClick={history.redo} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Redo"><Redo size={14} /></button>
                         <button onClick={() => window.dispatchEvent(new CustomEvent('vectra:zoom-to-fit'))} className="p-2 hover:bg-[#3e3e42] hover:text-white rounded text-[#858585] transition-colors" title="Zoom to Fit (⌘0)"><Maximize size={14} /></button>
-                        {/* UX-28: Save state pill */}
+                        {/* Save state pill */}
                         {(isSaving || justSaved) && (
                             <div className={`flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-medium transition-all ml-1 ${
                                 isSaving ? 'text-[#888] bg-[#2a2a2d]' : 'text-green-400 bg-green-500/10'

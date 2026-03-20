@@ -1,4 +1,4 @@
-import type { LucideIcon } from 'lucide-react';
+﻿import type { LucideIcon } from 'lucide-react';
 
 // ─── WASM LAYOUT ENGINE ───────────────────────────────────────────────────────
 // Returned by ProjectContext.querySnapping(). Defined here (not in ProjectContext)
@@ -179,7 +179,7 @@ export interface Page {
     name: string;
     slug: string;       // URL path (e.g., '/', '/about', '/contact')
     rootId: string;     // Pointer to the page's root element in VectraProject
-    seo?: PageSEO;      // Direction D — per-page SEO metadata
+    seo?: PageSEO;      // per-page SEO metadata
     /** FIG-FUTURE-1: hidden pages are staging areas (e.g. component-mode Figma imports).
      *  Not shown in the Pages panel. Set when name starts with '__figma_comp__'. */
     hidden?: boolean;
@@ -258,7 +258,7 @@ export interface ComponentConfig {
      * RenderNode Phase B routing: fires when element.importMeta is set AND
      * element.code is absent AND this field is present on the registry entry.
      *
-     * PHASE-B-3 [PERMANENT]: MUST NOT be set for marketplace items in constants.ts.
+     * PHASE-B-3: MUST NOT be set for marketplace items in constants.ts.
      * The code field is exclusively for @vectra/loader registered components.
      *
      * ABSENT  = Phase A path (runtime component ref) or native HTML element
@@ -290,7 +290,7 @@ export type DeviceType = 'desktop' | 'tablet' | 'mobile';
 // View Mode: Visual (Design) vs Skeleton (Layout)
 export type ViewMode = 'visual' | 'skeleton';
 
-// DB-1: Extended DataSource — mirrors ProjectContext's authoritative copy.
+// Extended DataSource — mirrors ProjectContext's authoritative copy.
 export type DataSourceKind = 'rest' | 'supabase' | 'planetscale';
 
 export interface DataSource {
@@ -452,10 +452,7 @@ export interface EditorContextType {
 // code generator, and export format. Default: 'nextjs'.
 export type Framework = 'nextjs' | 'vite';
 
-// ─── PHASE D FOUNDATION: API Route type ──────────────────────────────────────
-// Represents a single backend API route in the project.
-// Will be stored in ProjectContext as apiRoutes: ApiRoute[].
-// useFileSync Phase D will write these to app/api/[path]/route.ts.
+// ─── PHASE D FOUNDATION: API Route type ────────────────────────────────────── Represents a single backend API route in the project. Will be stored in ProjectContext as apiRoutes: ApiRoute[]
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 

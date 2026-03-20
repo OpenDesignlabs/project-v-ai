@@ -1,34 +1,9 @@
 /**
- * ─── useAssetSync ─────────────────────────────────────────────────────────────
- * Scans the element tree for remote image URLs, downloads each one exactly
- * once per session, and writes them as base64 data-URL files to the VFS.
- *
- * WHY A SEPARATE HOOK?
- * ─────────────────────
- * Image downloads are async, slow (network), and independent of code generation.
- * Merging them into useFileSync would:
- *   • Block code file writes while a slow image downloads
- *   • Re-trigger image downloads every time any element changes
- *
- * Keeping them separate means:
- *   • Code sync runs fast (pure CPU, no network)
- *   • Asset sync runs independently, with its own debounce
- *   • A failed image download never blocks component file generation
- *
- * DEDUPLICATION
- * ─────────────
- * `processedUrls` is a session-scoped `Set`. Once a URL is added (even before
- * the fetch completes), it will never be fetched again. If a fetch fails, the
- * URL is removed so it can be retried on the next sync tick.
- *
- * VFS STORAGE FORMAT
- * ──────────────────
- * ContainerContext's `writeFile` accepts a `string`, so images are stored as
- * base64 data URIs. The file on disk contains the full data: URI string, which
- * can be read back and used directly as an <img src> value.
- *
- * File naming: public/assets/{elementId}.{ext}
- * The extension is inferred from the fetch response Content-Type header.
+ * --- USE ASSET SYNC ---------------------------------------------------------
+ * Hook that keeps the WebContainer virtual file system in sync with the
+ * assets (images, fonts, etc.) uploaded by the user in the editor.
+ * Writes each asset as a binary file into the VFS public directory so
+ * components rendered in ContainerPreview can reference them by URL.
  */
 
 import { useEffect, useRef } from 'react';
@@ -133,7 +108,7 @@ export const useAssetSync = () => {
             const images: Array<{ id: string; url: string }> = [];
             const visited = new Set<string>();
 
-            // H-5 FIX: scan ALL pages, not just 'page-home'.
+            // scan ALL pages, not just 'page-home'.
             // Remote images on secondary pages were silently never synced.
             for (const page of pages) {
                 const pageRoot = elements[page.rootId];

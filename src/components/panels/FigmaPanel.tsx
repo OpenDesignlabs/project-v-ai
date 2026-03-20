@@ -1,22 +1,9 @@
 /**
- * ─── FIGMA IMPORT PANEL v2 ────────────────────────────────────────────────────
- * FIG-1 — Full Figma import UI.
- *
- * Change Log v2:
- * ADDED: Frame search/filter input in pick step
- * ADDED: W×H dimension badge per frame in the frame list
- * ADDED: Post-import summary card — total nodes, pages/components created
- * ADDED: Reconnect button in error/done states — resets proxy singleton + returns to connect
- * REQUIRES: resetProxy() exported from figmaProxy.ts (see figmaProxy.patch.ts)
- * PRESERVED: FIGMA-SEC-1, FIGMA-SEC-2, FIGMA-PROXY-1, FIG-SAFE-1,2,3, FIG-COORD-1, FIG-WC-1
- *
- * USER FLOW
- * ─────────
- *   Step 1 — Connect:     PAT + File URL → "Connect" → boot proxy → fetch file
- *   Step 2 — Pick frames: Searchable checklist of top-level FRAMEs with W×H badges
- *   Step 3 — Import:      Progress log per frame → importPage() per selection
- *   Step 4 — Done:        Summary card with node count + page/component breakdown
- *   Error:  Reconnect button → resets proxy and returns to connect step
+ * --- FIGMA PANEL ------------------------------------------------------------
+ * Left-sidebar panel for importing designs from Figma.
+ * Accepts a Figma file URL + personal access token, calls the Figma REST API
+ * (via figmaProxy.ts to bypass CORS), and converts the Figma node tree into
+ * Vectra canvas elements using figmaImporter.ts.
  */
 
 import React, { useState, useCallback, useRef, useMemo } from 'react';
@@ -290,7 +277,7 @@ export const FigmaPanel: React.FC = () => {
 
     // ── Reconnect ─────────────────────────────────────────────────────────────
     const handleReconnect = useCallback(async () => {
-        await resetProxy(); // FIG-SHUTDOWN-1: async — waits for graceful process exit
+        await resetProxy(); // async — waits for graceful process exit
         abortRef.current?.abort();
         setStep('connect');
         setErrorMsg('');

@@ -6,9 +6,7 @@ import { cn } from '../../lib/utils';
 // ── DnD state lives outside React to avoid closure capture issues during drag ──
 let _dragNodeId: string | null = null;
 
-// UX-12 [PERMANENT]: Module-level search query — avoids prop-drilling through
-// recursive LayerNode tree. Same pattern as _dragNodeId above.
-// LayerNode reads this directly on each render — zero extra context subscriptions.
+// Module-level search query — avoids prop-drilling through recursive LayerNode tree. Same pattern as _dragNodeId above. LayerNode reads this directly on each render — zero extra context subscriptions
 let _layerSearch = '';
 
 interface LayerNodeProps {
@@ -36,9 +34,7 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
     const isSelected = selectedId === nodeId;
     const hasChildren = element.children && element.children.length > 0;
 
-    // UX-12: When search is active, hide leaf nodes that don't match.
-    // Container nodes (with children) always show so their matching
-    // descendants remain reachable — the tree stays navigable.
+    // When search is active, hide leaf nodes that don't match. Container nodes (with children) always show so their matching descendants remain reachable — the tree stays navigable
     if (_layerSearch && !hasChildren) {
         if (!element.name.toLowerCase().includes(_layerSearch)) return null;
     }
@@ -58,7 +54,7 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
 
     const handleRename = () => {
         if (renameVal.trim()) {
-            // NS-3 FIX: rename is cosmetic — don't consume a history slot.
+            // rename is cosmetic — don't consume a history slot.
             // Cmd+Z will revert to the last structural snapshot which retains the old name.
             updateProject({ ...elements, [nodeId]: { ...element, name: renameVal } }, { skipHistory: true });
         }
@@ -71,7 +67,7 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
         setSelectedId(nodeId);
     };
 
-    // S-6 FIX: early-return when contextMenu is null so no listener is ever
+    // early-return when contextMenu is null so no listener is ever
     // added for the closed state. This prevents the double add+remove pattern
     // that occurred on unrelated re-renders while the menu was already open.
     useEffect(() => {
@@ -239,7 +235,7 @@ const MenuBtn = ({ icon: Icon, label, onClick, danger }: {
 export const LayersPanel = () => {
     const { elements, activePageId } = useEditor();
     const [search, setSearch] = useState('');
-    // UX-12: Keep module-level var in sync with React state so LayerNode
+    // Keep module-level var in sync with React state so LayerNode
     // reads the latest query on each render without needing it as a prop.
     _layerSearch = search.toLowerCase().trim();
     const root = elements[activePageId];
@@ -252,7 +248,7 @@ export const LayersPanel = () => {
                 <span className="text-xs font-bold text-[#ccc]">Layers</span>
                 <span className="text-[10px] text-[#666]">{Object.keys(elements).length} Elements</span>
             </div>
-            {/* UX-12: Search input — filters layer nodes by name in real time */}
+            {/* Search input — filters layer nodes by name in real time */}
             <div className="px-2 py-1.5 border-b border-[#2a2a2c]">
                 <div className="relative">
                     <svg className="absolute left-2 top-1/2 -translate-y-1/2 text-[#555]" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>

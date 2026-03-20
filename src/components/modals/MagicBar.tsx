@@ -12,10 +12,7 @@ const FALLBACK_HINTS = [
 ];
 
 export const MagicBar = () => {
-    // SPRINT-B-FIX-1: elements/pages/activePageId added for contextual hint
-    // derivation. MagicBar was already subscribed to ProjectContext via
-    // useEditor(). Adding these to the destructure is zero extra re-render cost —
-    // the early-return 'null' when bar is closed means re-renders are free.
+    // elements/pages/activePageId added for contextual hint derivation. MagicBar was already subscribed to ProjectContext via useEditor(). Adding these to the destructure is zero extra re-render cost —
     const {
         isMagicBarOpen, setMagicBarOpen, runAI,
         elements, pages, activePageId,
@@ -24,7 +21,7 @@ export const MagicBar = () => {
     const [input, setInput] = useState('');
     const [status, setStatus] = useState<'idle' | 'thinking' | 'generating' | 'done' | 'error'>('idle');
     const [feedback, setFeedback] = useState('');
-    // SPRINT-B-FIX-4: streaming state — updated by vectra:ai-stream-chunk events
+    // streaming state — updated by vectra:ai-stream-chunk events
     const [streamCharCount, setStreamCharCount] = useState(0);
     const [currentSection, setCurrentSection] = useState('');
     const inputRef = useRef<HTMLInputElement>(null);
@@ -39,11 +36,7 @@ export const MagicBar = () => {
         }
     }, [isMagicBarOpen]);
 
-    // ── SPRINT-B-FIX-1: Contextual hints ──────────────────────────────────────
-    // Re-derived whenever the bar opens (isMagicBarOpen flips to true).
-    // Scans the active artboard's existing children to detect which sections
-    // already exist, then recommends what's missing from a standard page.
-    // Cost: O(N children) — typically <20 nodes, runs once on open, not 60fps.
+    // ── Contextual hints ────────────────────────────────────── Re-derived whenever the bar opens (isMagicBarOpen flips to true). Scans the active artboard's existing children to detect which sections
     const contextualHints = useMemo((): string[] => {
         if (!isMagicBarOpen) return FALLBACK_HINTS;
 
@@ -112,11 +105,7 @@ export const MagicBar = () => {
     }, [isMagicBarOpen, elements, pages, activePageId]);
     // ── End SPRINT-B-FIX-1 ────────────────────────────────────────────────────
 
-    // ── SPRINT-B-FIX-4: Streaming event listener ──────────────────────────────
-    // Attached only during 'generating' status — zero cost at idle.
-    // callDirectAPIWithStreaming in aiAgent.ts dispatches 'vectra:ai-stream-chunk'
-    // with { text: string, accumulated: string } as tokens arrive from the SSE stream.
-    // We extract the last SECTION: marker so the ticker shows meaningful progress.
+    // ── Streaming event listener ────────────────────────────── Attached only during 'generating' status — zero cost at idle. callDirectAPIWithStreaming in aiAgent.ts dispatches 'vectra:ai-stream-chunk'
     useEffect(() => {
         if (status !== 'generating') {
             setStreamCharCount(0);
@@ -137,9 +126,7 @@ export const MagicBar = () => {
     }, [status]);
     // ── End SPRINT-B-FIX-4 ───────────────────────────────────────────────────
 
-    // STRICT-MODE-DOUBLE-INVOKE [PERMANENT]: isRunning ref prevents concurrent
-    // double-submission from StrictMode re-invoke, rapid double-click, or keyboard
-    // Enter race. A ref (not state) avoids a re-render on guard check.
+    // isRunning ref prevents concurrent double-submission from StrictMode re-invoke, rapid double-click, or keyboard Enter race. A ref (not state) avoids a re-render on guard check
     const isRunning = useRef(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -166,7 +153,7 @@ export const MagicBar = () => {
                 isRunning.current = false;
             }, 1500);
         } catch (err: any) {
-            // UX-18 [PERMANENT]: Never silently swallow AI errors.
+            // Never silently swallow AI errors.
             const msg = err?.message ?? 'Something went wrong. Please try again.';
             setFeedback(msg);
             setStatus('error');

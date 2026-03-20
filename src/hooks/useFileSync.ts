@@ -1,37 +1,10 @@
 /**
- * ─── useFileSync ──────────────────────────────────────────────────────────────
- * Syncs the Vectra element tree to the WebContainer VFS.
- *
- * PHASE E: Framework Switcher
- * ────────────────────────────
- * All VFS paths and code generators now branch on `framework` from useProject().
- * The two supported frameworks produce entirely different file structures:
- *
- *   NEXT.JS (framework === 'nextjs')
- *   ─────────────────────────────────────────────────────────────────────────
- *   components/[Name].tsx        custom_code component files
- *   app/page.tsx                 Home page
- *   app/[slug]/page.tsx          Additional pages
- *   app/layout.tsx               Root layout (with Navbar if 2+ pages)
- *   components/Navbar.tsx        Multi-page navigation
- *   app/api/[path]/route.ts      API routes (Phase D, framework-agnostic)
- *   data/project.json            Serialized project for ZIP
- *   tailwind-gen.js              JIT ghost file (root)
- *   tailwind.config.js           Next.js content paths
- *
- *   VITE (framework === 'vite')
- *   ─────────────────────────────────────────────────────────────────────────
- *   src/components/[Name].tsx    custom_code component files
- *   src/App.tsx                  BrowserRouter + Routes (all pages)
- *   src/data/project.json        Serialized project for ZIP
- *   src/tailwind-gen.js          JIT ghost file (src/)
- *   tailwind.config.js           Vite content paths
- *
- * PRESERVED FROM PRIOR PHASES:
- *   • Phase 4: All dirty-check guards (ref equality, drag suppression,
- *              concurrency, debounce, per-file content guard)
- *   • Phase C: buildTailwindConfig(), toPascalCase(), wrapWithImports()
- *   • Phase D: Section F (API routes), prevApiRoutesRef
+ * --- USE FILE SYNC ----------------------------------------------------------
+ * Hook that keeps the WebContainer virtual file system in sync with the
+ * current project state (element tree, pages, API routes, global theme).
+ * Runs as a debounced effect: waits 800ms after the last change before
+ * writing, so rapid edits during drag or typing do not flood the VFS.
+ * Writes TypeScript source files for each page, component, style, and route.
  */
 
 import { useEffect, useRef } from 'react';
@@ -207,10 +180,10 @@ export const useFileSync = () => {
   const prevPageCountRef = useRef<number>(0);
   // Phase D: API route dirty-check. Value format: "updatedAt::vfsPath"
   const prevApiRoutesRef = useRef<Record<string, string>>({});
-  // DB-1: Data source dirty-check ref (JSON of stable fields)
+  // Data source dirty-check ref (JSON of stable fields)
   const prevDataSourcesRef = useRef<string>('');
 
-  // VFS-STALE-1: tracks id → PascalName for every custom_code node written to VFS.
+  // tracks id → PascalName for every custom_code node written to VFS.
   // When a node is renamed, the old file path is computed from the previous name
   // and deleted before the new one is written. Without this, renaming Navbar to
   // NavbarV2 leaves components/Navbar.tsx on disk indefinitely.
@@ -219,23 +192,11 @@ export const useFileSync = () => {
   const syncedFiles = useRef<Map<string, string>>(new Map());
   const isSyncing = useRef<boolean>(false);
 
-  // PERF-3 [PERMANENT]: AI generation starvation guard.
-  //
-  // PROBLEM: AI calls setElements many times while building a page. Each call
-  // resets the 800ms debounce (nodeCountChanged = true). If AI fires setElements
-  // every ~200ms over 3 seconds, the VFS never receives a write — the timer is
-  // perpetually evicted before it can fire.
-  //
-  // FIX: isAIRunning ref gates debounce to 1000ms while generation is active.
-  // syncForcedAfterAI ref ensures exactly ONE sync fires when AI finishes,
-  // even if no further element change occurs.
-  //
-  // WIRING: ProjectContext sets window.__vectra_ai_running = true/false around
-  // runAI(). This hook reads it via the ref — zero re-render cost.
+  // AI generation starvation guard. PROBLEM: AI calls setElements many times while building a page. Each call resets the 800ms debounce (nodeCountChanged = true). If AI fires setElements
   const isAIRunning = useRef<boolean>(false);
   const syncForcedAfterAI = useRef<boolean>(false);
 
-  // NS-7 FIX: interaction in the dep array caused the sync effect to re-run at 60fps
+  // interaction in the dep array caused the sync effect to re-run at 60fps
   // during drag (setInteraction produces a new object every pointermove). The early-return
   // guard was hit correctly but the debounce timer was still reset 60×/second, starving
   // the VFS for the entire drag duration (> 800ms). Now use a ref mirrored by a separate
@@ -247,7 +208,7 @@ export const useFileSync = () => {
     // ── Guard 1: VFS not ready ────────────────────────────────────────────
     if (status !== 'ready' || !instance) return;
 
-    // ── Guard 2: Suppress during 60fps drag/resize (NS-7: reads ref, not dep) ────
+    // ── Guard 2: Suppress during 60fps drag/resize (reads ref, not dep) ────
     if (interactionRef.current?.type === 'MOVE' || interactionRef.current?.type === 'RESIZE') return;
 
     // ── Guard 3: Early-exit if nothing changed ────────────────────────────
@@ -256,7 +217,7 @@ export const useFileSync = () => {
     const sync = async () => {
       if (isSyncing.current) return;
       isSyncing.current = true;
-      // UX-28 [PERMANENT]: Notify Header that a VFS write cycle is starting.
+      // Notify Header that a VFS write cycle is starting.
       // Event is tiny (no payload serialization cost) — safe at sync frequency.
       window.dispatchEvent(new CustomEvent('vectra:save-state', { detail: { saving: true } }));
 
@@ -269,16 +230,7 @@ export const useFileSync = () => {
       try {
         const prevElements = prevElementsRef.current;
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION A — COMPONENT FILES
-        // custom_code nodes → [componentDir]/[ComponentName].tsx
-        // ════════════════════════════════════════════════════════════════
-        // H-3 FIX: the previous 2-level manual loop reached only:
-        //   page-root → webpage/canvas → direct children
-        // Any custom_code node nested inside a container, section, card, etc.
-        // was never added to allChildIds — its file was never written to VFS.
-        // At dev-server start Next.js throws `Module not found` with no editor error.
-        // Replace with a proper recursive walk over the full page subtree.
+        // ════════════════════════════════════════════════════════════════ SECTION A — COMPONENT FILES custom_code nodes → [componentDir]/[ComponentName].tsx
         const allChildIds = new Set<string>();
         const walkNode = (id: string) => {
           if (allChildIds.has(id)) return; // cycle-guard
@@ -302,9 +254,7 @@ export const useFileSync = () => {
             const componentName = toPascalCase(currentNode.name?.trim() || currentNode.id);
             const filePath = `${componentDir}/${componentName}.tsx`;
 
-            // VFS-STALE-1 FIX: detect renames and evict the old file.
-            // If this node existed before under a DIFFERENT PascalName,
-            // the old file is now orphaned on disk. Remove it first.
+            // detect renames and evict the old file. If this node existed before under a DIFFERENT PascalName, the old file is now orphaned on disk. Remove it first
             const prevName = prevCodeNodeNamesRef.current.get(nodeId);
             if (prevName && prevName !== componentName) {
               const stalePath = `${componentDir}/${prevName}.tsx`;
@@ -330,7 +280,7 @@ export const useFileSync = () => {
             }
           }
 
-          // VFS-STALE-1: handle deletion — node was custom_code, now gone or type-changed.
+          // handle deletion — node was custom_code, now gone or type-changed.
           if (
             prevNode?.type === 'custom_code' &&
             (currentNode === undefined || currentNode?.type !== 'custom_code')
@@ -348,12 +298,7 @@ export const useFileSync = () => {
           }
         }
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION B — PAGE / APP FILES
-        //
-        // NEXT.JS: Per-page app/[slug]/page.tsx + app/layout.tsx
-        // VITE:    Single src/App.tsx with BrowserRouter + Routes
-        // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════ SECTION B — PAGE / APP FILES NEXT.JS: Per-page app/[slug]/page.tsx + app/layout.tsx
         let anyPageChanged = false;
 
         if (isNext) {
@@ -387,16 +332,7 @@ export const useFileSync = () => {
           }
 
           for (const page of safePages) {
-            // H-1 FIX: the previous structureKey used Object.keys(props).length
-            // per direct child — a count that never changes on text edits, style
-            // value changes, src changes, or mutations to nested nodes.
-            // Result: page file was never re-synced for the most common editor ops.
-            //
-            // Replacement: recursive subtree walk accumulating id + full node JSON.
-            // elements is replaced immutably on every edit, so any descendant change
-            // produces a new object ref → new JSON.stringify → different structureKey.
-            // Cost: JSON.stringify is O(subtree) but paid once per changed page per
-            // 1s debounce tick — never on the 60fps hot path.
+            // the previous structureKey used Object.keys(props).length per direct child — a count that never changes on text edits, style value changes, src changes, or mutations to nested nodes
             const collectSubtreeForKey = (id: string, out: string[]) => {
               const node = elements[id];
               if (!node) return;
@@ -483,9 +419,7 @@ export const useFileSync = () => {
 
         prevPageCountRef.current = pages.length;
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION C — PROJECT JSON
-        // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════ SECTION C — PROJECT JSON ════════════════════════════════════════════════════════════════
         const projectData = { pages, elements, framework };
         const jsonString = JSON.stringify(projectData, null, 2);
         if (syncedFiles.current.get(projectJsonPath) !== jsonString) {
@@ -493,9 +427,7 @@ export const useFileSync = () => {
           syncedFiles.current.set(projectJsonPath, jsonString);
         }
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION D — TAILWIND GHOST CLASSES (JIT scanner)
-        // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════ SECTION D — TAILWIND GHOST CLASSES (JIT scanner) ════════════════════════════════════════════════════════════════
         const canvasClasses = Object.values(elements)
           .map(el => (el.props as any)?.className || '').join(' ');
         const codeClasses = Object.values(elements)
@@ -512,9 +444,7 @@ export const useFileSync = () => {
           prevClassesRef.current = allClasses;
         }
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION E — TAILWIND CONFIG + LAYOUT (theme changes)
-        // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════ SECTION E — TAILWIND CONFIG + LAYOUT (theme changes) ════════════════════════════════════════════════════════════════
         const themeKey = JSON.stringify(theme);
         if (themeKey !== prevThemeKeyRef.current) {
           const twContent = isNext
@@ -532,9 +462,7 @@ export const useFileSync = () => {
           console.log('[Vectra] Theme synced → tailwind.config.js');
         }
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION F — API ROUTE FILES (Phase D — framework-agnostic)
-        // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════ SECTION F — API ROUTE FILES (Phase D — framework-agnostic) ════════════════════════════════════════════════════════════════
         {
           const currentRouteIds = new Set(apiRoutes.map(r => r.id));
 
@@ -571,9 +499,7 @@ export const useFileSync = () => {
           }
         }
 
-        // ════════════════════════════════════════════════════════════════
-        // SECTION G — DATA SOURCES: .env.local + data/sources.ts (DB-1)
-        // ════════════════════════════════════════════════════════════════
+        // ════════════════════════════════════════════════════════════════ SECTION G — DATA SOURCES: .env.local + data/sources.ts (DB-1) ════════════════════════════════════════════════════════════════
         {
           const dsKey = JSON.stringify(
             dataSources.map(ds => ({
@@ -602,10 +528,7 @@ export const useFileSync = () => {
               envLines.push('');
             }
 
-            // DB-B FIX: Always write .env.local when dataSources change.
-            // Previous guard `envLines.length > 3` skipped the write when the
-            // last secret source was deleted — leaving stale credentials on disk.
-            // Now we always write: either the populated file or an empty header.
+            // Always write .env.local when dataSources change. Previous guard `envLines.length > 3` skipped the write when the last secret source was deleted — leaving stale credentials on disk
             if (envLines.length > 3) {
               await writeFile('.env.local', envLines.join('\n'));
             } else {
@@ -660,9 +583,7 @@ export const useFileSync = () => {
               }
             }
 
-            // DB-B FIX: Same pattern as .env.local above — always write so that
-            // removing all data sources clears the generated file rather than
-            // leaving stale fetch functions that reference deleted sources.
+            // Same pattern as .env.local above — always write so that removing all data sources clears the generated file rather than leaving stale fetch functions that reference deleted sources
             if (srcLines.length > 2) {
               await writeFile(sourcesPath, srcLines.join('\n'));
             } else {
@@ -685,22 +606,22 @@ export const useFileSync = () => {
         console.error('[useFileSync] Sync error:', e);
       } finally {
         isSyncing.current = false;
-        // UX-28 [PERMANENT]: Signal save complete regardless of success/error.
+        // Signal save complete regardless of success/error.
         window.dispatchEvent(new CustomEvent('vectra:save-state', { detail: { saving: false } }));
       }
     };
 
-    // PERF-3: Mirror global AI flag into ref each effect cycle.
+    // Mirror global AI flag into ref each effect cycle.
     isAIRunning.current = !!(window as any).__vectra_ai_running;
 
-    // PERF-3: If AI just finished and a forced sync was armed, fire immediately.
+    // If AI just finished and a forced sync was armed, fire immediately.
     if (!isAIRunning.current && syncForcedAfterAI.current) {
       syncForcedAfterAI.current = false;
       const timer = setTimeout(sync, 0);
       return () => clearTimeout(timer);
     }
 
-    // S-2 FIX: smart debounce — delay varies by change type to prevent starvation.
+    // smart debounce — delay varies by change type to prevent starvation.
     //
     //   AI running      → hold at 1000ms, force-sync when AI finishes (PERF-3)
     //   AI generation   → node count changes rapidly → 800ms (let it settle)
@@ -712,7 +633,7 @@ export const useFileSync = () => {
 
     let debounceMs: number;
     if (isAIRunning.current) {
-      // PERF-3: AI is actively generating — clamp at 1000ms and arm forced-sync.
+      // AI is actively generating — clamp at 1000ms and arm forced-sync.
       syncForcedAfterAI.current = true;
       debounceMs = 1000;
     } else if (nodeCountChanged) {

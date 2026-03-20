@@ -1,22 +1,7 @@
 /**
- * ─── TREE UTILS ───────────────────────────────────────────────────────────────
- * Pure TypeScript tree operations. Zero Wasm, zero serialization overhead.
- *
- * V8 object key deletion is O(1) amortised. A single structural edit on a
- * 5 000-node project completes in < 0.5 ms here vs. 10–50 ms via the Wasm
- * JSON round-trip (stringify → copy → deserialize → mutate → serialize → parse).
- *
- * DESIGN NOTES
- * ────────────
- * • deleteNodeRecursive uses an iterative stack (Depth-First) to collect the
- *   transitive closure of descendant IDs. This avoids JS call-stack overflows
- *   on deeply nested trees and is faster than recursive descent (~2× in V8).
- *
- * • Parent unlinking is done in a single O(N) pass over the flat element map
- *   AFTER the deletion set is known, so we never walk the tree twice.
- *
- * • No mutations to the original object — every returned object is a new
- *   shallow clone for React's referential-equality diffing.
+ * --- TREE UTILS -------------------------------------------------------------
+ * Helper functions for traversing and mutating the Vectra element tree.
+ * Used when deleting, duplicating, or walking the entire element hierarchy.
  */
 
 import type { VectraProject } from '../types';

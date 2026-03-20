@@ -1,24 +1,9 @@
 /**
- * ─── VECTRA MCP SERVER ────────────────────────────────────────────────────────
- * MCP-1 + MCP-2 — Model Context Protocol server for Vectra.
- *
- * WebContainer Network isolation fix (MCP-WC-1):
- * ─────────────────────────────────────────────
- * Servers running inside the WebContainer are NOT reachable via `localhost:PORT`
- * from the browser. The WebContainer API fires a `server-ready` event with a
- * container-forwarded URL (e.g. https://xxx--3002.local.webcontainer.io/).
- * This is the ONLY reachable URL from the browser thread.
- *
- * We listen to `instance.on('server-ready', ...)` for port 3002 and store the
- * resulting URL in `mcpBaseUrl`. ALL subsequent fetches use this URL.
- *
- * MCP-PORT-1 [PERMANENT]:  Server port = 3002. 3000=dev, 3001=figma proxy.
- * MCP-READ-1 [PERMANENT]:  Read ops read data/project.json directly. Zero events.
- * MCP-WRITE-1 [PERMANENT]: Write ops return { __vectra_mutation__: true, op, ... }.
- *   MCPPanel dispatches vectra:mcp-command → ProjectContext applies mutations.
- * MCP-SEC-1 [PERMANENT]:   No auth token — localhost only. WebContainer isolation.
- * MCP-IDLE-1 [PERMANENT]:  Auto-exit after 30 min idle.
- * MCP-WC-1 [PERMANENT]:    Always use URL from server-ready event, never localhost:3002.
+ * --- MCP SERVER -------------------------------------------------------------
+ * Local Model Context Protocol (MCP) server that exposes Vectra canvas
+ * operations as tools callable by AI agents or other MCP clients.
+ * Handles registration of tools (add element, update props, read layout, etc.)
+ * and processes incoming tool-call requests via a WebSocket connection.
  */
 
 import type { WebContainer } from '@webcontainer/api';
@@ -31,7 +16,7 @@ export const MCP_PORT = 3002;
 let mcpBootPromise: Promise<string> | null = null;
 let mcpIsRunning = false;
 
-// MCP-WC-1: The real reachable URL — populated from server-ready event.
+// The real reachable URL — populated from server-ready event.
 // Falls back to localhost ONLY for debugging outside WebContainer.
 let mcpBaseUrl = `http://localhost:${MCP_PORT}`;
 
@@ -357,7 +342,7 @@ export const ensureMcpServer = async (instance: WebContainer): Promise<string> =
             await instance.fs.writeFile('/mcp-server.mjs', buildServerSource());
             console.log('[mcp] mcp-server.mjs written to VFS');
 
-            // MCP-WC-1: subscribe to server-ready BEFORE spawning
+            // subscribe to server-ready BEFORE spawning
             const serverReadyPromise = new Promise<string>((resolve) => {
                 instance.on('server-ready', (port, url) => {
                     if (port === MCP_PORT) {

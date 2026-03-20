@@ -1,36 +1,19 @@
-/**
- * ─── Async IndexedDB Persistence Layer ────────────────────────────────────────
+﻿/**
+ * --- DATABASE (IndexedDB) ---------------------------------------------------
+ * Async persistence layer for all project data using IndexedDB.
+ * Provides two stores:
+ *   - Project index: lightweight metadata list (name, date, thumbnail URL)
+ *   - Project data: full per-project save (elements, pages, routes, theme)
  *
- * Replaces synchronous localStorage.setItem() which blocks the main thread for
- * ~2–8ms on every save tick, causing visible "hiccups" on large projects.
- *
- * WHY INDEXEDDB OVER LOCALSTORAGE?
- * ─────────────────────────────────
- * • localStorage.setItem() is SYNCHRONOUS — it holds the main thread until the
- *   OS finishes writing. On a large project (100+ nodes) this is 2–10ms of
- *   jank every autosave tick.
- * • IndexedDB writes are fully async and happen on a background I/O thread.
- *   The JS call returns immediately; the browser handles the write off-thread.
- * • IndexedDB has no 5MB cap (localStorage limit). Projects can grow freely.
- *
- * FALLBACK STRATEGY (implemented in ProjectContext)
- * ──────────────────────────────────────────────────
- * localStorage is still written as a fast-read bootstrap cache.
- * On the next page load, localStorage is read synchronously for an instant,
- * zero-flicker start. IndexedDB is then checked async for a more recent save.
- * If IDB has newer data, state is upgraded silently.
- *
- * This gives us the best of both worlds:
- *   • Instant first paint (localStorage)
- *   • No save jank (IndexedDB async write)
- *   • No data loss (both stores written per tick)
+ * All reads/writes are async and non-blocking. The main thread never stalls
+ * waiting for a save. Falls back gracefully if IDB is unavailable.
  */
 
 const DB_NAME = 'vectra_db_v1';
 const STORE_NAME = 'projects';
 const DB_VERSION = 1;
 
-// M-2 FIX: module-level singleton — one connection for the page lifetime.
+// module-level singleton — one connection for the page lifetime.
 // Previously every call opened + closed a fresh IDB connection at 3-4×/second
 // during autosave. Opening IDB has non-trivial OS I/O overhead.
 let _db: IDBDatabase | null = null;
@@ -104,14 +87,7 @@ export const deleteProjectFromDB = async (key: string): Promise<void> => {
     });
 };
 
-// ── MULTI-PROJECT PERSISTENCE LAYER (Phase H) ─────────────────────────────────
-//
-// Architecture overview:
-//   IDB key  'vectra_project_index'      → ProjectMeta[]
-//   IDB key  'project_data_${uuid}'      → FullProjectSave
-//
-// The existing saveProjectToDB / loadProjectFromDB / deleteProjectFromDB exports
-// are preserved exactly — they are now only used by the legacy migration path.
+// ── MULTI-PROJECT PERSISTENCE LAYER (Phase H) ───────────────────────────────── Architecture overview: IDB key  'vectra_project_index'      → ProjectMeta[]
 
 import type { ProjectMeta } from '../types';
 

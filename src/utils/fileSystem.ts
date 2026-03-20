@@ -18,9 +18,7 @@ export const generateAppTsx = (project: VectraProject, pageId: string = 'page-ho
     if (!node) return;
 
     const componentName = sanitizeFilename(node.name);
-    // Avoid duplicate imports if multiple instances of same component type
-    // (For MVP we assume unique names or 1:1 mapping for simplicity)
-    // In prod, you'd check a Set of imports.
+    // Avoid duplicate imports if multiple instances of same component type (For MVP we assume unique names or 1:1 mapping for simplicity) In prod, you'd check a Set of imports
     imports.push(`import ${componentName} from './components/${componentName}';`);
     jsxElements.push(`<${componentName} />`);
   });

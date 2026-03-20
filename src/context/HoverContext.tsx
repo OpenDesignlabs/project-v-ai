@@ -1,33 +1,12 @@
 /**
- * ─── HOVER CONTEXT ────────────────────────────────────────────────────────────
- * Isolated context for canvas element hover state.
+ * --- HOVER CONTEXT ----------------------------------------------------------
+ * Isolated React context for canvas element hover state (hoveredId).
  *
- * WHY SEPARATE FROM UIContext
- * ────────────────────────────
- * hoveredId changes at pointer-move frequency (up to 60fps) as the user moves
- * the mouse across the canvas. When hoveredId lived in UIContext, every UIContext
- * subscriber (all 200 RenderNode instances on a full canvas) re-rendered on every
- * pointer-move frame — 200 × 60 = 12,000 wasted renders/sec.
+ * Kept separate from UIContext so that pointer-move events (up to 60fps)
+ * only cause the two nodes changing hover state to re-render, not all
+ * RenderNode instances. Components that don't need hover state never subscribe.
  *
- * By isolating hoveredId here, only the two nodes that change their hover state
- * re-render on each pointer-move: the node losing the hover ring and the node
- * gaining it. All other RenderNodes stay idle during pointer moves.
- *
- * EXPECTED WIN:
- *   Before: ~12,000 RenderNode.render() calls/sec during canvas mouse movement
- *   After:  ~120 RenderNode.render() calls/sec (only gaining + losing node × 60fps)
- *   ≈ 99% reduction in wasted render work during hover.
- *
- * CONSUMER PATTERN
- * ─────────────────
- * RenderNode calls useHover() for hover ring logic (isHovered, setHoveredId).
- * All other components that don't need hoveredId never subscribe here.
- *
- * PROVIDER PLACEMENT
- * ───────────────────
- * HoverProvider is placed inside UIProvider in App.tsx.
- * HoverContext does not depend on UIContext — mount order is flexible,
- * but wrapping UIProvider's children is the cleanest placement.
+ * Usage: call useHover() in any component that renders hover rings.
  */
 
 import React, { createContext, useContext, useState, type ReactNode } from 'react';

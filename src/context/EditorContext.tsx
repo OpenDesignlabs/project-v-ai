@@ -1,26 +1,5 @@
-/**
- * ─── EDITOR CONTEXT (Legacy Compatibility Bridge) ─────────────────────────────
- * The real state lives in two optimised contexts:
- *   • ProjectContext  — heavyweight document data (elements, history, pages…)
- *   • UIContext       — lightweight UI state (sel, hover, tool, zoom, panel…)
- *
- * This file keeps backward-compatibility so every existing component that calls
- * `useEditor()` continues to work without modification.
- *
- * PHASE 3 — Interaction engine optimisations
- * ──────────────────────────────────────────
- * • handleInteractionMove calls updateProject(..., skipHistory=true): 60fps drag
- *   updates never trigger JSON.stringify on the main thread.
- * • handleInteractionEnd commits ONE history entry on pointer-up.
- *
- * PHASE 5 — Retained-Mode LayoutEngine snapping
- * ───────────────────────────────────────────────
- * • querySnapping (from ProjectContext) is called with 5 scalar args at 60fps —
- *   zero large JS→Wasm data transfer per frame.
- * • syncLayoutEngine (from ProjectContext) is exposed through useEditor() so
- *   RenderNode can call it on pointer-down (alongside setInteraction) to push
- *   all sibling rects into Wasm ONCE per drag gesture.
- */
+/** Merges ProjectContext + UIContext into a single useEditor() hook.
+ * Also owns the 60fps move/resize interaction engine and snap query logic. */
 
 import React, { useCallback, useMemo, useRef, useEffect, type ReactNode } from 'react';
 import { useProject } from './ProjectContext';
@@ -32,27 +11,24 @@ import type { EditorContextType } from '../types';
 export type { SidebarPanel, AppView, ViewMode } from './UIContext';
 export type { GlobalTheme, DataSource } from './ProjectContext';
 
-// ── Interaction engine ────────────────────────────────────────────────────────
-// Assembled here so ProjectContext and UIContext stay decoupled from each other.
+// Builds the move/resize/snap handlers used during canvas drag. Kept here so ProjectContext and UIContext stay decoupled.
 function useInteractionEngine() {
     const { elementsRef, updateProject, pushHistory, querySnapping, syncLayoutEngine } = useProject();
-    // NM-8 FIX: zoomRef instead of zoom — removes zoom from handleInteractionMove
+    // zoomRef instead of zoom — removes zoom from handleInteractionMove
     // dep array. zoom in deps caused useCallback to be recreated on every wheel
     // tick (60fps) → Canvas useEffect tore down + reattached pointermove + pointerup
     // listeners 60×/sec. Two DOM API calls per tick = 120 ops/sec listener churn,
     // plus a one-frame gap where no handler was attached → drag skip during zoom+drag.
     const { interaction, zoomRef, setGuides, setInteraction, device } = useUI();
 
-    // P2-B2 FIX: mirror device into a stable ref so handleInteractionMove reads
+    // mirror device into a stable ref so handleInteractionMove reads
     // the current breakpoint at 60fps without adding device to its dep array.
     // device only changes on user click — but ref pattern keeps dep array stable
     // and consistent with NM-8 (zoomRef) and the project-wide ref-for-60fps rule.
     const bpRef = useRef<'desktop' | 'tablet' | 'mobile'>(device);
     useEffect(() => { bpRef.current = device; }, [device]);
 
-    // ── MOVE / RESIZE — called at 60fps during drag ────────────────────────────
-    // • updateProject(next, true) → setElements only, no JSON.stringify per frame
-    // • querySnapping → 5 scalar f64 args cross the Wasm boundary (no serde cost)
+    // Runs on every pointermove during drag — applies position/size deltas and queries Wasm for snap guides.
     const handleInteractionMove = useCallback((e: PointerEvent) => {
         if (!interaction) return;
         const { type, itemId, startX, startY, startRect, handle } = interaction as any;
@@ -64,7 +40,7 @@ function useInteractionEngine() {
             newRect.left = (startRect?.left || 0) + deltaX;
             newRect.top = (startRect?.top || 0) + deltaY;
 
-            // 🚀 Phase 5: Retained-Mode snapping — 5 scalars, zero serde cost at 60fps
+            // Query Wasm LayoutEngine for snap position (5 scalar args, no serialisation cost).
             const snap = querySnapping(newRect.left, newRect.top, newRect.width, newRect.height);
             if (snap) {
                 newRect.left = snap.x;
@@ -86,15 +62,7 @@ function useInteractionEngine() {
         const el = curElements[itemId];
         if (!el) return;
 
-        // P2-B2 FIX: breakpoint-aware write destination.
-        // Desktop → write to props.style (existing behaviour).
-        // Tablet/Mobile → write to props.breakpoints[bp] so the base desktop
-        // layout is never clobbered when the user resizes in a breakpoint view.
-        //
-        // WHY bpRef NOT bpState: bpRef.current is read here at 60fps. Adding
-        // `device` state to this dep array would make handleInteractionMove
-        // re-create on every device toggle, forcing Canvas to re-attach the
-        // global pointermove listener — same churn NM-8 solved for zoom.
+        // breakpoint-aware write destination. Desktop → write to props.style (existing behaviour). Tablet/Mobile → write to props.breakpoints[bp] so the base desktop
         const bp = bpRef.current;
         const isBreakpointMode = bp !== 'desktop';
 
@@ -142,7 +110,7 @@ function useInteractionEngine() {
     }, [interaction, zoomRef, bpRef, elementsRef, setGuides, updateProject, querySnapping]);
 
     // ── DRAG END — called once on pointer-up ──────────────────────────────────
-    // H-4 FIX: `elements` removed from deps — reads from elementsRef.current at call
+    // `elements` removed from deps — reads from elementsRef.current at call
     // time so this callback is NOT recreated on every 60fps element update during drag.
     const handleInteractionEnd = useCallback(() => {
         if (!interaction) return;
@@ -161,7 +129,7 @@ export const useEditor = () => {
     const ui = useUI();
     const { handleInteractionMove, handleInteractionEnd, syncLayoutEngine } = useInteractionEngine();
 
-    // H-2 FIX: memoize the merged registry so the reference is stable between
+    // memoize the merged registry so the reference is stable between
     // renders. Previously { ...COMPONENT_TYPES, ...ui.componentRegistry } created
     // a new object on every call, forcing a re-render in every subscriber
     // (RenderNode, RightSidebar, InsertDrawer, Header, …) on every frame.
@@ -182,7 +150,7 @@ export const useEditor = () => {
         duplicateElement: project.duplicateElement,   // Item 1
         reorderElement: project.reorderElement,       // Item 4
         instantiateTemplate: project.instantiateTemplate,
-        parentMap: project.parentMap,                 // H-1 / M-7
+        parentMap: project.parentMap,                 // M-7
         pages: project.pages,
         activePageId: project.activePageId,
         setActivePageId: project.setActivePageId,
@@ -193,8 +161,8 @@ export const useEditor = () => {
         importPage: project.importPage,
         updatePageSEO: project.updatePageSEO,  // Direction D
         history: project.history,
-        undo: project.undo,   // S-2: flat stable reference
-        redo: project.redo,   // S-2: flat stable reference
+        undo: project.undo,   // flat stable reference
+        redo: project.redo,   // flat stable reference
         querySnapping: project.querySnapping,
         theme: project.theme,
         updateTheme: project.updateTheme,
@@ -212,7 +180,7 @@ export const useEditor = () => {
         exitProject: project.exitProject,
         runAI: project.runAI,
 
-        // ── Phase H: Multi-project ────────────────────────────────────────────
+        // ── Multi-project ────────────────────────────────────────────
         projectId: project.projectId,
         projectName: project.projectName,
         projectIndex: project.projectIndex,
@@ -275,7 +243,7 @@ export const useEditor = () => {
         handleInteractionMove,
         handleInteractionEnd,
         syncLayoutEngine,
-        // ARCH-1: `satisfies` validates this shape matches EditorContextType at compile time
+        // `satisfies` validates this shape matches EditorContextType at compile time
         // without widening the inferred type. Any field added to EditorContextType that is
         // missing from this return object will immediately fail tsc — permanently prevents drift.
     } satisfies EditorContextType;

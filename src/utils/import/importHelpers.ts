@@ -12,12 +12,7 @@ const NAME_PATTERNS = [
     /const\s+(\w+)\s*=\s*\(/,
 ] as const;
 
-/**
- * detectComponentName
- * ────────────────────
- * Extracts the exported component name from source code.
- * Filename is used as a fallback when no pattern matches.
- */
+// Extracts the exported component name from source code. Falls back to filename, then 'CustomComponent'.
 const detectComponentName = (code: string, filename?: string): string => {
     for (const pattern of NAME_PATTERNS) {
         const match = code.match(pattern);
@@ -30,42 +25,20 @@ const detectComponentName = (code: string, filename?: string): string => {
     return 'CustomComponent';
 };
 
-/**
- * detectDefaultExport
- * ────────────────────
- * Returns true if the code uses a default export.
- * Drives importMeta.isDefault → correct import statement on export/publish:
- *   true  → import MyButton from './components/MyButton'
- *   false → import { MyButton } from './components/MyButton'
- */
+// Returns true if the source code uses a default export. Drives importMeta.isDefault for correct import statement generation.
 const detectDefaultExport = (code: string): boolean =>
     /export\s+default\s+function\s+\w+/.test(code) ||
     /export\s+default\s+class\s+\w+/.test(code) ||
     /export\s+default\s+\(/.test(code) ||
     /export\s+default\s+\w+\s*;?\s*$/.test(code.trim());
 
-/**
- * processImportedCode
- * ────────────────────
- * Converts raw React source into a ComponentConfig ready for registerComponent().
- *
- * PHASE-C-1 [PERMANENT]:
- *   Sets ComponentConfig.code  → Phase B routing in RenderNode renders via
- *   LiveComponent (the Babel worker compile path). No DOM access needed.
- *   Sets ComponentConfig.importMeta → CIS-1 stamps importMeta onto the VectraNode
- *   at drop time. codeGenerator reads it to emit the correct import statement.
- *
- *   NEVER store component source in defaultProps['data-custom-code'].
- *   That approach predates Phase A/B and is permanently dead.
- *
- * Import path convention:
- *   './components/{Name}' — correct for both Next.js and Vite project layouts.
- */
+// Converts raw React source into a ComponentConfig ready for registerComponent().
+// Sets code (for LiveComponent compile path) and importMeta (for CIS-1 identity stamping at drop time).
 export const processImportedCode = (code: string, filename?: string): ComponentConfig => {
     const detectedName = detectComponentName(code, filename);
     const isDefault = detectDefaultExport(code);
 
-    // CIS-1: import identity — drives all export paths
+    // import identity — drives all export paths
     const importMeta: ComponentImportMeta = {
         packageName: `./components/${detectedName}`,
         exportName: detectedName,
@@ -81,7 +54,7 @@ export const processImportedCode = (code: string, filename?: string): ComponentC
         // RenderNode routing: importMeta ✅ + !element.code ✅ + conf.code ✅ → fires.
         code,
 
-        // CIS-1: stamped onto every VectraNode created from this config at drop time.
+        // stamped onto every VectraNode created from this config at drop time.
         importMeta,
 
         defaultProps: {
@@ -94,10 +67,7 @@ export const processImportedCode = (code: string, filename?: string): ComponentC
     };
 };
 
-/**
- * Read file content as text.
- * Unchanged from original.
- */
+/** Reads a File's text content as a Promise. */
 export const readFileContent = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -106,10 +76,7 @@ export const readFileContent = (file: File): Promise<string> =>
         reader.readAsText(file);
     });
 
-/**
- * Validate if code looks like a React component.
- * Unchanged from original.
- */
+/** Returns true if the code looks like a valid React component (has JSX or a React import + export). */
 export const isValidReactComponent = (code: string): boolean => {
     const hasReactImport = /import\s+.*from\s+['"]react['"]/.test(code);
     const hasJSX = /<[A-Za-z]/.test(code);
@@ -117,14 +84,7 @@ export const isValidReactComponent = (code: string): boolean => {
     return hasJSX || (hasReactImport && hasExport);
 };
 
-/**
- * Generate a unique component registry ID from a display name.
- *
- * PHASE-C-2 [PERMANENT]: crypto.randomUUID() replaces Date.now().toString(36).
- * Date.now() collides when two components are imported in the same millisecond.
- * crypto.randomUUID() is collision-proof and consistent with the project-wide
- * ID generation standard (M-1, M-5, NH-3).
- */
+// Generates a collision-proof registry ID using crypto.randomUUID() rather than Date.now().
 export const generateComponentId = (name: string): string => {
     const baseId = name
         .toLowerCase()
@@ -134,14 +94,7 @@ export const generateComponentId = (name: string): string => {
     return `custom-${baseId}-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 };
 
-/**
- * DetectionPreview — shape returned by getDetectionPreview().
- * Used by ImportModal to show what Vectra will derive before the user commits.
- *
- * PHASE-C-3 [PERMANENT]: this is the single source of truth for name detection.
- * ImportModal, LeftSidebar, InsertDrawer must derive from processImportedCode /
- * getDetectionPreview — never re-implement detection logic independently.
- */
+/** Shape returned by getDetectionPreview() — shown in ImportModal before the user commits. */
 export interface DetectionPreview {
     name: string;
     isDefault: boolean;
@@ -149,14 +102,7 @@ export interface DetectionPreview {
     importPath: string;
 }
 
-/**
- * getDetectionPreview
- * ────────────────────
- * Derives component name, export type, and import statement string from raw
- * source code. Used by ImportModal for a live preview before the user imports.
- *
- * @returns DetectionPreview or null when code is empty / unparseable.
- */
+// Returns a live detection preview (name, import statement) from raw source code. Used by ImportModal before import is committed.
 export const getDetectionPreview = (
     code: string,
     filename?: string

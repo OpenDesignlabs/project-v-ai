@@ -1,9 +1,9 @@
 /**
- * ─── DASHBOARD ────────────────────────────────────────────────────────────────
- * Phase H: Real multi-project list backed by IndexedDB.
- * Features: open, rename (inline), duplicate, delete (confirm), search,
- *           framework badges, relative timestamps, page count, empty state.
- * Framework selector flow (View 2) is preserved verbatim from Phase E.
+ * --- DASHBOARD --------------------------------------------------------------
+ * Full-screen project management view shown before entering the editor.
+ * Lists all saved projects with thumbnails, name, framework badge, and date.
+ * Provides actions to: create new project, open, rename, duplicate, or delete.
+ * Also renders the onboarding template picker for first-time users.
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
@@ -50,8 +50,8 @@ const FW_META: Record<string, { label: string; badgeCls: string; iconEl: React.R
     },
 };
 
-// ─── UX-26: .vectra FILE FORMAT ──────────────────────────────────────────────
-// UX-26 [PERMANENT]: version MUST be 2. Importer MUST reject version !== 2.
+// ─── .vectra FILE FORMAT ──────────────────────────────────────────────
+// version MUST be 2. Importer MUST reject version !== 2.
 interface VectraFile {
     version: 2;
     framework: string;
@@ -62,14 +62,9 @@ interface VectraFile {
     name: string;
 }
 
-// ─── UX-27: DESIGN TEMPLATES ─────────────────────────────────────────────────
-// UX-27 [PERMANENT]: Template selection stores AI prompt in sessionStorage key
-// 'vectra_initial_prompt'. Key MUST be cleared by runAI after first use.
+// ─── DESIGN TEMPLATES ───────────────────────────────────────────────── Template selection stores AI prompt in sessionStorage key 'vectra_initial_prompt'. Key MUST be cleared by runAI after first use
 
-// SPRINT-D-FIX-19: Static SVG wireframe previews — one per template.
-// Pure data constants; no live element data involved.
-// NM-THUMB [PERMANENT]: thumbnails MUST NOT use html2canvas — these are
-// hand-authored SVGs describing layout intent, not live canvas captures.
+// Static SVG wireframe previews — one per template. Pure data constants; no live element data involved. thumbnails MUST NOT use html2canvas — these are
 const TEMPLATE_PREVIEW_SVGS: Record<string, string> = {
     blank: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 280 130" width="280" height="130">
   <rect width="280" height="130" fill="#0a0a0b"/>
@@ -223,7 +218,7 @@ interface DesignTemplate {
     description: string;
     icon: React.ReactNode;
     accent: string;
-    // SPRINT-D-FIX-19: inline SVG wireframe preview
+    // inline SVG wireframe preview
     svgPreview: string;
 }
 const DESIGN_TEMPLATES: DesignTemplate[] = [
@@ -658,10 +653,7 @@ export const Dashboard = () => {
     const [importError, setImportError] = useState<string | null>(null);
     const importFileRef = useRef<HTMLInputElement>(null);
 
-    // SPRINT-D-FIX-20: project list sort mode.
-    // 'recent'    — descending lastEditedAt (existing default — no change for current users)
-    // 'name'      — ascending alpha by project name
-    // 'framework' — group by framework slug, then alpha within group
+    // project list sort mode. 'recent'    — descending lastEditedAt (existing default — no change for current users) 'name'      — ascending alpha by project name
     const [sortMode, setSortMode] = useState<'recent' | 'name' | 'framework'>('recent');
 
     // ── Sprint 2: soft-delete state + handlers ─────────────────────────────
@@ -674,7 +666,7 @@ export const Dashboard = () => {
     const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
 
     // Stage 1: hide immediately, schedule purge after UNDO_WINDOW_MS
-    // PERF-7 FIX: async — awaits purgeProjectData() when a prior pending delete is
+    // async — awaits purgeProjectData() when a prior pending delete is
     // replaced. purgeProjectData() is async (IDB); calling fire-and-forget risks a
     // dangling Promise and silent failure on congested IndexedDB.
     const handleSoftDelete = async (meta: ProjectMeta) => {
@@ -707,7 +699,7 @@ export const Dashboard = () => {
         if (isCreating) return;
         setIsCreating(true);
         await new Promise(r => setTimeout(r, 120));
-        // UX-27 [PERMANENT]: non-blank templates store an AI prompt hint in sessionStorage.
+        // non-blank templates store an AI prompt hint in sessionStorage.
         // ProjectContext.runAI reads 'vectra_initial_prompt' once on first open, then clears it.
         if (selectedTemplate !== 'blank') {
             const tpl = DESIGN_TEMPLATES.find(t => t.id === selectedTemplate);
@@ -723,10 +715,7 @@ export const Dashboard = () => {
         createNewProject(selectedFramework);
     };
 
-    // ── UX-26: Export project as .vectra ──────────────────────────────────────
-    // UX-26-1 [PERMANENT]: version MUST be 2. Export uses createObjectURL + anchor
-    // click — no server involved. Dashboard-level export is a metadata stub;
-    // full element data requires an in-editor session where elements are live.
+    // ── Export project as .vectra ────────────────────────────────────── version MUST be 2. Export uses createObjectURL + anchor click — no server involved. Dashboard-level export is a metadata stub;
     const handleExportProject = useCallback((meta: ProjectMeta) => {
         const payload: VectraFile = {
             version: 2,
@@ -746,9 +735,7 @@ export const Dashboard = () => {
         URL.revokeObjectURL(url);
     }, []);
 
-    // ── UX-26: Import .vectra file ────────────────────────────────────────────
-    // UX-26-2 [PERMANENT]: MUST call restoreProjectToIndex() THEN loadProject()
-    // in that order. Never call loadProject() on an orphan not in the index.
+    // ── Import .vectra file ──────────────────────────────────────────── MUST call restoreProjectToIndex() THEN loadProject() in that order. Never call loadProject() on an orphan not in the index
     const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (!file) return;
@@ -790,7 +777,7 @@ export const Dashboard = () => {
         window.dispatchEvent(new CustomEvent('vectra:open-project'));
     };
 
-    // SPRINT-D-FIX-20: Sort projects according to active sort mode.
+    // Sort projects according to active sort mode.
     // Default 'recent' preserves existing behaviour (no observable change for current users).
     const sortedProjects = [...projectIndex].sort((a, b) => {
         if (sortMode === 'name') {
@@ -842,7 +829,7 @@ export const Dashboard = () => {
                             <Github size={20} />
                         </a>
                         <div className="flex items-center gap-2">
-                            {/* UX-26: Import .vectra file */}
+                            {/* Import .vectra file */}
                             <label
                                 title="Import .vectra project"
                                 className={cn(
@@ -873,7 +860,7 @@ export const Dashboard = () => {
                             </button>
                         </div>
 
-                        {/* UX-26: Import error toast */}
+                        {/* Import error toast */}
                         {importError && (
                             <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-4 py-3 bg-red-950 border border-red-500/30 rounded-xl shadow-2xl text-sm text-red-300 max-w-sm">
                                 <span className="text-red-400">⚠</span>
@@ -1090,7 +1077,7 @@ export const Dashboard = () => {
                     })}
                 </div>
 
-                {/* UX-27: Design Template Picker ──────────────────────────────── */}
+                {/* Design Template Picker ──────────────────────────────── */}
                 <div className="mb-8">
                     <h2 className="text-lg font-bold text-white mb-1">Choose a starter template</h2>
                     <p className="text-zinc-500 text-sm mb-5">Start blank or pick a layout — all templates are fully editable.</p>
@@ -1098,7 +1085,7 @@ export const Dashboard = () => {
                         {DESIGN_TEMPLATES.map(tpl => {
                             const isSel = selectedTemplate === tpl.id;
                             return (
-                                // SPRINT-D-FIX-19: SVG wireframe preview + compact card body
+                                // SVG wireframe preview + compact card body
                                 <button
                                     key={tpl.id}
                                     onClick={() => setSelectedTemplate(tpl.id)}

@@ -1,7 +1,5 @@
-// NS-8 FIX: useEditor() subscribed Resizer to the full bridge (ProjectContext + UIContext +
-// useMemo componentRegistry + interaction handlers). During a resize at 60fps, elements
-// updates every frame — Resizer re-rendered even though it only needs 3 values.
-// Direct context calls keep the subscription scope minimal.
+// Resizer subscribes directly to ProjectContext and UIContext (not the full EditorContext bridge)
+// to keep its re-render scope minimal during 60fps resize interactions.
 import React, { useRef } from 'react';
 import { useProject } from '../../context/ProjectContext';
 import { useUI } from '../../context/UIContext';
@@ -12,15 +10,11 @@ interface ResizerProps {
 
 export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
     const { elements, updateProject, pushHistory, elementsRef } = useProject();
-    // NM-8 FIX: zoomRef instead of zoom — startResize only reads zoom inside a
-    // pointer event handler, not at render time. Subscribing to zoom state caused
-    // Resizer to re-render on every 60fps wheel tick with no visual benefit.
+    // zoomRef (not zoom state) — reading zoom in a pointer handler avoids 60fps re-renders during wheel zoom.
     const { setInteraction, zoomRef, device } = useUI();
     const element = elements[elementId];
 
-    // SPRINT-E-FIX-7: corner-radius drag state.
-    // Same ref pattern as ArtboardResizeHandle — avoids closure over stale React state.
-    // NM-7: skipHistory:true at 60fps, pushHistory ONCE on pointerUp.
+    // corner-radius drag state. Same ref pattern as ArtboardResizeHandle — avoids closure over stale React state. skipHistory:true at 60fps, pushHistory ONCE on pointerUp
     const radiusDrag = useRef<{ startX: number; startRadius: number } | null>(null);
 
     if (!element) return null;
@@ -45,11 +39,7 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
 
         const domRect = parent.getBoundingClientRect();
 
-        // P2-B2 FIX: read left/top from the MERGED style (base + active breakpoint override).
-        // Previously read only from element.props.style (base). When a breakpoint override
-        // had repositioned the element, startRect.left/top were stale — w/n handles computed
-        // a wrong newRect.left/top on first pointer-move, causing a visible snap-jump before
-        // the drag settled. Now reads the visually accurate merged position.
+        // Read merged style (base + active breakpoint) so resize starts from the element's visual position, not its base position.
         const baseStyle = element.props.style || {};
         const bpOverride = device !== 'desktop'
             ? (element.props.breakpoints?.[device as 'mobile' | 'tablet'] || {})
@@ -75,7 +65,7 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
     // Increased size from w-2.5 (10px) to w-4 (16px) for better clickability
     const handleStyle = "absolute w-4 h-4 bg-white border-2 border-blue-600 rounded-full z-50 shadow-md hover:scale-125 transition-transform hover:bg-blue-50";
 
-    // SPRINT-E-FIX-7: only show radius handle for non-artboard, non-text nodes.
+    // only show radius handle for non-artboard, non-text nodes.
     // Text nodes rarely need border-radius and it clutters the editing experience.
     const isArtboard = element.type === 'canvas' || element.type === 'webpage';
     const isTextNode = ['text', 'heading', 'link'].includes(element.type);
@@ -98,7 +88,7 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
             Math.round(radiusDrag.current.startRadius + delta),
             999
         ));
-        // C-1/C-2: spread-clone at every level
+        // C-1/spread-clone at every level
         updateProject({
             ...elementsRef.current,
             [elementId]: {
@@ -108,14 +98,14 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
                     style: { ...element.props.style, borderRadius: `${newRadius}px` },
                 },
             },
-        }, { skipHistory: true }); // NM-7: no history during motion
+        }, { skipHistory: true }); // no history during motion
     };
 
     const onRadiusPointerUp = (e: React.PointerEvent) => {
         if (!radiusDrag.current) return;
         radiusDrag.current = null;
         e.currentTarget.releasePointerCapture(e.pointerId);
-        // NM-7: commit ONE history entry on release — reads live ref (H-4)
+        // commit ONE history entry on release — reads live ref (H-4)
         pushHistory(elementsRef.current);
     };
 
@@ -150,12 +140,7 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
                 </>
             )}
 
-            {/* SPRINT-E-FIX-7: Corner-radius drag handle
-                Positioned at top-right, offset outside the NE resize handle (+22px X).
-                Amber circle — visually distinct from blue resize handles.
-                Drag right → larger radius; drag left → smaller. Cursor: ew-resize.
-                Tooltip shows current value in px.
-                pointer-events-auto ensures capture despite parent overflow:hidden. */}
+            {/* Amber corner-radius handle at top-right. Drag left/right to adjust borderRadius. */}
             {showRadiusHandle && (
                 <div
                     title={`Border radius: ${parseFloat(String(element.props.style?.borderRadius ?? '0')) || 0}px — drag to adjust`}

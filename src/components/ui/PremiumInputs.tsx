@@ -40,7 +40,7 @@ export const NumberInput = ({ label, value, onChange, onDragStart, onDragEnd, mi
         startX.current = e.clientX;
         startVal.current = typeof value === 'number' ? value : parseInt(value) || 0;
         document.body.style.cursor = 'ew-resize';
-        // NM-7: notify parent that a drag-scrub is starting
+        // notify parent that a drag-scrub is starting
         onDragStart?.();
         window.addEventListener('mousemove', handleMouseMove);
         window.addEventListener('mouseup', handleMouseUp);
@@ -56,7 +56,7 @@ export const NumberInput = ({ label, value, onChange, onDragStart, onDragEnd, mi
         document.body.style.cursor = 'default';
         window.removeEventListener('mousemove', handleMouseMove);
         window.removeEventListener('mouseup', handleMouseUp);
-        // NM-7: notify parent that the drag-scrub is done — caller commits history
+        // notify parent that the drag-scrub is done — caller commits history
         onDragEnd?.();
     };
 

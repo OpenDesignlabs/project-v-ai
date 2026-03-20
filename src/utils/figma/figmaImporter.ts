@@ -1,39 +1,8 @@
-/**
- * ─── FIGMA IMPORTER ───────────────────────────────────────────────────────────
- * FIG-1 — Figma REST API → VectraNode tree transformer.
- *
- * WHAT THIS FILE DOES
- * ────────────────────
- * • Defines TypeScript types for the Figma v1 REST API response shapes.
- * • Transforms a Figma FRAME node subtree → { nodes: VectraProject, rootId }
- *   ready for importPage() or registerComponent().
- * • Provides helpers: fileKey extraction, color conversion, style mapping.
- *
- * WHAT THIS FILE DOES NOT DO
- * ───────────────────────────
- * • No fetch() calls — all network is in FigmaPanel.tsx via figmaProxy.ts.
- * • No side effects — pure transformation functions only.
- * • No React — plain TypeScript module.
- *
- * PERMANENT CONSTRAINTS
- * ─────────────────────
- * FIG-SAFE-1 [PERMANENT]:
- *   Every produced VectraNode MUST satisfy STI-SAFE-1:
- *   id (string), type (string), name (string), children ([]), props.style ({}).
- *   Final guard in figmaNodeToVectraNode() enforces this before nodeMap write.
- *
- * FIG-SAFE-2 [PERMANENT]:
- *   MAX_FIGMA_DEPTH = 8. Nodes beyond depth 8 collapse to text.
- *   Figma component trees can reach 30+ levels — this prevents stack overflow.
- *
- * FIG-SAFE-3 [PERMANENT]:
- *   Never mutate the raw Figma API response. All transforms produce new objects.
- *
- * FIG-COORD-1 [PERMANENT]:
- *   Figma uses absolute document coordinates (absoluteBoundingBox).
- *   Vectra uses coordinates relative to the parent frame.
- *   left = node.abs.x - parent.abs.x, top = node.abs.y - parent.abs.y.
- *   This runs at every level of recursion — raw abs coords are never used directly.
+﻿/**
+ * --- FIGMA IMPORTER ---------------------------------------------------------
+ * Converts a Figma node tree (from the Figma REST API) into Vectra canvas
+ * elements. Traverses FRAME, COMPONENT, TEXT, and RECTANGLE nodes and
+ * maps Figma layout properties (size, fill, typography) to Vectra props.
  */
 
 import type { VectraNode, VectraProject } from '../../types';
@@ -307,7 +276,7 @@ const figmaNodeToVectraNode = (
         return null;
     }
 
-    // FIG-SAFE-2: depth collapse
+    // depth collapse
     if (depth > MAX_FIGMA_DEPTH) {
         const text = node.characters?.trim();
         if (text) {
@@ -421,7 +390,7 @@ const figmaNodeToVectraNode = (
 
     // ── Recurse into children ─────────────────────────────────────────────────
     if (!hasImageFill && nodeType === 'container' && node.children) {
-        const childBox = box ?? parentBox; // FIG-COORD-1: this node's box becomes parent for children
+        const childBox = box ?? parentBox; // this node's box becomes parent for children
         const childIds: string[] = [];
         for (const child of node.children) {
             const childId = figmaNodeToVectraNode(child, childBox, depth + 1, ctx);
@@ -430,7 +399,7 @@ const figmaNodeToVectraNode = (
         vectraNode.children = childIds;
     }
 
-    // FIG-SAFE-1: final guard before writing to nodeMap
+    // final guard before writing to nodeMap
     if (!vectraNode.id || !vectraNode.type || !vectraNode.name) return null;
     if (!Array.isArray(vectraNode.children)) vectraNode.children = [];
     if (!vectraNode.props?.style || typeof vectraNode.props.style !== 'object') {

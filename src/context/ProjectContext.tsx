@@ -1,39 +1,5 @@
-/**
- * ─── PROJECT CONTEXT ──────────────────────────────────────────────────────────
- * Owns only the heavyweight document data: the element tree, history, pages,
- * and the Wasm history manager. Components subscribing to this context only
- * re-render when the project data actually changes — NOT when the user hovers
- * over an element or switches a sidebar panel.
- *
- * This is the "Model" in a loose MVC split with UIContext.
- *
- * PHASE 3 — Compiler & History optimisations
- * ───────────────────────────────────────────
- * • compilerRef:  Persistent SwcCompiler (Globals created once, reused per compile)
- * • updateProject(els, skipHistory): skip JSON.stringify during 60fps drag
- * • pushHistory:  exposed on context so Canvas calls it once on pointer-up
- *
- * PHASE 5 PART 1 — Async IndexedDB Persistence
- * ─────────────────────────────────────────────
- * Hybrid hydration: localStorage is read synchronously for an instant first
- * paint (zero flicker), then IndexedDB is checked async for any newer save.
- * State is silently upgraded if IDB data is found. All autosaves now write to
- * IndexedDB (off-thread) + localStorage (fast-read bootstrap cache) — no more
- * synchronous main-thread I/O stalls every autosave tick.
- *
- * PHASE 5 PART 2 — Retained-Mode LayoutEngine snapping
- * ──────────────────────────────────────────────────────
- * • layoutEngineRef: holds a Wasm LayoutEngine whose sibling-rect list is
- *   pushed ONCE per drag-start (syncLayoutEngine). At 60fps, handleInteraction-
- *   Move calls query_snapping with only 5 scalar args — no large JS→Wasm data
- *   transfer per frame. Lines up to ~10× faster than the old calculate_snapping
- *   free-function which serialized all siblings on every pointer-move.
- * • syncLayoutEngine(draggedId): exposed on context, called from RenderNode on
- *   pointer-down alongside setInteraction({type:'MOVE',...}).
- * • querySnapping(x,y,w,h,threshold): thin wrapper that calls the retained
- *   engine, exposed on context for the interaction engine in EditorContext.
- */
-
+/** Stores all project document data: element tree, pages, history, autosave, and Wasm engines.
+ * Components re-render only when project data changes (not on hover or panel switches). */
 import React, {
     createContext, useContext, useState, useEffect,
     useCallback, useRef, useMemo, type ReactNode,
@@ -57,15 +23,13 @@ import { generateLayoutThumbnail } from '../utils/generateThumbnail';
 const ACTIVE_PROJECT_ID_KEY = 'vectra_active_id';
 
 /** Generate a collision-resistant project UUID. */
-// NS-1 FIX: Date.now()+random is the primary IDB key for all project data.
-// Two projects created in the same ms (tests, batch-create) get the same key —
-// one silently overwrites the other's IDB entry. crypto.randomUUID() eliminates this.
+// Uses crypto.randomUUID() to avoid key collisions when two projects are created quickly.
 const generateProjectId = (): string => `proj_${crypto.randomUUID().replace(/-/g, '')}`;
 
 /** Per-project localStorage snap key (fast-boot cache). */
 const snapKey = (id: string) => `vectra_snap_${id}`;
 /** Per-project localStorage key for the SVG wireframe thumbnail.
- *  NM-THUMB: canonical key — mirrors snapKey, cleaned up together in purgeProjectData. */
+ * Mirrors snapKey() — both are cleaned up together when a project is deleted. */
 const thumbKey = (id: string) => `vectra_thumb_${id}`;
 
 export type { VectraProject, Page };
@@ -84,8 +48,7 @@ export interface GlobalTheme {
     font: string;
 }
 
-// ─── DB-1: DataSource type extended ──────────────────────────────────────────
-// All new fields optional — backward compat with existing { id, name, url, method, data }.
+// Represents an external data source (REST, Supabase, PlanetScale) bound to canvas elements.
 export type DataSourceKind = 'rest' | 'supabase' | 'planetscale';
 export interface DataSource {
     id: string;
@@ -110,10 +73,7 @@ export interface DataSource {
     psPassword?: string;
     /** PlanetScale database name. */
     psDatabase?: string;
-    /**
-     * Maps DataSource field → .env.local variable name.
-     * DS-ENV-1 [PERMANENT]: secret values travel through this map into .env.local.
-     */
+    /** Maps DataSource field names to their .env.local variable names for codegen. */
     envVarMap?: Record<string, string>;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     data: any;
@@ -149,7 +109,7 @@ interface ProjectContextType {
     /** Item 4 — Move a node to targetIndex inside targetParent.children. One history entry on drop. */
     reorderElement: (nodeId: string, targetParentId: string, targetIndex: number) => void;
     instantiateTemplate: (rootId: string, nodes: VectraProject) => { newNodes: VectraProject; rootId: string };
-    /** H-1: O(1) child→parent lookup map. Replaces per-render O(N) Object.keys scan. */
+    /** O(1) child→parent lookup map. Replaces per-render O(N) Object.keys scan. */
     parentMap: Map<string, string>;
 
     // ── Pages ─────────────────────────────────────────────────────────────────
@@ -161,7 +121,7 @@ interface ProjectContextType {
     deletePage: (id: string) => void;
     switchPage: (pageId: string) => void;
     /**
-     * STI-PAGE-1 [PERMANENT]: Atomic page import.
+     * STI-PAGE-1: Atomic page import.
      * Merges `nodes` into elements, registers the page, sets it active.
      * Does NOT create an orphan canvas node — rootId IS the canvas.
      */
@@ -225,7 +185,7 @@ interface ProjectContextType {
     /** Create a new artboard from a device preset, placed to the right of all existing frames. */
     addFrame: (preset: import('../data/framePresets').FramePreset) => void;
 
-    // ── Phase 6: Rust SWC compiler (exposed for ContainerPreview) ────────────
+    // ── Rust SWC compiler (exposed for ContainerPreview) ────────────
     /**
      * Compile TSX/JSX → browser-ready CJS JS using the persistent Rust SWC engine.
      * Handles TypeScript stripping, JSX → React.createElement, and ESM→CJS shim.
@@ -288,44 +248,29 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const [pages, setPages] = useState<Page[]>([{ id: 'page-home', name: 'Home', slug: '/', rootId: 'page-home' }]);
     const [activePageId, setActivePageId] = useState('page-home');
-    // S-4 / H-2 FIX: stable ref mirroring activePageId so syncLayoutEngine ([] deps)
+    // stable ref mirroring activePageId so syncLayoutEngine ([] deps)
     // can read the current page without having activePageId in its dep array.
     const activePageIdRef = useRef(activePageId);
     useEffect(() => { activePageIdRef.current = activePageId; }, [activePageId]);
 
     // ── Wasm refs ─────────────────────────────────────────────────────────────
-    // Phase 9: HistoryManager moved into history.worker.ts — it now runs entirely
+    // HistoryManager moved into history.worker.ts — it now runs entirely
     // off the main thread. The worker holds its own Wasm instance + compressed stack.
     const historyWorkerRef = useRef<Worker | null>(null);
-    // Phase 10: SWC compiler moved into swc.worker.ts — compilation never blocks
-    // the 60fps main thread. Falls back to compilerRef (synchronous) if the worker
-    // hasn't booted yet.
+    // SWC compiler moved into swc.worker.ts — compilation never blocks the 60fps main thread. Falls back to compilerRef (synchronous) if the worker hasn't booted yet
     const swcWorkerRef = useRef<Worker | null>(null);
     const pendingCompilesRef = useRef<Map<string, (result: string) => void>>(new Map());
     // Keep a live ref to elements so the worker's READY handler uses the
     // most-recent state (including any IDB-hydrated upgrade).
     const elementsRef = useRef<VectraProject>(elements);
-    // Phase 3: Persistent SWC compiler — Globals created once, reused every compile()
+    // Persistent SWC compiler — Globals created once, reused every compile()
     const compilerRef = useRef<any>(null);
-    // Phase 5: Retained-mode snapping engine — sibling rects pushed once per drag
+    // Retained-mode snapping engine — sibling rects pushed once per drag
     const layoutEngineRef = useRef<any>(null);
-    // Phase 11: Defensive flag — tells any future auto-sync effect to skip the
-    // O(N) grid rebuild during drag. Set to false by updateProject({skipLayout:true})
-    // and automatically reset to true after each effect run.
+    // Defensive flag — tells any future auto-sync effect to skip the O(N) grid rebuild during drag. Set to false by updateProject({skipLayout:true}) and automatically reset to true after each effect run
     const shouldSyncLayoutRef = useRef<boolean>(true);
 
-    // H-1 FIX: O(1) child→parent reverse-lookup map.
-    //
-    // PERF-2 FIX [PERMANENT]: Gate rebuild to structural changes only.
-    //
-    // PROBLEM: useMemo([elements]) rebuilt the map on EVERY updateProject call,
-    // including 60fps drag/resize where only style.left/top changes. On a 200-node
-    // canvas this ran a full O(N) loop ~60×/sec with an identical output each time.
-    //
-    // SOLUTION: Derive a `structuralKey` that encodes only id+type+children[].
-    // Style props, className, content, and all other fields are intentionally excluded.
-    // The map is only rebuilt when the key actually changes — i.e. when nodes are
-    // added, deleted, moved, or reparented. Style-only updates skip the rebuild.
+    // Fingerprint of the tree topology (ids+types+children). Rebuilds parentMap only when nodes are added/removed, not on style edits.
     const structuralKey = useMemo(() => {
         const nodeIds = Object.keys(elements).sort();
         return nodeIds.map(id => {
@@ -344,10 +289,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
         return map;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [structuralKey]); // PERF-2: rebuild only on topology change, not style updates
+    }, [structuralKey]); // rebuild only on topology change, not style updates
 
-    // NM-4 FIX: stable ref that always mirrors the latest parentMap so reorderElement
-    // (and other callbacks) can do O(1) parent lookups without adding parentMap to deps.
+    // Stable ref to parentMap — lets callbacks do O(1) parent lookups without listing parentMap in deps.
     const parentMapRef = useRef(parentMap);
     useEffect(() => { parentMapRef.current = parentMap; }, [parentMap]);
 
@@ -374,7 +318,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         localStorage.setItem(FRAMEWORK_KEY, framework);
     }, [framework]);
 
-    // ── Phase H: Multi-project state ─────────────────────────────────────────
+    // ── Multi-project state ─────────────────────────────────────────
     const [projectId, setProjectId] = useState<string>(() =>
         localStorage.getItem(ACTIVE_PROJECT_ID_KEY) || ''
     );
@@ -408,21 +352,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setApiRoutes(prev => prev.filter(r => r.id !== id));
     }, []);
 
-    // Keep elementsRef in sync so worker READY handler gets the latest state
-    // (covers the race where IDB hydration fires before the worker finishes booting).
+    // Keeps elementsRef current so the history worker READY handler always sees the latest state.
     useEffect(() => { elementsRef.current = elements; }, [elements]);
 
-    // ── Phase H: Multi-project boot sequence ─────────────────────────────────
-    //
-    // Step 1: Run one-shot migration for users upgrading from pre-Phase H.
-    //         Idempotent — no-op if already migrated or fresh install.
-    // Step 2: Load the project index so the Dashboard renders the real list.
-    // Step 3: Determine which project to open:
-    //           a) localStorage['vectra_active_id'] — last open project
-    //           b) First project in index (fallback)
-    //           c) Nothing saved → INITIAL_DATA (fresh install)
-    // Step 4: Read the project's localStorage snap for instant paint, then
-    //         upgrade from IDB if IDB is newer.
+    // On mount: migrate legacy data, load project index, then hydrate state from localStorage snap + IndexedDB.
     useEffect(() => {
         const boot = async () => {
             try {
@@ -489,10 +422,10 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 wasmModule = wasm; // eslint-disable-line
                 (window as any).vectraWasm = wasm; // expose to Header + CodeRenderer
 
-                // Phase 3: Persistent SWC Globals (interner created once)
+                // Persistent SWC Globals (interner created once)
                 compilerRef.current = new wasm.SwcCompiler();
 
-                // Phase 5: Retained-mode LayoutEngine
+                // Retained-mode LayoutEngine
                 layoutEngineRef.current = new wasm.LayoutEngine();
 
                 console.log('[Vectra] Rust engine ready — SwcCompiler + LayoutEngine cached');
@@ -502,10 +435,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         })();
     }, []);
 
-    // ── History Worker init ────────────────────────────────────────────────────
-    // Spins up history.worker.ts which owns its own Wasm instance + HistoryManager.
-    // READY → send INIT with current elements (elementsRef is up-to-date).
-    // UNDO_RESULT / REDO_RESULT → parse decompressed JSON → setElements.
+    // Starts history.worker.ts (Wasm HistoryManager). Sends INIT on READY; applies UNDO/REDO_RESULT to elements state.
     useEffect(() => {
         let worker: Worker;
         try {
@@ -523,10 +453,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 } else if (type === 'UNDO_RESULT' || type === 'REDO_RESULT') {
                     try {
                         setElements(JSON.parse(payload!));
-                        // S-3 FIX: update historyIndex when worker handles undo/redo.
-                        // Previously historyIndex stayed frozen at 0 for the entire worker
-                        // session. On worker crash the JS fallback started pushHistory at
-                        // slot 0, silently overwriting all session history.
+                        // Keep historyIndex in sync so the JS fallback starts at the correct slot if the worker crashes.
                         if (typeof index === 'number') setHistoryIndex(index);
                     }
                     catch (err) { console.error('[ProjectContext] History restore failed:', err); }
@@ -544,9 +471,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── SWC Worker init (Phase 10) ──────────────────────────────────────────────
-    // Mirrors the history worker boot pattern. The worker owns its Wasm instance,
-    // compiles TSX→JS off the main thread, and applies the ESM→CJS shim internally.
+    // Starts swc.worker.ts (Rust SWC compiler). Resolves compile promises via a pending-id map.
     useEffect(() => {
         let worker: Worker;
         try {
@@ -577,11 +502,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Phase H: Async autosave (per-project, non-blocking) ──────────────────
-    // Writes to BOTH storages:
-    //   • IndexedDB — primary store, async, off-thread, no jank
-    //   • localStorage — per-project snap cache for instant boot on next open
-    // Also updates lastEditedAt + pageCount in the project index.
+    // Debounced autosave (1s): writes to IndexedDB (primary) and localStorage snap (fast-boot cache).
     useEffect(() => {
         // Skip autosave before a project ID is assigned (fresh install before
         // first createNewProject call)
@@ -600,9 +521,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             // IDB: primary async save
             saveProjectDataToDB2(projectId, payload)
                 .then(() => {
-                    // M-3 FIX: JSON.stringify runs AFTER the async IDB write resolves,
-                    // never on the critical path. Previously this was synchronous and
-                    // blocked the main thread for 3-8ms per autosave tick on large projects.
+                    // Write localStorage snap after IDB resolves — never blocks the main thread.
                     try {
                         localStorage.setItem(snapKey(projectId), JSON.stringify(payload));
                     } catch { /* quota exceeded — IDB is the real store */ }
@@ -624,10 +543,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return () => clearTimeout(timer);
     }, [elements, pages, apiRoutes, theme, framework, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // H-3 FIX: pushHistory stale-closure on historyIndex removed.
-    // The JS-fallback path now uses functional set-state so each call reads
-    // the CURRENT index rather than the one captured at callback creation time.
-    // This prevents rapid consecutive pushes from collapsing into a single slot.
+    // Stable ref to historyIndex — lets the JS-fallback pushHistory read the current index without a stale closure.
     const historyIndexRef = useRef(historyIndex);
     useEffect(() => { historyIndexRef.current = historyIndex; }, [historyIndex]);
 
@@ -644,10 +560,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── updateProject ─────────────────────────────────────────────────────────
-    // Phase 11: accepts both the old boolean form (backward-compat) and the new
-    // options-object form.  `skipLayout: true` flips the shouldSyncLayoutRef flag
-    // so any future auto-sync effect skips the O(N) grid rebuild during drag.
+    // Updates the element tree. Pass skipHistory:true for 60fps drag updates; skipLayout:true to skip LayoutEngine rebuild.
     const updateProject = useCallback((
         newElements: VectraProject,
         options: boolean | { skipHistory?: boolean; skipLayout?: boolean } = false,
@@ -663,10 +576,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (!skipHistory) pushHistory(newElements);
     }, [pushHistory]);
 
-    // H-1 FIX: historyIndex in dep array → new function on every state change.
-    // Rapid Cmd+Z (held key) queued multiple calls but all read the same stale
-    // historyIndex from the render snapshot — undo held at the same slot.
-    // setHistoryIndex(prev => ...) reads the COMMITTED index, not the captured one.
+    // Sends UNDO to the history worker; falls back to the JS history stack when the worker is unavailable.
     const undo = useCallback(() => {
         if (historyWorkerRef.current) {
             // Result arrives asynchronously via onmessage → UNDO_RESULT → setElements
@@ -694,25 +604,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, [historyStack]); // historyIndex removed — read via functional updater
 
-    // ── Phase 5 + 11: Retained-Mode LayoutEngine ──────────────────────────────
-
-    /**
-     * Call ONCE on drag-start (pointer-down).
-     * Phase 11 change: reads from `elementsRef` (not the closed-over `elements`
-     * state) so this callback's memoized identity is []-stable. Previously it
-     * was `useCallback([elements])` which caused `handleInteractionMove` to
-     * re-create on every keystroke/edit — even during an unrelated hover.
-     */
+    // Called once on drag-start: loads all active-page sibling rects into the Wasm LayoutEngine for fast 60fps snapping.
     const syncLayoutEngine = useCallback((draggedId: string) => {
         if (!layoutEngineRef.current) return;
         const els = elementsRef.current; // stable ref — no closure on elements state
 
-        // H-2 FIX: filter to only active-page descendants.
-        // Previously ALL absolutely-positioned elements across ALL pages were loaded
-        // into the WASM engine during every drag — phantom guide lines from off-page
-        // elements appeared at seemingly random coordinates on multi-page projects.
-        // activePageIdRef (stable ref, [] dep safe) gives us the current page without
-        // adding activePageId to this callback's dep array.
+        // Filter to active-page elements only — prevents phantom snap guides from other pages.
         const currentPageId = activePageIdRef.current;
         const pageDescendants = new Set<string>();
         const walkPage = (id: string) => {
@@ -725,7 +622,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         const siblings = Object.values(els)
             .filter(el =>
                 el.id !== draggedId &&
-                pageDescendants.has(el.id) &&      // H-2: active-page only
+                pageDescendants.has(el.id) &&      // active-page only
                 el.props?.style?.position === 'absolute'
             )
             .map(el => ({
@@ -743,10 +640,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, []); // [] — reads elements + activePageId via refs, stable identity
 
-    /**
-     * Fast 60fps snap query — only 5 scalar args cross the Wasm boundary.
-     * Returns null if the engine is unavailable (graceful degrade to no-snap).
-     */
+    // Queries the Wasm LayoutEngine for snap guides at the current drag position. Returns null if not available.
     const querySnapping = useCallback((
         x: number, y: number, w: number, h: number, threshold = 5
     ): SnapResult | null => {
@@ -759,7 +653,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, []);
 
-    // ── deleteElement ─────────────────────────────────────────────────────────
+    // Deletes an element and all its children from the tree; protected nodes (page roots) are refused.
     const deleteElement = useCallback((id: string) => {
         if (!canDeleteNode(id)) {
             console.warn(`⚠️ Cannot delete protected node: ${id}`);
@@ -772,12 +666,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
     }, [pushHistory]);
 
-    // NH-2 FIX: two bugs fixed:
-    //  1. elements in dep array → new fn reference after every state change (60fps drag)
-    //     → App.tsx re-registers Cmd+D keydown on every drag frame.
-    //     Fix: read via elementsRef.current (H-4 pattern) — no closure on elements state.
-    //  2. setElements(next) + setTimeout(pushHistory) lost the async race when React
-    //     batched. Fix: move everything inside a functional setElements updater.
+    // Deep-clones an element subtree with new IDs and places the copy just below the original in its parent.
     const duplicateElement = useCallback((id: string): string | null => {
         if (!canDeleteNode(id)) return null;
         // Read current elements from the live ref — never stale, no dep needed.
@@ -806,9 +695,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
         setElements(prev => {
             const next: VectraProject = { ...prev, ...newNodes };
-            // Insert immediately after the source in its parent's children.
-            // O(N) scan here is acceptable — runs only on actual duplicate action,
-            // not on every render frame. Full O(1) requires parentMapRef (future refactor).
+            // Insert the clone immediately after the source in its parent's children array.
             for (const key in next) {
                 const node = next[key];
                 if (node.children?.includes(id)) {
@@ -826,9 +713,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return newRootId;
     }, [pushHistory]); // elements removed — reads via elementsRef.current
 
-    // ── Item 4: reorderElement ────────────────────────────────────────────────
-    // Moves a node to a new index in the same or a different parent's children.
-    // Safe with protected nodes — canDeleteNode guards the move (can't move root).
+    // Moves a node to a new position within the same or a different parent. Canvas layer panel calls this on drag-drop.
     const reorderElement = useCallback((
         nodeId: string,
         targetParentId: string,
@@ -836,7 +721,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     ): void => {
         if (!canDeleteNode(nodeId)) return;
         setElements(prev => {
-            // NM-4 FIX: O(1) lookup via parentMapRef instead of O(N) Object.keys().find().
+            // O(1) lookup via parentMapRef instead of O(N) Object.keys().find().
             // parentMapRef.current is always the latest map — safe to read inside any updater.
             const currentParentId = parentMapRef.current.get(nodeId) ?? null;
             if (!currentParentId) return prev;
@@ -863,20 +748,13 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         });
     }, [pushHistory]);
 
-    // ── Page ops ──────────────────────────────────────────────────────────────
-    // NM-2 FIX: three bugs fixed:
-    //  1. Plain arrow fn → now useCallback([], []) for stable identity.
-    //  2. Closed-over `elements` was stale on rapid async edits → setElements functional updater.
-    //  3. `newElements['application-root'].children = [...]` mutated live state (C-1 class) →
-    //     clone the appRoot node immutably before writing.
+    // Creates a new blank page with a unique slug and navigates to it.
     const addPage = useCallback((name: string, slug?: string) => {
         // Use crypto.randomUUID for collision-free IDs (NS-1/M-5 standard)
         const pageId = `page-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
         const canvasId = `canvas-${crypto.randomUUID().replace(/-/g, '').slice(0, 8)}`;
 
-        // NS-4 FIX: enforce slug uniqueness at creation time.
-        // deduplicatePageSlugs() only runs at export — two pages named "About"
-        // would collide at /about for the entire editing session without this guard.
+        // Ensure the slug is unique — append a counter if a page with the same slug already exists.
         const baseSlug = slug || `/${name.toLowerCase().replace(/\s+/g, '-')}`;
         const existingSlugs = new Set(pages.map(p => p.slug));
         let pageSlug = baseSlug;
@@ -894,12 +772,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                     props: { className: 'w-full h-full relative', style: { width: '100%', height: '100%' } },
                 },
                 [canvasId]: {
-                    // S-3: pixel width so parseFloat never returns NaN in code-gen / zoom-to-fit
+                    // pixel width so parseFloat never returns NaN in code-gen / zoom-to-fit
                     id: canvasId, type: 'webpage', name, children: [],
                     props: { layoutMode: 'canvas', style: { width: '1440px', minHeight: '100vh', backgroundColor: '#ffffff' } },
                 },
                 ...(appRoot ? {
-                    // NM-2 FIX: clone appRoot — do NOT write into the shared live-state reference
+                    // clone appRoot — do NOT write into the shared live-state reference
                     'application-root': { ...appRoot, children: [...(appRoot.children || []), pageId] },
                 } : {}),
             };
@@ -908,24 +786,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setActivePageId(pageId);
     }, [pages]); // pages needed for slug uniqueness check
 
-    // ── STI-PAGE-1: Atomic import of a pre-parsed page ────────────────────────
-    // Unlike addPage(), this does NOT create an empty canvas node.
-    // Caller has already built the full node tree; rootId is the canvas.
-    //
-    // BUG-FIX PC-1: switched from 4 positional args to a single object arg.
-    // StitchPanel v2 and FigmaPanel v2 both call importPage({ pageName, slug, nodes, rootId }).
-    // The old positional signature caused `name` to receive the whole object literal,
-    // making name.startsWith() throw TypeError → white screen crash.
-    //
-    // PC-SAFE-1: all string inputs are guarded against non-string values from
-    // corrupt VFS/localStorage hydration or stale Figma API parse results.
+    // Inserts a pre-built node tree as a new page (used by Stitch and Figma import). Does not create an empty canvas.
     const importPage = useCallback(({ pageName, slug, nodes, rootId }: {
         pageName: string;
         slug: string;
         nodes: VectraProject;
         rootId: string;
     }) => {
-        // PC-SAFE-1: sanitize strings — VFS hydration can produce undefined
+        // sanitize strings — VFS hydration can produce undefined
         const safeName = typeof pageName === 'string' && pageName.trim() ? pageName.trim() : 'Imported Page';
         const safeSlug = typeof slug === 'string' && slug.trim() ? slug.trim() : '/imported';
 
@@ -962,8 +830,8 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 name: safeName,
                 slug: finalSlug,
                 rootId: pageId,
-                // FIG-FUTURE-1: hide component-mode Figma staging pages from the Pages panel.
-                // PC-SAFE-1: typeof guard prevents crash if safeName is somehow non-string.
+                // hide component-mode Figma staging pages from the Pages panel.
+                // typeof guard prevents crash if safeName is somehow non-string.
                 ...(typeof safeName === 'string' && safeName.startsWith('__figma_comp__') ? { hidden: true } : {}),
             }];
         });
@@ -974,11 +842,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         console.log(`[Vectra] STI-1: Imported page "${safeName}" → ${pageId} (${Object.keys(nodes).length} nodes)`);
     }, []); // no deps — only stable setState setters used inside
 
-    // ── FIG-1: Async image-fill patch listener ────────────────────────────────
-    // FigmaPanel dispatches 'vectra:figma-image-patch' after the Figma Images API
-    // resolves CDN URLs for nodes that had IMAGE fills at import time.
-    // We merge only the patched nodes — never blow away the entire tree.
-    // skipHistory intentionally: image-fill resolution is not user-undoable.
+    // Listens for 'vectra:figma-image-patch' events and merges resolved image-fill URLs into the tree.
     useEffect(() => {
         const handleImagePatch = (e: Event) => {
             const { nodes: patchedNodes } = (e as CustomEvent<{ nodes: VectraProject }>).detail;
@@ -989,21 +853,15 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return () => window.removeEventListener('vectra:figma-image-patch', handleImagePatch);
     }, []); // setElements is stable — empty deps is correct
 
-    // ── MCP-1 / MCP-WRITE-1: Stable refs for MCP command handler ──────────────
-    // The mcp-command listener uses [] deps (event bridge pattern). These refs
-    // mirror the latest versions of callbacks that may have identity changes
-    // (addPage depends on `pages`, deleteElement depends on `pushHistory`, etc).
+    // Stable refs to callbacks that may change identity — used inside the [] MCP event listener.
     const addPageRef = useRef(addPage);
     useEffect(() => { addPageRef.current = addPage; }, [addPage]);
     const deleteElementRef = useRef(deleteElement);
     useEffect(() => { deleteElementRef.current = deleteElement; }, [deleteElement]);
-    // runAIRef initialized as null — populated by a sync effect after `runAI` useCallback (line ~1420).
-    // This avoids the forward-reference TS error (runAI is defined later in the file).
+    // Populated after runAI is defined below to avoid a forward-reference error.
     const runAIRef = useRef<((prompt: string) => Promise<string | undefined>) | null>(null);
 
-    // ── MCP-1 / MCP-WRITE-1: vectra:mcp-command event listener ───────────────
-    // MCPPanel dispatches this after receiving a __vectra_mutation__ from the SSE
-    // stream. We apply the mutation to React state here — never write to VFS directly.
+    // Applies MCP canvas mutations (ADD_ELEMENT, UPDATE_ELEMENT, DELETE_ELEMENT, ADD_PAGE, RUN_AI, UPDATE_THEME) dispatched by MCPPanel.
     useEffect(() => {
         const handleMcpCommand = (e: Event) => {
             const mutation = (e as CustomEvent).detail as Record<string, unknown>;
@@ -1113,9 +971,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         return () => window.removeEventListener('vectra:mcp-command', handleMcpCommand);
     }, []); // setElements, setTheme, setActivePageId are stable React setters
 
-    // M-1 + S-7 FIX: use functional setElements to avoid stale closure on elements;
-    // clone the appRoot node properly; and compute the fallback page from the list
-    // BEFORE it is filtered (pages state hasn't flushed yet).
+    // Removes a page and its root node from the tree; navigates to the first remaining page.
     const deletePage = useCallback((id: string) => {
         if (pages.length <= 1 || id === 'page-home') return;
         // Compute fallback NOW while pages is still the un-filtered array
@@ -1136,16 +992,12 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (activePageId === id) {
             setActivePageId(remaining[0]?.id || 'page-home');
         }
-        // M-4 FIX: notify UIContext to evict this page's viewport cache entry.
-        // Without this the pageViewportCache Map grows unboundedly on AI-driven
-        // page churn (each deleted page's ~128-byte entry was never reclaimed).
+        // Tell UIContext to evict this page's viewport cache entry.
         window.dispatchEvent(new CustomEvent('vectra:page-deleted', { detail: { pageId: id } }));
     }, [pages, activePageId]);
 
+    // Switches the active page and fires 'vectra:page-switching' so Canvas can save/restore viewport state.
     const switchPage = useCallback((pageId: string) => {
-        // Dispatch BEFORE the state update so listeners receive the old activePageId
-        // as `from` and the new pageId as `to` in the same synchronous tick.
-        // Canvas.tsx listens for this event to save/restore viewport state.
         window.dispatchEvent(
             new CustomEvent('vectra:page-switching', {
                 detail: { from: activePageId, to: pageId },
@@ -1154,7 +1006,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         setActivePageId(pageId);
     }, [activePageId]);
 
-    // ── Phase H: Project lifecycle ────────────────────────────────────────────
+    // ── Project lifecycle ────────────────────────────────────────────
     const createNewProject = useCallback((templateId: string) => {
         const resolvedFramework: Framework =
             templateId === 'vite-react' ? 'vite' : 'nextjs';
@@ -1208,9 +1060,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
     const exitProject = useCallback(() => {
         if (confirm('Exit to dashboard? Your project is auto-saved.')) {
-            // NM-THUMB: Generate + store wireframe thumbnail before leaving.
-            // Done here so the thumbnail always reflects the final saved state.
-            // elementsRef.current has the latest elements without stale closure issues.
+            // Generate + store wireframe thumbnail before leaving. Done here so the thumbnail always reflects the final saved state. elementsRef.current has the latest elements without stale closure issues
             try {
                 if (projectId) {
                     const svg = generateLayoutThumbnail(elementsRef.current, pages);
@@ -1221,7 +1071,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, [projectId, pages, elementsRef]);
 
-    // ── Phase H: Open existing project ───────────────────────────────────────
+    // ── Open existing project ───────────────────────────────────────
     const loadProject = useCallback(async (meta: ProjectMeta) => {
         try {
             // Try localStorage snap first (instant)
@@ -1266,7 +1116,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-    // ── Phase H: Rename project ────────────────────────────────────────────────
+    // ── Rename project ────────────────────────────────────────────────
     const renameProject = useCallback(async (id: string, name: string) => {
         setProjectIndex(prev => {
             const updated = prev.map(m => m.id === id ? { ...m, name } : m);
@@ -1276,7 +1126,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         if (id === projectId) setProjectName(name);
     }, [projectId]);
 
-    // ── Phase H: Duplicate project ────────────────────────────────────────────
+    // ── Duplicate project ────────────────────────────────────────────
     const duplicateProject = useCallback(async (meta: ProjectMeta) => {
         try {
             const sourceData = await loadProjectDataFromDB2(meta.id);
@@ -1309,19 +1159,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }
     }, []);
 
-    // ── Sprint 2: Soft-delete — 3-stage pattern ──────────────────────────────
-    //
-    // Stage 1 — removeProjectFromIndex():
-    //   Removes meta from index. Project disappears from Dashboard immediately.
-    //   IDB data is NOT touched. Combined with a 5s countdown toast in Dashboard.
-    //
-    // Stage 2 — restoreProjectToIndex() [undo path]:
-    //   Re-inserts meta into the index. The IDB data was never deleted so the
-    //   project loads cleanly. Called by Dashboard if user clicks Undo.
-    //
-    // Stage 3 — purgeProjectData() [expiry path]:
-    //   Permanently deletes IDB data + localStorage snap.
-    //   Called by Dashboard after the 5-second window closes.
+    // ── Sprint 2: Soft-delete — 3-stage pattern ────────────────────────────── Stage 1 — removeProjectFromIndex(): Removes meta from index. Project disappears from Dashboard immediately
 
     /** Stage 1: remove from visible index. Does NOT delete IDB data. */
     const removeProjectFromIndex = useCallback(async (id: string) => {
@@ -1346,7 +1184,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     const purgeProjectData = useCallback(async (id: string) => {
         await deleteProjectDataFromDB2(id).catch(() => { });
         localStorage.removeItem(snapKey(id));
-        localStorage.removeItem(thumbKey(id));   // NM-THUMB: clean up wireframe alongside snap
+        localStorage.removeItem(thumbKey(id));   // clean up wireframe alongside snap
         console.log('[Vectra] Project permanently purged:', id);
     }, []);
 
@@ -1360,21 +1198,9 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         await purgeProjectData(id);
     }, [removeProjectFromIndex, purgeProjectData]);
 
-    // ── AI ────────────────────────────────────────────────────────────────────────
-    //
-    // Item 3 fixes:
-    //   1. useCallback — stable identity, not recreated every render.
-    //   2. pushHistory() called after every successful mutation so AI
-    //      generations appear in the undo stack (Cmd+Z works on AI output).
-    //   3. Reads elementsRef for the merge result so we capture the actual
-    //      new state and push it to history, not the stale closure value.
-    //
-    // The three-tier AI logic (generateWithAI → mergeAIContent → fallback)
-    // is completely unchanged in behaviour.
+    // ── AI ──────────────────────────────────────────────────────────────────────── Item 3 fixes: 1. useCallback — stable identity, not recreated every render
     const runAI = useCallback(async (prompt: string): Promise<string | undefined> => {
-        // PERF-3 [PERMANENT]: Signal useFileSync that AI generation is active.
-        // useFileSync reads window.__vectra_ai_running to clamp debounce at 1000ms
-        // and suppress mid-generation VFS writes. Cleared in finally block.
+        // Signal useFileSync that AI generation is active. useFileSync reads window.__vectra_ai_running to clamp debounce at 1000ms and suppress mid-generation VFS writes. Cleared in finally block
         (window as any).__vectra_ai_running = true;
         try {
             console.log('🎨 AI Agent processing:', prompt);
@@ -1387,11 +1213,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             const currentPage = currentPages.find(p => p.id === currentPageId);
             if (!currentPage) return 'No active page';
 
-            // MOBILE-ARCH-1 [PERMANENT]: target ONLY the 'webpage' (desktop) artboard.
-            // The 'canvas' type was the old mobile mirror node — it is now a derived
-            // read-only view rendered by RenderNode and has no data-model entry.
-            // Belt-and-suspenders for legacy projects loaded from IDB that may still
-            // carry a 'canvas' frame-mobile node: we explicitly exclude it here.
+            // target ONLY the 'webpage' (desktop) artboard. The 'canvas' type was the old mobile mirror node — it is now a derived read-only view rendered by RenderNode and has no data-model entry
             const pageNode = currentElements[currentPage.rootId];
             const canvasNodeId =
                 pageNode?.children?.find(
@@ -1415,7 +1237,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             if (result.action === 'create' && result.elements && result.rootId) {
                 const isFullPage = /page|website|portfolio|landing|blog|store|dashboard/i.test(prompt);
 
-                // SPRINT-B-FIX-5: Compute merged directly from elementsRef.current (H-4 pattern).
+                // Compute merged directly from elementsRef.current (H-4 pattern).
                 // elementsRef.current is always the latest committed state — same guarantee
                 // as all 60fps event handlers. This replaces the functional setElements +
                 // setTimeout(pushHistory) pattern which had two risks:
@@ -1445,7 +1267,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             }
 
             if (result.action === 'update' && result.elements) {
-                // SPRINT-B-FIX-5: Same pattern as create path — read from ref, push synchronously.
+                // Same pattern as create path — read from ref, push synchronously.
                 // The update path had a worse form of the bug: setTimeout was INSIDE the
                 // functional updater, which StrictMode invokes twice → two history pushes.
                 const updated = { ...elementsRef.current, ...result.elements };
@@ -1459,7 +1281,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             console.error('❌ AI Error:', e);
             return 'Something went wrong.';
         } finally {
-            // PERF-3 [PERMANENT]: Always clear the flag so useFileSync resumes normal
+            // Always clear the flag so useFileSync resumes normal
             // debounce. The finally block guarantees this even if runAI throws.
             (window as any).__vectra_ai_running = false;
         }
@@ -1467,9 +1289,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Note: elements intentionally omitted from deps — read via elementsRef
     // to prevent runAI from being recreated on every element change (60fps).
 
-    // MCP-WRITE-1: populate runAIRef now that runAI is defined.
-    // runAIRef was initialized as null earlier (before runAI's useCallback)
-    // to avoid a forward-reference TS error.
+    // populate runAIRef now that runAI is defined. runAIRef was initialized as null earlier (before runAI's useCallback) to avoid a forward-reference TS error
     useEffect(() => { runAIRef.current = runAI; }, [runAI]);
 
     // CF-1 — addFrame ─────────────────────────────────────────────────────────────
@@ -1477,13 +1297,11 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // and empty children[]. RenderNode renders the SOURCE frame's children
     // with width-aware CSS stacking via buildDeviceCSS().
     //
-    // MIRROR-FRAME-1 [PERMANENT]:
-    //   spawned frames NEVER own children. element.children stays [].
+    // //   spawned frames NEVER own children. element.children stays [].
     //   runAI canvasNodeId search MUST skip nodes with props.mirrorOf.
     //   ArtboardResizeHandle MUST be suppressed for mirror frames.
     //
-    // FRAME-PLACEMENT-1 [PERMANENT]:
-    //   left = rightmost existing frame right-edge + 120px.
+    // //   left = rightmost existing frame right-edge + 120px.
     const addFrame = useCallback((preset: import('../data/framePresets').FramePreset) => {
         const GAP = 120;
         const TOP = 100;
@@ -1492,12 +1310,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         let sourceFrameId = '';
         let rightEdge = 100;
 
-        // AUTO_MIRROR constants — must match RenderNode.tsx exactly.
-        // The auto-mobile-mirror div is rendered by RenderNode beside every
-        // source frame (mirrorOf === undefined). It is DOM-only — NOT a node
-        // in elementsRef. We must add its footprint manually so spawned frames
-        // don't land on top of it.
-        // MIRROR-POSITION-2 [PERMANENT]: mirror left = desktopWidth + 80px (GAP).
+        // AUTO_MIRROR constants — must match RenderNode.tsx exactly. The auto-mobile-mirror div is rendered by RenderNode beside every source frame (mirrorOf === undefined). It is DOM-only — NOT a node
         const AUTO_MIRROR_GAP = 80;   // matches RenderNode: const GAP = 80
         const AUTO_MIRROR_W = 390;  // matches RenderNode: const MIRROR_W = 390
 
@@ -1515,10 +1328,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 const w = parseFloat(String(el.props?.style?.width ?? 0)) || 0;
                 let frameRight = l + w;
 
-                // FRAME-PLACEMENT-1 FIX: if this is a source frame (no mirrorOf),
-                // RenderNode renders an auto-mobile-mirror div to its right.
-                // That div is invisible to elementsRef — extend frameRight manually
-                // to clear it so the new frame spawns after it.
+                // if this is a source frame (no mirrorOf), RenderNode renders an auto-mobile-mirror div to its right. That div is invisible to elementsRef — extend frameRight manually
                 if ((el.type === 'webpage' || el.type === 'canvas') && !el.props?.mirrorOf) {
                     frameRight = l + w + AUTO_MIRROR_GAP + AUTO_MIRROR_W;
                 }
@@ -1577,21 +1387,14 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         []
     );
 
-    // ── Phase 6 + 10: Rust SWC Compiler ──────────────────────────────────────
-    // Phase 6: TSX→JS via Rust SWC (no Babel), ESM→CJS shim for iframe shell.
-    // Phase 10: Worker-first — sends compilation to swc.worker.ts so 5ms Rust
-    //           work never blocks a React render frame. Falls back to the
-    //           main-thread compilerRef while the worker is still booting.
-    //           ESM→CJS shim applied INSIDE the worker; fallback applies it here.
+    // ── Phase 6 + 10: Rust SWC Compiler ────────────────────────────────────── TSX→JS via Rust SWC (no Babel), ESM→CJS shim for iframe shell. Worker-first — sends compilation to swc.worker.ts so 5ms Rust
     const compileComponent = useCallback(async (code: string): Promise<string> => {
         if (!code.trim()) return '';
 
         // ── Worker path (Phase 10) — compilation off main thread ──────────
         if (swcWorkerRef.current) {
             return new Promise<string>((resolve) => {
-                // M-3 FIX: Math.random() collision space ≈ 101B — non-zero for rapid
-                // concurrent compilations. crypto.randomUUID() is collision-proof and
-                // consistent with the project-wide ID generation standard.
+                // Math.random() collision space ≈ 101B — non-zero for rapid concurrent compilations. crypto.randomUUID() is collision-proof and consistent with the project-wide ID generation standard
                 const id = crypto.randomUUID();
                 pendingCompilesRef.current.set(id, resolve);
                 swcWorkerRef.current!.postMessage({ id, code });
@@ -1648,10 +1451,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             parentMap,
             pages, activePageId, setActivePageId, realPageId: activePageId,
             addPage, deletePage, switchPage, importPage, updatePageSEO,
-            // S-2 FIX: expose undo/redo as flat stable values in addition to
-            // the deprecated `history` shape (kept for back-compat).
-            // `history: { undo, redo }` re-created a new object every render,
-            // causing any useEffect([history]) subscriber to fire unnecessarily.
+            // expose undo/redo as flat stable values in addition to the deprecated `history` shape (kept for back-compat). `history: { undo, redo }` re-created a new object every render,
             history: { undo, redo },
             undo,
             redo,

@@ -1,16 +1,8 @@
 /**
- * ─── DEPLOY PANEL v2 ──────────────────────────────────────────────────────────
- * DEP-1 — Real Vercel deployment via direct file upload API (Form B).
- *
- * Change Log v2:
- * ADDED: Deploy history — last 5 deploys, localStorage, revisit links
- * ADDED: Pre-deploy snapshot — file count + KB shown before deploying
- * ADDED: Auto-populate env from connected DataSources (DS-ENV-1 compliant)
- * ADDED: Phase step bar — UPLOAD → CREATE → BUILD → READY with live highlight
- * ADDED: Timestamped log lines with phase prefix badges
- * ADDED: Copy URL button on success banner
- * ADDED: Framework pill badge in panel header
- * PRESERVED: VERCEL-SEC-1, VERCEL-SEC-2, VERCEL-ABORT-1, VERCEL-FORM-B-1
+ * --- DEPLOY PANEL -----------------------------------------------------------
+ * Left-sidebar panel for deploying the project to Vercel.
+ * Handles Vercel token input, project creation, and live deployment logs.
+ * Delegates the actual deploy call to utils/deploy/vercelDeployer.ts.
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
@@ -178,7 +170,7 @@ export const DeployPanel: React.FC = () => {
         catch { /* ok */ }
     }, [projectName, target]);
 
-    // VERCEL-SEC-1: token → sessionStorage only
+    // token → sessionStorage only
     useEffect(() => {
         if (token) sessionStorage.setItem(VERCEL_TOKEN_KEY, token);
         else sessionStorage.removeItem(VERCEL_TOKEN_KEY);
@@ -189,7 +181,7 @@ export const DeployPanel: React.FC = () => {
         if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
     }, [logLines]);
 
-    // VERCEL-ABORT-1: cancel on unmount
+    // cancel on unmount
     useEffect(() => () => { abortRef.current?.abort(); }, []);
 
     // ── Auto-populate env from DataSources ────────────────────────────────────

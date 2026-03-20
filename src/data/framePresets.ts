@@ -1,8 +1,7 @@
 // ─── FRAME PRESETS — CF-1 ─────────────────────────────────────────────────────
 // Source of truth for device frame dimensions used by the FramePicker.
 //
-// FRAME-PRESET-1 [PERMANENT]:
-//   'desktop' | 'tablet' → creates type:'webpage' node with props.mirrorOf set.
+// //   'desktop' | 'tablet' → creates type:'webpage' node with props.mirrorOf set.
 //   'mobile'             → creates type:'webpage' node with a narrow width.
 //   ALL spawned frames have props.mirrorOf = sourceFrameId (e.g. 'frame-desktop').
 //   They are NEVER independent content nodes — they mirror the source frame.

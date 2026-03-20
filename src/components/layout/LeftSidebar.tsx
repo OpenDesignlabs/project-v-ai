@@ -164,13 +164,7 @@ const ColorField = ({ label, value, onChange }: { label: string, value: string, 
     </div>
 );
 
-// ─── ROUTE TEST PANEL ─────────────────────────────────────────────────────────────────────
-// Phase G: Inline API route testing UI — request builder + response viewer.
-//   Data flow:
-//     1. User clicks "Test" tab → handleBootAndTest() → startDevServer() if needed
-//     2. containerUrl becomes non-null when WebContainer emits 'server-ready'
-//     3. User fills request, clicks Send → fetch(containerUrl + /api/route.path)
-//     4. Response displayed with status badge, latency, formatted body
+// ─── ROUTE TEST PANEL ───────────────────────────────────────────────────────────────────── Phase G: Inline API route testing UI — request builder + response viewer. Data flow:
 
 interface RouteTestPanelProps {
     route: ApiRoute;
@@ -573,7 +567,7 @@ export const LeftSidebar = () => {
     const [newRouteMethods, setNewRouteMethods] = useState<HttpMethod[]>(['GET']);
     const [routeAddError, setRouteAddError] = useState('');
 
-    // ── Phase G: Route Tester state ───────────────────────────────────────────
+    // ── Route Tester state ───────────────────────────────────────────
     const [activeRouteTab, setActiveRouteTab] = useState<'code' | 'test'>('code');
     const [isServerBooting, setIsServerBooting] = useState(false);
     const [testMethod, setTestMethod] = useState<HttpMethod>('GET');

@@ -1,35 +1,15 @@
 /**
- * ─── CANVAS ERROR BOUNDARY ─────────────────────────────────────────────────────
+ * --- CANVAS ERROR BOUNDARY --------------------------------------------------
+ * React class error boundary that wraps the entire canvas artboard.
+ * Catches render-phase errors from RenderNode, custom AI components, and
+ * CodeRenderer so a single bad component cannot crash the whole editor.
  *
- * Catches runtime errors thrown inside the canvas artboard (RenderNode tree,
- * custom_code components, CodeRenderer). Without this, a single bad component
- * unmounts the entire editor and the user loses unsaved work.
+ * Provides two recovery actions:
+ *   1. Dismiss - clears the error state and re-renders the canvas
+ *   2. Undo last change - calls onUndo() then resets, helpful when the error
+ *      was caused by a bad AI-generated component that just landed
  *
- * WHAT IS CAUGHT
- * ──────────────
- * • JavaScript errors thrown during React render (inside return statements)
- * • Errors in lifecycle methods of class components inside the canvas
- * • Errors from dynamic code evaluation in CodeRenderer
- *
- * WHAT IS NOT CAUGHT (React limitation)
- * ──────────────────────────────────────
- * • Errors in event handlers (those propagate normally — use try/catch inside them)
- * • Errors in async code (setTimeout, fetch callbacks)
- * • Errors in the error boundary itself
- *
- * RECOVERY PATHS
- * ──────────────
- * 1. "Dismiss" — resets the boundary. Safe if the bad component is no longer
- *    selected / the error was transient.
- * 2. "Undo last change" — calls onUndo() (wired to history.undo in Canvas.tsx)
- *    then resets the boundary. Correct path if the error was caused by the last
- *    edit (e.g., AI-generated code that crashes on render).
- *
- * DESIGN
- * ──────
- * VS Code dark theme to match the editor shell. Stack trace is collapsed by
- * default (details element) — it is noise for most users but available for
- * developers debugging custom components.
+ * Note: Does not catch errors in event handlers or async callbacks.
  */
 
 import React from 'react';

@@ -1,20 +1,9 @@
-/**
- * ─── FILE SYSTEM TEMPLATES ────────────────────────────────────────────────────
- *
- * NEXTJS_APP_ROUTER_TEMPLATE — Next.js 14 App Router (current default)
- * VITE_REACT_TEMPLATE        — Original Vite + React SPA (preserved for future framework switcher)
- *
- * Phase A: NEXTJS_APP_ROUTER_TEMPLATE replaces VITE_REACT_TEMPLATE as the
- * default template mounted by ContainerContext on VFS boot.
- *
- * Key path differences from Vite template:
- *  • No index.html, no src/ dir — Next.js uses app/ directory convention
- *  • package.json uses `next dev` / `next build` scripts
- *  • tailwind.config.js targets app/** and components/** (not src/**)
- *  • All marketplace components are tagged 'use client' (required for motion/state)
- *  • Path alias @/* → ./* configured in tsconfig.json
- *  • next.config.js enables remote image patterns (for useAssetSync URLs)
- *  • components/ at root (not src/components/) — useFileSync writes here
+﻿/**
+ * --- FILE SYSTEM TEMPLATES --------------------------------------------------
+ * WebContainer VFS mount objects for each supported framework.
+ * Each template defines the complete initial file tree (package.json,
+ * config files, entry points) that gets mounted when a new project boots.
+ * Used by ContainerContext during the VFS boot sequence.
  */
 
 import type { FileSystemTree } from '@webcontainer/api';

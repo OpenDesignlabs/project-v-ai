@@ -1,16 +1,9 @@
 /**
- * ─── PUBLISH MODAL ─────────────────────────────────────────────────────────────
- * Non-dev friendly, polished 4-platform publish flow.
- * Platforms: GitHub · Vercel · Netlify · Download ZIP
- *
- * SECURITY:
- *   All tokens stored in sessionStorage (VERCEL-SEC-1 / NETLIFY-SEC-1 / GH-PUB-2).
- *   Tokens never written to element tree, logs, or localStorage.
- *
- * ARCHITECTURE:
- *   Each platform is a self-contained sub-view. The modal is a pure UI layer;
- *   it calls existing utility functions (publishToGitHub, deployToVercel,
- *   deployToNetlify) without touching any editor state.
+ * --- PUBLISH MODAL ----------------------------------------------------------
+ * Full-screen modal for deploying the current project.
+ * Supports three publish targets: GitHub Pages, Vercel, and Netlify.
+ * Each target has its own form (token input, repo/site config) and a live
+ * progress log that streams deployment status messages.
  */
 
 import { useState, useRef, useCallback, useEffect } from 'react';

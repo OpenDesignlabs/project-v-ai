@@ -1,23 +1,4 @@
-/// <reference lib="webworker" />
-// ─── HISTORY WORKER ───────────────────────────────────────────────────────────
-// Moves three expensive main-thread operations into a background thread:
-//   1. JSON.stringify(elements)  — O(N) string allocation, ~1–5ms for typical projects
-//   2. Gzip compression (Wasm)   — ~2–5ms via flate2 inside the Rust engine
-//   3. Gzip decompression        — ~1–3ms on undo/redo
-//
-// API CONTRACT (postMessage protocol):
-//   Host  → Worker: { type: 'INIT', payload: elements }
-//   Host  → Worker: { type: 'PUSH', payload: elements }
-//   Host  → Worker: { type: 'UNDO' }
-//   Host  → Worker: { type: 'REDO' }
-//
-//   Worker → Host:  { type: 'READY' }                          (Wasm init done)
-//   Worker → Host:  { type: 'UNDO_RESULT', payload: string }   (decompressed JSON)
-//   Worker → Host:  { type: 'REDO_RESULT', payload: string }   (decompressed JSON)
-//
-// NOTE: HistoryManager.undo() / redo() return string | undefined via
-// Option<String> in Rust. We deliberately keep this API (not Uint8Array)
-// to maintain the infallible constructor and void push_state from Phase 8.
+// / <reference lib="webworker" /> --- HISTORY WORKER -------------------------------------------------------- Manages undo/redo off the main thread using a Wasm HistoryManager
 
 import init, { HistoryManager } from '../../vectra-engine/pkg/vectra_engine.js';
 
@@ -42,9 +23,7 @@ self.onmessage = (e: MessageEvent) => {
 
     try {
         switch (type) {
-            // ── INIT ─────────────────────────────────────────────────────
-            // Payload: elements object (received via Structured Clone — no stringify needed on host side).
-            // We stringify here, off-thread.
+            // ── INIT ───────────────────────────────────────────────────── Payload: elements object (received via Structured Clone — no stringify needed on host side). We stringify here, off-thread
             case 'INIT': {
                 const json = JSON.stringify(payload);
                 manager = new HistoryManager(json);

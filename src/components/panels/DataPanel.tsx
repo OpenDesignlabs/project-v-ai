@@ -1,15 +1,9 @@
 /**
- * ─── DATA PANEL v2 ────────────────────────────────────────────────────────────
- * DB-1 — Data Sources panel.
- *
- * Change Log v2:
- * ADDED: Auto-refresh polling per source — Off / 30s / 1m / 5m (useEffect interval)
- * ADDED: DataTable view — toggle for array responses showing first 8 rows
- * ADDED: Copy {{binding}} button on hover of each JsonTree leaf
- * ADDED: Row count badge in SourceCard header when data is an array
- * ADDED: Relative time display ("2m ago") from lastFetchedAt
- * ADDED: Schema search — filter JsonTree to matching field names
- * PRESERVED: DS-ENV-1, DS-FETCH-1, DS-SCHEMA-1 (unchanged)
+ * --- DATA PANEL -------------------------------------------------------------
+ * Left-sidebar panel for managing external data sources.
+ * Supports REST APIs, Supabase, and PlanetScale database connections.
+ * Allows users to configure connection details, test fetches, and bind
+ * response fields to canvas elements via the Data Binding workflow.
  */
 
 import React, { useState, useCallback, useEffect, useRef } from 'react';

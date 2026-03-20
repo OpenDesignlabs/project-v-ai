@@ -1,32 +1,8 @@
 /**
- * ─── NETLIFY DEPLOYER ─────────────────────────────────────────────────────────
- * Deploys a Vectra file map to Netlify using the ZIP Deploy API.
- *
- * API FLOW
- * ────────
- * Step 1: Build ZIP blob in-browser (jszip — already a dependency)
- * Step 2a (new site):    POST /api/v1/sites?name={name}
- *                        Content-Type: application/zip  ← full deploy in one call
- *                        → { id, name, deploy_id, ssl_url }
- * Step 2b (re-deploy):   POST /api/v1/sites/{site_id}/deploys
- *                        Content-Type: application/zip
- *                        → { id, state, deploy_url }
- * Step 3: Poll GET /api/v1/deploys/{deploy_id} until state === 'ready'
- *
- * SECURITY
- * ────────
- * NETLIFY-SEC-1 [PERMANENT]: Token stored in sessionStorage ONLY (never localStorage).
- *   Session storage is cleared automatically on tab close.
- *   The caller (PublishModal) is responsible for enforcing this.
- *
- * NETLIFY-SEC-2 [PERMANENT]: Env var values NEVER written to log lines.
- *   Only key names may appear. Values go directly to API body.
- *
- * SITE ID PERSISTENCE
- * ───────────────────
- * After first deploy, the returned site ID is stored in sessionStorage under
- * `netlify_site_{sanitized_name}`. Subsequent deploys reuse it (updates the site
- * instead of creating a new one). Cleared on tab close — user re-creates next session.
+ * --- NETLIFY DEPLOYER -------------------------------------------------------
+ * Deploys the current project to Netlify using the ZIP deploy API.
+ * Generates all project files via codeGenerator.ts, bundles them into a
+ * ZIP archive, and uploads to /api/v1/sites/{siteId}/deploys.
  */
 
 const NETLIFY_API = 'https://api.netlify.com/api/v1';
@@ -171,7 +147,7 @@ export async function deployToNetlify(
         deployId     = site.deploy_id ?? site.id;
         returnedName = site.name ?? cleanName;
         siteUrl      = site.ssl_url ?? site.url ?? `https://${returnedName}.netlify.app`;
-        // NETLIFY-SEC-1: session only
+        // session only
         try { sessionStorage.setItem(siteKey(cleanName), siteId); } catch { /* quota */ }
     }
 

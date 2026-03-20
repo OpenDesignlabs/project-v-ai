@@ -61,7 +61,7 @@ const stripAndFixCode = (code: string): string =>
 
 // ─── ARCH-4: useDebouncedValue ────────────────────────────────────────────────
 // Returns a value that only updates after `delay` ms of inactivity.
-// ARCH-4 [PERMANENT]: ContainerPreview MUST consume this for elements so that
+// ContainerPreview MUST consume this for elements so that
 // 60fps drag updates never reach the SWC compiler. Delay = 400ms.
 function useDebouncedValue<T>(value: T, delay: number): T {
   const [debounced, setDebounced] = useState<T>(value);
@@ -76,9 +76,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 
 export const ContainerPreview = () => {
   const { elements: liveElements, compileComponent } = useProject();
-  // ARCH-4 [PERMANENT]: Gate SWC recompiles to settled state only.
-  // 60fps drag style updates are debounced away. buildAndInject only fires
-  // when the user stops editing for 400ms.
+  // Gate SWC recompiles to settled state only. 60fps drag style updates are debounced away. buildAndInject only fires when the user stops editing for 400ms
   const elements = useDebouncedValue(liveElements, 400);
   const { previewMode, setPreviewMode, device, setDevice } = useUI();
 
@@ -101,7 +99,7 @@ export const ContainerPreview = () => {
   }, []);
 
   // ── Hot-reload: Compile (Rust SWC) → Send to shell ───────────────────────
-  // Phase 6: Compilation happens HERE (host side, ~5ms via Rust) instead of
+  // Compilation happens HERE (host side, ~5ms via Rust) instead of
   // THERE (iframe Babel, 100–300ms). The shell just executes the received JS.
   const buildAndInject = useCallback(async () => {
     const customEls = Object.values(elements).filter(
@@ -132,23 +130,7 @@ export const ContainerPreview = () => {
         finalCode = compiledParts[0];
 
       } else {
-        // ── Fix-B3: exports.default property interceptor ──────────────────
-        //
-        // WHY THE RENAME APPROACH FAILED (Fix-B2):
-        //   SWC sometimes emits `exports.default = function HeroSection(props) {`
-        //   (assignment + inline function in one expression). My rename regex
-        //   matched `exports.default = function` → replaced with
-        //   `exports.default = __section_0` → left `HeroSection(props) {` as a
-        //   bare identifier → SyntaxError: Unexpected identifier 'HeroSection'.
-        //
-        // FIX — Property interceptor:
-        //   Use Object.defineProperty to add a setter on the shared `exports`
-        //   object the shell's new Function provides. Each compiled section's
-        //   `exports.default = SectionFn` goes through the setter, which captures
-        //   the component in __section_captures[] without overwriting anything.
-        //   After all N sections have run, the setter is cleared and VectraPage
-        //   (which renders all captured sections in flex-col) is installed.
-        //   Works for every SWC output format — no renaming, no regex fragility.
+        // ── Fix-B3: exports.default property interceptor ────────────────── WHY THE RENAME APPROACH FAILED (Fix-B2): SWC sometimes emits `exports.default = function HeroSection(props) {`
 
         finalCode = `
 // ── Fix-B3: Section interceptor setup ────────────────────────────────────

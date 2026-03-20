@@ -1,94 +1,9 @@
 /**
- * ─── @vectra/loader BRIDGE ────────────────────────────────────────────────────
- *
- * Receiver side of the Code→Design bridge.
- * Fetches the component manifest served by the developer's local @vectra/loader
- * Vite plugin and converts entries into ComponentConfig objects ready for
- * registerComponent().
- *
- * ══════════════════════════════════════════════════════════════════════════════
- * @vectra/loader PROTOCOL SPEC  (for the companion npm package — separate repo)
- * ══════════════════════════════════════════════════════════════════════════════
- *
- * The developer installs @vectra/loader in their Next.js / Vite project:
- *
- *   npm install --save-dev @vectra/loader
- *
- * Then adds the Vite plugin to their config:
- *
- *   // vite.config.ts
- *   import { vectraLoader } from '@vectra/loader/vite';
- *
- *   export default defineConfig({
- *     plugins: [
- *       react(),
- *       vectraLoader({
- *         components: [
- *           {
- *             id: 'my_button',
- *             label: 'My Button',
- *             category: 'basic',
- *             component: () => import('./src/components/Button'),
- *             exportName: 'Button',
- *             defaultProps: { label: 'Click me' },
- *             propSchema: {
- *               label: { type: 'string', control: 'text' },
- *             },
- *           },
- *         ],
- *       }),
- *     ],
- *   });
- *
- * The plugin MUST:
- *   1. Serve GET /__vectra/components.json with Content-Type: application/json
- *      and Access-Control-Allow-Origin: * (Vectra fetches cross-origin)
- *   2. Return a VectraLoaderManifest JSON body
- *   3. Resolve each component() dynamic import and serialize its source to `code`
- *
- * MANIFEST SHAPE (VectraLoaderManifest):
- *
- *   {
- *     "version": "1",
- *     "components": [
- *       {
- *         "id": "my_button",
- *         "label": "My Button",
- *         "category": "basic",
- *         "importMeta": {
- *           "packageName": "./src/components/Button",
- *           "exportName": "Button",
- *           "isDefault": false
- *         },
- *         "code": "export default function Button({ label = 'Click me' }) { ... }",
- *         "defaultProps": { "label": "Click me", "style": { ... } },
- *         "propSchema": {
- *           "label": { "type": "string", "control": "text", "default": "Click me" }
- *         }
- *       }
- *     ]
- *   }
- *
- * CORS NOTE:
- *   The plugin must add the following header to /__vectra/components.json:
- *     Access-Control-Allow-Origin: *
- *   Without this header, the browser blocks Vectra's cross-origin fetch.
- *   In Vite dev server this is done via server.headers in the plugin config.
- *
- * SECURITY NOTE:
- *   The manifest endpoint is development-only. The plugin should be a
- *   devDependency and the endpoint MUST NOT be present in production builds.
- *
- * ══════════════════════════════════════════════════════════════════════════════
- *
- * PHASE-B-1 [PERMANENT]:
- *   LOADER_ENDPOINT = '/__vectra/components.json' — never change.
- *   This is the contract between Vectra and @vectra/loader.
- *   Breaking it requires a major version bump of the loader package.
- *
- * PHASE-B-2 [PERMANENT]:
- *   fetchLoaderManifest() MUST NEVER throw. All errors caught → null.
- *   A failed fetch must never crash the editor.
+ * --- VECTRA LOADER BRIDGE ---------------------------------------------------
+ * Provides the dynamic component loading system for externally registered
+ * components. Fetches remote component bundles (ESM) at runtime, evaluates
+ * them in a sandboxed scope, and makes them available in the editor canvas
+ * as draggable elements alongside built-in types.
  */
 
 import { FileCode } from 'lucide-react';

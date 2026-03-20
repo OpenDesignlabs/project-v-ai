@@ -60,11 +60,7 @@ export const SHELL_HTML = `<!DOCTYPE html>
           return Array.prototype.filter.call(arguments, Boolean).join(' ');
         };
 
-        // ── Lucide proxy ─────────────────────────────────────────────────────
-        // Handles three export shapes from the Lucide UMD bundle:
-        //  a) React component function (most icons in lucide@latest)
-        //  b) Icon definition array  (legacy lucide bundle format)
-        //  c) Missing icon           (graceful SVG fallback)
+        // ── Lucide proxy ───────────────────────────────────────────────────── Handles three export shapes from the Lucide UMD bundle: a) React component function (most icons in lucide@latest)
         var _Lucide = new Proxy(window.lucide || {}, {
           get: function(t, p) {
             var e = t[p];
@@ -107,19 +103,14 @@ export const SHELL_HTML = `<!DOCTYPE html>
           );
         };
 
-        // ── Preamble ─────────────────────────────────────────────────────────
-        // Declares shorthand aliases expected by SWC-compiled code.
-        // SWC's Classic runtime emits React.createElement, hence no need to
-        // import React — it is already in scope as a global.
+        // ── Preamble ───────────────────────────────────────────────────────── Declares shorthand aliases expected by SWC-compiled code. SWC's Classic runtime emits React.createElement, hence no need to
         var preamble = [
           'const {useState,useEffect,useRef,useCallback,useMemo,useLayoutEffect,useReducer,useContext,Fragment}=React;',
           'const {motion,AnimatePresence,useAnimation,useInView,useMotionValue,useTransform}=_Motion;',
           'const cn=_cn, Lucide=_Lucide, DynamicIcon=_DynamicIcon;',
         ].join('');
 
-        // ── Execute pre-compiled code ─────────────────────────────────────────
-        // The code string was produced by Rust SWC (TSX→JS, ESM→CJS shimmed).
-        // It uses 'exports.default = ' for its default export.
+        // ── Execute pre-compiled code ───────────────────────────────────────── The code string was produced by Rust SWC (TSX→JS, ESM→CJS shimmed). It uses 'exports.default = ' for its default export
         new Function(
           'React','ReactDOM','_Motion','_cn','_Lucide','_DynamicIcon',
           'exports','module','require',
@@ -145,9 +136,7 @@ export const SHELL_HTML = `<!DOCTYPE html>
           return;
         }
 
-        // ── Render ────────────────────────────────────────────────────────────
-        // Persistent root — React diffs on re-render, preserving DOM state
-        // (scroll position, form values, Framer Motion animations).
+        // ── Render ──────────────────────────────────────────────────────────── Persistent root — React diffs on re-render, preserving DOM state (scroll position, form values, Framer Motion animations)
         if (!_root) _root = ReactDOM.createRoot(document.getElementById('root'));
         _root.render(React.createElement(Comp, null));
 
@@ -173,8 +162,7 @@ export const SHELL_HTML = `<!DOCTYPE html>
 </html>`;
 
 // ─── MOBILE MIRROR SHELL ──────────────────────────────────────────────────────
-// MIRROR-MEDIA-QUERY-1 [PERMANENT]:
-//   Identical to SHELL_HTML but with two critical differences:
+// //   Identical to SHELL_HTML but with two critical differences:
 //   1. Background is transparent — the canvas frame provides the bg colour.
 //   2. Sends 'MOBILE_SHELL_READY' instead of 'SHELL_READY' so ContainerPreview
 //      can track both iframes independently.

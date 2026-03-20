@@ -1,20 +1,4 @@
-/// <reference lib="webworker" />
-// ─── SWC COMPILER WORKER ──────────────────────────────────────────────────────
-// Runs all heavy TSX→JS compilation (Rust SWC) off the main thread so that:
-//   • Typing in the code editor never causes a jank frame (~5ms blocked)
-//   • Preview updates that trigger multiple compilations run in parallel
-//     without competing with React's 60fps reconciler
-//
-// Protocol (postMessage):
-//   Host  → Worker: { id: string, code: string }
-//   Worker → Host:  { id: string, code: string }   (success)
-//   Worker → Host:  { id: string, code: string }   (failure: fallback error component)
-//
-// The ESM→CJS shim is applied HERE (inside the worker) so the host's
-// compileComponent() receives ready-to-execute CJS and does not double-shim.
-//
-// NOTE: SwcCompiler is a zero-sized Rust struct (Phase 6 stability fix).
-//       It is safe to call compile() as many times as needed.
+// / <reference lib="webworker" /> --- SWC COMPILER WORKER --------------------------------------------------- Runs Rust-powered SWC compilation (TSX -> CJS JS) off the main thread
 
 import init, { SwcCompiler } from '../../vectra-engine/pkg/vectra_engine.js';
 
@@ -47,20 +31,7 @@ function stripImports(code: string): string {
         .trim();
 }
 
-// ── Post-compile: ESM → CJS shim ──────────────────────────────────────────
-// SWC emits ESM syntax. The iframe shell executes code via new Function() and
-// expects CJS-style exports. Two cases:
-//
-// 1. Default exports:
-//    `export default function Foo` → `exports.default = function Foo`
-//    `export default class Foo`    → `exports.default = class Foo`
-//    `export default `             → `exports.default = `
-//
-// 2. Named exports (AI components often use these):
-//    `export const Foo = ...`   → `const Foo = ...`  (stays in local scope)
-//    `export function Bar`      → `function Bar`
-//    `export class Baz`         → `class Baz`
-//    The variable remains accessible in the combined sandbox code string.
+// ── Post-compile: ESM → CJS shim ────────────────────────────────────────── SWC emits ESM syntax. The iframe shell executes code via new Function() and expects CJS-style exports. Two cases:
 function shimExports(code: string): string {
     return code
         // ── Default exports (order matters: specific before general) ──────

@@ -1,15 +1,9 @@
 /**
- * ─── CODE SANITIZER ───────────────────────────────────────────────────────────
- * Single source of truth for AI-generated JSX code cleaning.
- * Used by: compiler.worker.ts, ContainerPreview (shellHtml.ts is a plain-JS port),
- * and anywhere else that strips imports or fixes icon syntax.
- *
- * Rules
- * ─────
- * • Import stripping uses 3 SAFE line-anchored patterns — NO [\s\S]*? which
- *   would cross over function bodies and delete valid code.
- * • Icon fixes run in the correct order (static → dynamic bracket → dynamic prop)
- *   to avoid double-substitution.
+ * --- CODE SANITIZER ---------------------------------------------------------
+ * Cleans AI-generated component code before it is compiled or embedded.
+ * Strips disallowed import statements, normalises quote characters, and
+ * validates code against a blocklist of browser-unsafe patterns (eval, fetch, etc.).
+ * SANDBOX_BLOCKED_PATTERNS is re-exported for use in the compiler worker.
  */
 
 export const sanitizeCode = (code: string): string =>
@@ -19,7 +13,7 @@ export const sanitizeCode = (code: string): string =>
         .replace(/^[ \t]*import\s+type?\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*$/gm, '')
         // Default / namespace (always single-line):  import Foo from '...'
         .replace(/^[ \t]*import\s+[^\n{]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
-        // Side-effect:     import '...'
+        // import '...'
         .replace(/^[ \t]*import\s+['"][^'"]+['"];?\s*$/gm, '')
 
         // ── 2. Normalise smart quotes & zero-width chars ────────────────────────

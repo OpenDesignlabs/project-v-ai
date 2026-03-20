@@ -5,23 +5,13 @@ import type { VectraProject, VectraNode } from '../types';
 export const repairJSON = (jsonStr: string): string => {
     let repaired = jsonStr.trim();
 
-    // ── Stage 0: Single-quote normalisation ────────────────────────────────────
-    // SPRINT-B-FIX-30: Some models (especially smaller ones) output JSON with
-    // single-quoted keys or values. Standard JSON.parse rejects them.
-    // Strategy: replace single-quote delimiters that appear in unambiguous JSON
-    // boundary positions — after { [ , : (with optional whitespace).
-    // We do NOT do a global s/' → "/ replace because single quotes may appear
-    // legitimately inside already-double-quoted JSX strings (e.g. "it's great").
-    //
-    // Pattern: JSON boundary char + optional space + 'value' → "value"
-    //   { 'key': 'val' }  →  { "key": "val" }
-    //   [: 'foo', 'bar']  →  [: "foo", "bar"]
+    // ── Stage 0: Single-quote normalisation ──────────────────────────────────── Some models (especially smaller ones) output JSON with single-quoted keys or values. Standard JSON.parse rejects them
     repaired = repaired.replace(/([{[,:\s])\s*'([^']*)'/g, (_, boundary, inner) => {
         return `${boundary}"${inner.replace(/"/g, '\\"')}"`;
     });
 
     // ── Stage 1: Trailing-comma stripping ────────────────────────────────────
-    // SPRINT-B-FIX-30: AI models frequently emit trailing commas before } or ]
+    // AI models frequently emit trailing commas before } or ]
     // which are illegal in JSON. Apply iteratively (handles nested cases like
     // [ 1, 2, { "a": 3, }, ] — one pass removes inner trailing comma, second
     // removes outer, third sees no change and stops).
@@ -95,9 +85,7 @@ export const repairJSON = (jsonStr: string): string => {
 
 
 
-// --- 2. ID SANITIZATION ---
-// Renames all IDs in an AI-generated element map to be globally unique,
-// preventing collisions with existing project nodes (e.g. "root_1", "container_1").
+// --- 2. ID SANITIZATION --- Renames all IDs in an AI-generated element map to be globally unique, preventing collisions with existing project nodes (e.g. "root_1", "container_1")
 export const sanitizeAIElements = (
     elements: Record<string, VectraNode>,
     rootId: string
@@ -107,7 +95,7 @@ export const sanitizeAIElements = (
 
     // Build a mapping: old ID → new unique ID
     incomingIds.forEach(oldId => {
-        // NH-3 FIX: crypto.randomUUID() — same collision-free standard applied in M-5/templateUtils.
+        // crypto.randomUUID() — same collision-free standard applied in M-5/templateUtils.
         // Date.now() + Math.random() produced identical IDs for all nodes in a single AI pass
         // (same millisecond, tiny random suffix space). Orphaned subtrees + corrupt parentMap resulted.
         idMap[oldId] = `ai_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
@@ -135,10 +123,7 @@ export const sanitizeAIElements = (
     return { sanitizedElements, newRootId };
 };
 
-// --- 3. MERGE STRATEGY ---
-// Integrates sanitized AI-generated content into the current project state.
-// isFullPage=true  → REPLACE the page's children with the new root
-// isFullPage=false → APPEND the new root to the page's existing children
+// --- 3. MERGE STRATEGY --- Integrates sanitized AI-generated content into the current project state. isFullPage=true  → REPLACE the page's children with the new root
 export const mergeAIContent = (
     currentProject: VectraProject,
     pageRootId: string,

@@ -36,6 +36,7 @@ wasm-pack.log
 
 # Private Notes
 inplem-clude.md
+comment_analysis.md
 # lock files
 pnpm-lock.yaml
 package-lock.json

@@ -1,29 +1,8 @@
 /**
- * ─── STITCH IMPORT PANEL v2 ───────────────────────────────────────────────────
- * STI-1 — Full Page Import UI.
- *
- * Change Log v2:
- * ADDED: Page name + slug editor step between preview and import
- * ADDED: Node type breakdown — visual count bars per element type
- * ADDED: CSS preview — collapsible first 14 lines before injection
- * RESOLVED: STI-FUTURE-2 — framework-aware CSS path (nextjs / vite)
- * ADDED: Warning expander — each warning shown individually, collapsible
- * PRESERVED: STI-SAFE-1,2,3, STI-CSS-1, STI-INJECT-1, STI-PAGE-1 (unchanged)
- *
- * KEY INTEGRATION POINTS
- * ───────────────────────
- * • parseZipToVectraPage() — zipImporter.ts (pure parser)
- * • importPage()           — ProjectContext (atomic: merge + register + navigate)
- * • addAsset()             — UIContext (via useEditor)
- * • instance.fs.*          — ContainerContext (CSS injection → globals.css / index.css)
- * • framework              — useEditor() (STI-FUTURE-2: branch CSS path)
- *
- * STI-INJECT-1 [PERMANENT]: CSS injection is APPEND-ONLY.
- *   Never overwrite globals.css or index.css. These contain critical Tailwind directives.
- *
- * STI-FUTURE-2 [RESOLVED]: CSS path now branches on framework:
- *   Next.js → /app/globals.css
- *   Vite    → /src/index.css
+ * --- STITCH PANEL -----------------------------------------------------------
+ * Left-sidebar panel for the Stitch AI component generation workflow.
+ * Uses the Stitch MCP server to generate, preview, and insert UI components
+ * described in natural language into the active canvas artboard.
  */
 
 import React, { useState, useCallback, useRef, useMemo } from 'react';
@@ -109,7 +88,7 @@ export const StitchPanel: React.FC = () => {
         setImportLog(prev => [...prev, `${new Date().toLocaleTimeString()} ${msg}`]);
     }, []);
 
-    // STI-FUTURE-2 [RESOLVED]: branch CSS path on framework
+    // branch CSS path on framework
     const cssPath = useMemo(() => {
         return (framework as string) === 'vite' ? '/src/index.css' : '/app/globals.css';
     }, [framework]);

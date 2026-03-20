@@ -1,49 +1,9 @@
 /**
- * ─── GITHUB PUBLISHER ─────────────────────────────────────────────────────────
- * Publishes a Vectra-generated file map to a GitHub repository using the
- * Git Trees API — one atomic commit for the entire project.
- *
- * AUTHENTICATION
- * ──────────────
- * Personal Access Token (PAT). Two options for the user:
- *   Classic PAT   → requires `repo` scope
- *   Fine-grained  → requires Contents: Read & Write on the target repo only
- *                   (safest: scope to one repo, no admin access)
- *
- * WHY TREES API OVER CONTENTS API
- * ─────────────────────────────────
- * Contents API: N sequential PUT calls — 20 files = 20 serial round-trips,
- *               intermediate broken states if the tab closes mid-push.
- * Trees API:    N parallel blob POSTs + 3 serial calls = 1 atomic commit.
- *               On a typical 20-file Vectra project: ~10× faster.
- *
- * GIT TREES API COMMIT FLOW
- * ──────────────────────────
- *  1. GET  /repos/{owner}/{repo}/git/ref/heads/{branch}
- *          → parent commit SHA + parent tree SHA
- *          (if 404: create branch from default branch)
- *  2. POST /repos/{owner}/{repo}/git/blobs  ×N  (run in parallel)
- *          → blob SHA per file
- *  3. POST /repos/{owner}/{repo}/git/trees
- *          → new tree SHA (base_tree = parent tree SHA)
- *  4. POST /repos/{owner}/{repo}/git/commits
- *          → new commit SHA
- *  5. PATCH /repos/{owner}/{repo}/git/refs/heads/{branch}
- *          → fast-forward branch pointer
- *
- * EMPTY REPO HANDLING
- * ────────────────────
- * A freshly created repo has no commits and no refs. Steps 1 and 5 handle
- * this by detecting 409/empty-repo conditions and creating the initial commit
- * with no parent SHA and no base_tree.
- *
- * GH-PUB-1 [PERMANENT CONSTRAINT]:
- *   MUST use Git Trees API, never Contents API.
- *   Contents API = N sequential calls = partial states on tab close.
- *
- * GH-PUB-2 [PERMANENT CONSTRAINT]:
- *   PAT MUST NOT be written to localStorage.
- *   sessionStorage only — cleared on tab close by the browser.
+ * --- GITHUB PUBLISHER -------------------------------------------------------
+ * Publishes the current project to a GitHub repository using the GitHub
+ * Trees API. Generates all project files via codeGenerator.ts, encodes them
+ * as base64 blobs, creates a single Git tree in one API call, then commits
+ * and pushes to the target branch.
  */
 
 const GH_API = 'https://api.github.com';

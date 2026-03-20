@@ -1,13 +1,13 @@
-import React, { useRef, useState, useEffect, useMemo, Suspense, Component, useCallback } from 'react';
+﻿import React, { useRef, useState, useEffect, useMemo, Suspense, Component, useCallback } from 'react';
 import type { ErrorInfo } from 'react';
 import { useProject } from '../../context/ProjectContext';
 import { useUI } from '../../context/UIContext';
 import { useHover } from '../../context/HoverContext';
-// M-6 FIX: useEditor removed — componentRegistry now comes from useUI() directly.
+// useEditor removed — componentRegistry now comes from useUI() directly.
 import { SANDBOX_BLOCKED_PATTERNS } from '../../utils/codegen/codeSanitizer';
 import type { VectraProject, VectraNode } from '../../types';
 import { TEMPLATES } from '../../data/templates';
-import { COMPONENT_TYPES } from '../../data/constants'; // M-6: for registry merge
+import { COMPONENT_TYPES } from '../../data/constants'; // for registry merge
 import { Resizer } from './Resizer';
 import { cn } from '../../lib/utils';
 
@@ -18,9 +18,7 @@ import { motion, AnimatePresence, useAnimation, useInView, useMotionValue, useTr
 import { getIconComponent } from '../../data/iconRegistry';
 
 
-// --- MARKETPLACE PLACEHOLDERS ---
-// Real components will be added in a future marketplace sprint.
-// Each name maps to the element.type value used in the render switch below.
+// --- MARKETPLACE PLACEHOLDERS --- Real components will be added in a future marketplace sprint. Each name maps to the element.type value used in the render switch below
 const MarketplacePlaceholder: React.FC<{ label: string }> = ({ label }) => (
     <div className="w-full h-full min-h-[120px] flex flex-col items-center justify-center gap-2
                     border-2 border-dashed border-purple-500/30 rounded-lg bg-purple-500/5">
@@ -40,23 +38,9 @@ const HeroGeometric:                 React.FC<any> = (p) => <MarketplacePlacehol
 
 // --- SMART COMPONENTS ---
 import { SmartAccordion, SmartCarousel, SmartTable } from '../ui/SmartComponents';
-import * as LucideAll from 'lucide-react';
-
-// ── MOBILE MIRROR CSS INJECTION ──────────────────────────────────────────────────
-// MIRROR-CSS-ESCAPE-1 [PERMANENT]:
-//   Tailwind JIT renders class="md:grid-cols-2" in the DOM (colon literal).
-//   In CSS, a colon in a class selector MUST be escaped as \:
-//   In a JS template literal, \\ produces a single \ in the output text.
-//   So to get the CSS text .md\:grid-cols-2 we write .md\\:grid-cols-2
-//   Previous version used single backslash — JS consumed it → invalid CSS.
-//
-// WHY CSS INJECTION (not iframe):
-//   An iframe isolates the browsing context (good for media queries) but breaks
-//   editor interactivity — you can't select, drag, or edit elements inside it.
-//   Instead, we inject CSS overrides that force single-column layout within the
-//   mirror container. This lets RenderNode render real, selectable elements while
-//   the CSS ensures they stack as they would on a 390px mobile screen.
-(() => {
+import * as LucideAll from 'lucide-react';(() => {
+// Injects scoped CSS into the document head to simulate mobile/tablet layout in the editor canvas.
+// Uses CSS overrides (not iframe) so elements remain selectable and draggable while previewing.(() => {
     const id = 'vectra-mobile-mirror-css';
     if (document.getElementById(id)) return;
     const style = document.createElement('style');
@@ -164,22 +148,7 @@ import * as LucideAll from 'lucide-react';
 // Created ONCE at module level so Babel isn’t re-loaded on every component mount.
 // Classic worker mode: the worker uses importScripts('/babel.min.js') internally.
 
-// ── WIDTH-AWARE DEVICE MIRROR CSS ────────────────────────────────────────────
-// DEVICE-MIRROR-CSS-1 [PERMANENT]:
-//   Each spawned device frame gets a unique scope selector:
-//   [data-vectra-device-frame="frameId"].
-//   CSS is generated based on the frame's actual pixel width into three tiers:
-//
-//   MOBILE  (< 640px):  collapse ALL grids + ALL flex-row to column.
-//   TABLET  (640–1023px): collapse lg: and xl: prefixes only.
-//                       md: stays active (fires at 768px viewport, active here).
-//   DESKTOP (≥ 1024px): no stacking overrides — containment only.
-//
-//   WHY <style> TAG (not module injection):
-//   Frame IDs are dynamic (uuid). We can't pre-inject per-frame rules
-//   at module load time. The <style> tag is generated per-frame at render.
-//   Tailwind JIT processes classes before React commits — the <style> tag
-//   renders after JIT, so it always targets rules that already exist in the DOM.
+// ── WIDTH-AWARE DEVICE MIRROR CSS ──────────────────────────────────────────── //   Each spawned device frame gets a unique scope selector: [data-vectra-device-frame="frameId"]
 function buildDeviceCSS(frameId: string, frameWidth: number): string {
     const sc = `[data-vectra-device-frame="${frameId}"]`;
 
@@ -237,19 +206,10 @@ const compilerWorker = new Worker(
     { type: 'classic' }
 );
 
-// WORKER-ID-COLLISION [PERMANENT]: module-level counter shared across ALL
-// LiveComponent instances. Per-component reqId.current starts at 0 and
-// increments to 1 on first compile — every simultaneously-mounted section
-// sends id:1. The singleton worker's response (id:1) passes every component's
-// `if (e.data.id !== currentReqId)` guard simultaneously, so all sections
-// render the first compiled result (always Navbar — the first to finish).
-// A global counter gives each request a unique ID regardless of mount order.
+// Module-level compile ID counter shared across all LiveComponent instances to prevent stale results.
 let _globalCompileId = 0;
 
-// ─── ERROR BOUNDARY ───────────────────────────────────────────────────────────
-// Upgraded to catch BOTH compile-time errors (from LiveComponent's useEffect try/catch)
-// AND runtime errors (React render-phase errors like ReferenceError: Heart is not defined).
-// autoTrigger prop enables full autonomous self-healing without user interaction.
+// Error boundary that catches both compile-time and React runtime errors. autoTrigger enables autonomous self-healing.
 class ComponentErrorBoundary extends Component<
     { children: React.ReactNode; label: string; onFix?: (err: string) => Promise<void>; autoTrigger?: boolean },
     { hasError: boolean; message: string; isFixing: boolean }
@@ -354,9 +314,7 @@ const LiveComponent = ({
             const { fixComponentError } = await import('../../services/aiAgent');
             const fixedCode = await fixComponentError(code, errorMessage);
 
-            // NM-5 FIX: functional updater reads fresh state AFTER the async AI gap.
-            // The old { ...elements } spread captured stale state from render time,
-            // silently discarding any edits made during the 2-5s await.
+            // functional updater reads fresh state AFTER the async AI gap. The old { ...elements } spread captured stale state from render time, silently discarding any edits made during the 2-5s await
             setElements(cur => {
                 if (!cur[elementId]) return cur;
                 return { ...cur, [elementId]: { ...cur[elementId], code: fixedCode } };
@@ -382,10 +340,7 @@ const LiveComponent = ({
             return;
         }
 
-        // ── Offload Babel + import-stripping to background worker ─────────────
-        // WORKER-ID-COLLISION FIX: use globally unique ID, not per-component counter.
-        // ++reqId.current across N simultaneously-mounted components all start at 0
-        // and ALL produce id:1 — the entire gang accepts the first worker response.
+        // ── Offload Babel + import-stripping to background worker ───────────── use globally unique ID, not per-component counter. ++reqId.current across N simultaneously-mounted components all start at 0
         const currentReqId = ++_globalCompileId;
         reqId.current = currentReqId; // keep in sync for any stale-result guards
 
@@ -435,11 +390,7 @@ const LiveComponent = ({
                 setError(null);
                 autoFixRetries.current = 0; // ✨ Reset on clean success
 
-                // ── Write cleanCode back into the element tree ────────────────
-                // The worker already sanitised the code (stripped imports, fixed
-                // quotes, fixed icon syntax). Persisting this means subsequent
-                // compile passes skip re-sanitising, saving CPU every re-render.
-                // NM-5 FIX: use functional updater — elements is stale inside setTimeout.
+                // ── Write cleanCode back into the element tree ──────────────── The worker already sanitised the code (stripped imports, fixed quotes, fixed icon syntax). Persisting this means subsequent
                 if (e.data.cleanCode && e.data.cleanCode !== code) {
                     setTimeout(() => {
                         setElements(cur => {
@@ -509,9 +460,9 @@ const LiveComponent = ({
         </ComponentErrorBoundary>
     );
 };
-// ─── UX-1: CANVAS CONTEXT MENU ─────────────────────────────────────────────────────────────────
+// ─── CANVAS CONTEXT MENU ─────────────────────────────────────────────────────────────────
 // Portal-rendered fixed context menu for right-click on canvas elements.
-// UX-1-1 [PERMANENT]: MUST use fixed positioning — artboard is overflow:hidden.
+// MUST use fixed positioning — artboard is overflow:hidden.
 interface CanvasContextMenuProps {
     x: number; y: number; elementId: string;
     isLocked: boolean; isHidden: boolean; isArtboard: boolean;
@@ -566,9 +517,9 @@ const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
     );
 };
 
-// ─── UX-9: FLOATING TEXT FORMAT BAR ────────────────────────────────────────────────────
+// ─── FLOATING TEXT FORMAT BAR ────────────────────────────────────────────────────
 // Anchors above a text element when it enters contentEditable editing mode.
-// UX-9-1 [PERMANENT]: MUST use onMouseDown (not onClick) — onClick fires after
+// MUST use onMouseDown (not onClick) — onClick fires after
 // the contentEditable blur, losing the selection before execCommand runs.
 const FORMAT_CMDS = [
     { cmd: 'bold',      label: 'B', title: 'Bold (Ctrl+B)',      fw: 700 },
@@ -648,30 +599,20 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         selectedId, setSelectedId,
         previewMode, dragData, setDragData,
         interaction, setInteraction,
-        // NM-8 FIX: zoomRef instead of zoom state.
-        // zoom in UIContext updates at 60fps during wheel events. Destructuring
-        // zoom as state causes every RenderNode to re-render on every wheel tick.
-        // On a 200-node canvas: 200 × 60fps = 12,000 wasted re-renders/sec.
-        // zoomRef.current gives the identical value at event-fire time with zero
-        // re-render cost. Pattern: NH-1 (Canvas zoomRef), elementsRef (ProjectContext).
+        // zoomRef instead of zoom state. zoom in UIContext updates at 60fps during wheel events. Destructuring zoom as state causes every RenderNode to re-render on every wheel tick
         zoomRef,
         activeTool, setActivePanel,
         device,
         // Item 2 — multi-select
         isInMultiSelect, addToSelection, removeFromSelection,
-        // M-6 FIX: pull componentRegistry directly from UIContext (where it lives)
-        // instead of going through useEditor(), which double-subscribes RenderNode
-        // to both ProjectContext AND UIContext for just this one field.
+        // pull componentRegistry directly from UIContext (where it lives) instead of going through useEditor(), which double-subscribes RenderNode to both ProjectContext AND UIContext for just this one field
         componentRegistry: rawRegistry,
     } = useUI();
     // HOVER CONTEXT (perf isolation): hoveredId changes at 60fps pointer-move
     // frequency. Keeping it in a separate context means only the 2 nodes
     // changing hover state re-render — not all 200 via UIContext subscription.
     const { hoveredId, setHoveredId } = useHover();
-    // Merge with static COMPONENT_TYPES (module constant, never changes)
-    // NM-1 FIX: useMemo so the merged object is stable between renders.
-    // Without this, { ...COMPONENT_TYPES, ...rawRegistry } runs on every render of
-    // every RenderNode — 200+ new objects/frame during a multi-node drag.
+    // Merge with static COMPONENT_TYPES (module constant, never changes) useMemo so the merged object is stable between renders. Without this, { ...COMPONENT_TYPES, ...rawRegistry } runs on every render of
     const componentRegistry = useMemo(
         () => ({ ...COMPONENT_TYPES, ...rawRegistry }),
         [rawRegistry] // COMPONENT_TYPES is a module constant — never changes
@@ -682,9 +623,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     const element = elements[elementId];
     const nodeRef = useRef<HTMLDivElement>(null);
 
-    // MIRROR-HEIGHT-2 [PERMANENT]: use useState + useRef so mirror wrapper
-    // re-renders when desktop frame grows. useRef alone updates silently —
-    // the mirror minHeight was computed once and never updated.
+    // use useState + useRef so mirror wrapper re-renders when desktop frame grows. useRef alone updates silently — the mirror minHeight was computed once and never updated
     const desktopHeightRef = useRef<number>(812); // kept for non-render reads
     const [mirrorHeight, setMirrorHeight] = useState<number>(812);
     useEffect(() => {
@@ -720,7 +659,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
 
     const dragStart = useRef({ x: 0, y: 0, left: 0, top: 0 });
 
-    // ── UX-1: Canvas context menu state ────────────────────────────────────────────────────
+    // ── Canvas context menu state ────────────────────────────────────────────────────
     const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number } | null>(null);
     const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
 
@@ -770,7 +709,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     const isHovered = hoveredId === elementId && !isSelected && !isMultiSel && !previewMode && !dragData;
     const isContainer = ['container', 'page', 'section', 'canvas', 'webpage', 'app', 'grid', 'card', 'stack_v', 'stack_h', 'hero', 'navbar', 'pricing'].includes(element.type);
 
-    // H-1 FIX: O(1) lookup via pre-built map instead of O(N) Object.keys().find() per render.
+    // O(1) lookup via pre-built map instead of O(N) Object.keys().find() per render.
     const parentId = parentMap.get(elementId);
     const parent = parentId ? elements[parentId] : null;
     const isParentCanvas = parent ? (parent.props.layoutMode === 'canvas') : false;
@@ -782,7 +721,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (activeTool === 'select') e.preventDefault();
         if (!element.locked) e.stopPropagation();
 
-        // Item 2: Shift+click toggles this element in/out of multi-select
+        // Shift+click toggles this element in/out of multi-select
         if (e.shiftKey && !element.locked) {
             if (isInMultiSelect(elementId)) { removeFromSelection(elementId); }
             else { addToSelection(elementId); }
@@ -798,7 +737,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (canMove && nodeRef.current) {
             e.currentTarget.setPointerCapture(e.pointerId);
             e.stopPropagation();
-            // P2-B2 FIX: start from the MERGED position (base + active breakpoint override).
+            // start from the MERGED position (base + active breakpoint override).
             // Previously read only base style — on a breakpoint where the element was visually
             // at a different position, the drag started from the wrong origin, causing an
             // instant jump on the first pointer-move frame.
@@ -834,12 +773,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 }
             }
 
-            // C-1 FIX: clone the full node chain — not just the top-level map —
-            // so we never mutate the live React state reference in-place.
-            // P2-B2 FIX: breakpoint-aware write for MOVE.
-            // Desktop → props.style (preserved existing behavior).
-            // Tablet/Mobile → props.breakpoints[bp] so the desktop layout is never
-            // clobbered when dragging in a breakpoint view.
+            // clone the full node chain — not just the top-level map — so we never mutate the live React state reference in-place. breakpoint-aware write for MOVE
             const bp = device !== 'desktop' ? (device as 'mobile' | 'tablet') : null;
             if (bp) {
                 const currentEl = elements[elementId];
@@ -905,7 +839,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (dragData.type === 'NEW') {
             const conf = componentRegistry[dragData.payload];
             if (conf) {
-                // M-1 FIX: crypto.randomUUID() — Date.now() collides on same-ms drops
+                // crypto.randomUUID() — Date.now() collides on same-ms drops
                 const newId = `el-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
                 const isFrame = dragData.payload === 'webpage' || dragData.payload === 'canvas';
                 const defaultW = isFrame ? 1440 : 200;
@@ -916,9 +850,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     type: dragData.payload,
                     name: conf.label,
                     children: [],
-                    // CIS-1: stamp component identity at birth so codeGenerator always
-                    // knows the correct import path without hardcoded type string lookups.
-                    // Undefined if conf has no importMeta (raw HTML element: div, p, etc.)
+                    // stamp component identity at birth so codeGenerator always knows the correct import path without hardcoded type string lookups. Undefined if conf has no importMeta (raw HTML element: div, p, etc.)
                     ...(conf.importMeta ? { importMeta: conf.importMeta } : {}),
                     props: {
                         ...conf.defaultProps,
@@ -936,7 +868,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     src: conf.src
                 };
 
-                // C-1 FIX: build the final map immutably. The target container node
+                // build the final map immutably. The target container node
                 // is cloned in the same spread — never mutated after construction.
                 const currentEl = elements[elementId];
                 const newElements = {
@@ -958,7 +890,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 const w = parseFloat(String(newNodes[rootId].props.style?.width || 0));
                 const h = parseFloat(String(newNodes[rootId].props.style?.height || 0));
 
-                // C-1 FIX: build new root style immutably (no in-place write)
+                // build new root style immutably (no in-place write)
                 const rootStyle: React.CSSProperties = {
                     ...newNodes[rootId].props.style,
                     position: (element.props.layoutMode === 'flex' ? 'relative' : 'absolute') as React.CSSProperties['position'],
@@ -971,18 +903,13 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 const newChildren = [...(currentEl.children || []), rootId];
 
                 if (isArtboard) {
-                    // FRAME-2 [PERMANENT]: Read minHeight, not height.
-                    // The artboard renders with height:'auto' (overridden in RenderNode
-                    // for all webpage-type artboards). parseFloat('auto') === NaN, so
-                    // the old `height` read caused `bottomEdge > NaN` = false always —
-                    // auto-grow never fired on any drop. minHeight is the stored boundary.
-                    // Fall back to DOM rect height as measured at drop time.
+                    // Read minHeight, not height. The artboard renders with height:'auto' (overridden in RenderNode for all webpage-type artboards). parseFloat('auto') === NaN, so
                     const storedMin = parseFloat(String(element.props.style?.minHeight ?? '0'));
                     const domH = rect.height / zoomRef.current;
                     const currentH = (storedMin > 0 ? storedMin : domH) || 1080;
                     const bottomEdge = (dropY - h / 2) + h + 50;
                     if (bottomEdge > currentH) {
-                        // C-1 FIX: TEMPLATE artboard auto-grow path — two separate
+                        // TEMPLATE artboard auto-grow path — two separate
                         // mutations were applied on the same reference. Build atomically.
                         const newElements = {
                             ...elements,
@@ -1019,7 +946,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             }
         }
         else if (dragData.type === 'ASSET_IMAGE') {
-            // M-1 FIX: crypto.randomUUID()
+            // crypto.randomUUID()
             const newId = `img-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             const imgW = 256;
             const imgH = 192;
@@ -1036,7 +963,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 },
                 src: dragData.payload,
             };
-            // C-1 FIX: immutable container clone
+            // immutable container clone
             const currentEl = elements[elementId];
             const newElements = {
                 ...elements,
@@ -1047,7 +974,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             setSelectedId(newId);
         }
         else if (dragData.type === 'ICON') {
-            // M-1 FIX: crypto.randomUUID()
+            // crypto.randomUUID()
             const newId = `icon-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             const iconSize = 48;
             const newNode = {
@@ -1062,7 +989,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     }
                 }
             };
-            // C-1 FIX: immutable container clone
+            // immutable container clone
             const currentEl = elements[elementId];
             const newElements = {
                 ...elements,
@@ -1073,7 +1000,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             setSelectedId(newId);
         }
         else if (dragData.type === 'DATA_BINDING') {
-            // M-1 FIX: crypto.randomUUID()
+            // crypto.randomUUID()
             const newId = `data-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             const isFlex = element.props.layoutMode === 'flex';
             const newNode: VectraNode = {
@@ -1089,7 +1016,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 },
                 content: `{{${dragData.payload}}}`
             };
-            // C-1 FIX: immutable container clone
+            // immutable container clone
             const currentEl = elements[elementId];
             const newElements: VectraProject = {
                 ...elements,
@@ -1185,12 +1112,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     }
 
     if (isParentCanvas && !isMobileMirror && !isArtboard) {
-        // FRAME-1 [PERMANENT]: Only force absolute positioning if the element does NOT
-        // explicitly declare position:relative (or static/sticky).
-        // Elements with position:relative are intentionally in-flow — they are
-        // the AI section wrapper and section nodes that must expand the artboard.
-        // Overriding them to absolute breaks artboard height:auto growth because
-        // absolutely-positioned children never contribute to parent height.
+        // Only force absolute positioning if the element does NOT explicitly declare position:relative (or static/sticky). Elements with position:relative are intentionally in-flow — they are
         const explicitPos = element.props.style?.position;
         if (!explicitPos || explicitPos === 'absolute') {
             finalStyle.position = 'absolute';
@@ -1202,11 +1124,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     }
 
     if (isMobileMirror) {
-        // MIRROR-OVERFLOW-1 [PERMANENT]: all nodes in mirror mode are in-flow.
-        // position:relative + width:100% ensures sections stack vertically inside
-        // the 390px container without bleeding outside its bounds.
-        // maxWidth:100% + overflowX:hidden prevent any wide internal element from
-        // blowing out the mirror frame horizontally.
+        // all nodes in mirror mode are in-flow. position:relative + width:100% ensures sections stack vertically inside the 390px container without bleeding outside its bounds
         finalStyle = {
             ...finalStyle,
             position: 'relative',
@@ -1261,7 +1179,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     // from the loader manifest. Renders via LiveComponent — same compile path
     // as AI-generated components, zero new machinery required.
     //
-    // PHASE-B-2 [PERMANENT]: all three conditions are REQUIRED.
+    // all three conditions are REQUIRED.
     //   - importMeta: confirms real component identity (not a native HTML element)
     //   - !element.code: guards against AI-generated nodes that happen to match
     //     a loader-registered type id
@@ -1314,12 +1232,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         content = <IconComp className="w-full h-full" strokeWidth={1.5} />;
     }
     else {
-        // MIRROR-OVERFLOW-1 + MIRROR-POSITION-2 [PERMANENT]:
-        // Mirror is rendered INSIDE the artboard motion.div.
-        // left = desktopWidth + GAP  →  canvas position = desktopLeft + desktopWidth + GAP ✅
-        // The old bug used desktopLeft + desktopWidth + GAP which double-counted desktopLeft
-        // (the artboard is already positioned at desktopLeft in canvas space), misplacing
-        // the mirror inside the desktop frame's bounds.
+        // MIRROR-OVERFLOW-1 + MIRROR-POSITION-2: Mirror is rendered INSIDE the artboard motion.div. left = desktopWidth + GAP  →  canvas position = desktopLeft + desktopWidth + GAP ✅
 
         content = (
             <>
@@ -1454,7 +1367,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                                 boxShadow: '0 8px 48px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.14)',
                                 border: '1px solid rgba(255,255,255,0.07)',
                                 backgroundColor: '#ffffff',
-                                // MIRROR-POINTER-1: read-only preview — clicks pass through
+                                // read-only preview — clicks pass through
                                 // to canvas. Prevents coordinate-mismatch drags.
                                 pointerEvents: 'none',
                             }}
@@ -1551,16 +1464,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             onBlur={(e) => {
                 if (!isEditing) return;
 
-                // SPRINT-E-FIX-10: Guard against sidebar clicks during text editing.
-                // When a user double-clicks text to edit, then clicks a RightSidebar
-                // control (e.g. ColorPicker) to change text styling, the contentEditable
-                // div loses focus and onBlur fires — prematurely committing the text
-                // content and exiting edit mode before the style change is applied.
-                //
-                // Fix: if focus is moving into #right-sidebar, keep isEditing=true.
-                // relatedTarget is the element receiving focus. closest() walks the DOM.
-                // Null-guarded: relatedTarget is null when focus moves to a non-focusable
-                // element (canvas background). In that case, commit normally.
+                // Guard against sidebar clicks during text editing. When a user double-clicks text to edit, then clicks a RightSidebar control (e.g. ColorPicker) to change text styling, the contentEditable
                 const focusingIntoSidebar = !!(e.relatedTarget as Element | null)
                     ?.closest?.('#right-sidebar');
 
@@ -1571,7 +1475,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                 }
 
                 setIsEditing(false);
-                // NS-6 FIX: spread props separately to prevent aliasing. Without this,
+                // spread props separately to prevent aliasing. Without this,
                 // elements[elementId].props is the same reference in the new state object
                 // — any mutation of props.style later becomes a C-1-class direct mutation.
                 updateProject({
@@ -1603,12 +1507,12 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             )}
             {content}
 
-            {/* UX-9: Floating format bar — shown when editing a text/heading/button node */}
+            {/* Floating format bar — shown when editing a text/heading/button node */}
             {isEditing && !previewMode && (
                 <FloatingFormatBar anchorId={elementId} onClose={() => setIsEditing(false)} />
             )}
 
-            {/* UX-1: Canvas context menu — fixed-position portal */}
+            {/* Canvas context menu — fixed-position portal */}
             {ctxMenu && !previewMode && (
                 <CanvasContextMenu
                     x={ctxMenu.x} y={ctxMenu.y}
@@ -1623,7 +1527,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                         closeCtxMenu();
                     }}
                     onCopy={() => {
-                        // UX-1-2 [PERMANENT]: write to global clipboard so Cmd+V in App.tsx picks it up.
+                        // write to global clipboard so Cmd+V in App.tsx picks it up.
                         (window as any).__vectra_clipboard = elementId;
                         closeCtxMenu();
                     }}

@@ -94,7 +94,7 @@ const EditorLayout = () => {
   const { selectedIds, clearSelection, addToSelection } = useUI();
   const { status } = useContainer();
 
-  // UX-30 [PERMANENT]: Browser tab title tracks active project name.
+  // Browser tab title tracks active project name.
   // Resets to 'Vectra' on unmount (user returns to dashboard).
   useEffect(() => {
     document.title = projectName ? `${projectName} — Vectra` : 'Vectra';
@@ -102,9 +102,9 @@ const EditorLayout = () => {
   }, [projectName]);
   const [isImportOpen, setIsImportOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
-  // UX-3: session clipboard — stores last copied node ID.
+  // session clipboard — stores last copied node ID.
   const clipboardRef = useRef<string | null>(null);
-  // SPRINT-E-FIX-9: tracks that a nudge keydown is in-progress so the keyUp
+  // tracks that a nudge keydown is in-progress so the keyUp
   // handler knows to commit one history entry. Ref (not state) — zero re-renders.
   const nudgeActiveRef = useRef(false);
 
@@ -119,7 +119,7 @@ const EditorLayout = () => {
       const PROTECTED = new Set(['application-root', 'page-home', 'main-frame',
         'main-frame-desktop', 'main-frame-mobile', 'main-canvas']);
 
-      // UX-2 [PERMANENT]: Arrow key nudge — 1px per tap, 10px with Shift.
+      // Arrow key nudge — 1px per tap, 10px with Shift.
       // Reads elementsRef.current (H-4 pattern) — no stale closure on elements state.
       // skipHistory:true during hold; one undo entry per gesture via keyUp handler.
       if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
@@ -142,13 +142,9 @@ const EditorLayout = () => {
           updateProject({
             ...elementsRef.current,
             [selectedId]: { ...el, props: { ...el.props, style: { ...s, left: `${newLeft}px`, top: `${newTop}px` } } },
-          }, { skipHistory: true }); // NM-7: skipHistory during keydown hold
+          }, { skipHistory: true }); // skipHistory during keydown hold
         } else {
-          // ── SPRINT-E-FIX-9: flex/grid children — nudge via margin ──────────
-          // For in-flow elements (flex/grid), left/top have no effect.
-          // Adjusting margin offsets them visually without breaking the layout flow.
-          //   Left/Right → marginLeft (horizontal spacing offset)
-          //   Up/Down    → marginTop  (vertical spacing offset)
+          // ── flex/grid children — nudge via margin ────────── For in-flow elements (flex/grid), left/top have no effect. Adjusting margin offsets them visually without breaking the layout flow
           const isHorizontal = e.key === 'ArrowLeft' || e.key === 'ArrowRight';
           const marginKey = isHorizontal ? 'marginLeft' : 'marginTop';
           const currentMargin = parseFloat(String((s as any)[marginKey] ?? '0')) || 0;
@@ -160,14 +156,14 @@ const EditorLayout = () => {
               ...el,
               props: { ...el.props, style: { ...s, [marginKey]: `${currentMargin + delta}px` } },
             },
-          }, { skipHistory: true }); // NM-7: skipHistory during keydown hold
+          }, { skipHistory: true }); // skipHistory during keydown hold
         }
         return;
       }
 
       if (e.key === 'Delete' || e.key === 'Backspace') {
         if (isTyping) return;
-        // Item 2: multi-delete
+        // multi-delete
         if (selectedIds.size > 1) {
           e.preventDefault();
           selectedIds.forEach(id => { if (!PROTECTED.has(id)) deleteElement(id); });
@@ -187,23 +183,21 @@ const EditorLayout = () => {
       if (e.key === 'i' && !isTyping && !e.ctrlKey && !e.metaKey) { e.preventDefault(); setActivePanel(prev => prev === 'add' ? null : 'add'); }
       if ((e.ctrlKey || e.metaKey) && e.key === 'i' && !isTyping) { e.preventDefault(); setIsImportOpen(true); }
 
-      // Item 1: Copy — also writes to window.__vectra_clipboard for context-menu symmetry (UX-1-2)
+      // Copy — also writes to window.__vectra_clipboard for context-menu symmetry (UX-1-2)
       if ((e.metaKey || e.ctrlKey) && e.key === 'c' && !isTyping) {
         if (selectedId && !PROTECTED.has(selectedId)) {
           clipboardRef.current = selectedId;
           (window as any).__vectra_clipboard = selectedId;
         }
       }
-      // UX-1-2 [PERMANENT]: Sync context-menu Copy into clipboardRef so Cmd+V works after right-click Copy.
+      // Sync context-menu Copy into clipboardRef so Cmd+V works after right-click Copy.
       // Checked on every keydown — cost is a single property read.
       if ((window as any).__vectra_clipboard && (window as any).__vectra_clipboard !== clipboardRef.current) {
         clipboardRef.current = (window as any).__vectra_clipboard;
         (window as any).__vectra_clipboard = null;
       }
 
-      // UX-3 [PERMANENT]: True cross-page paste.
-      // Same-page: duplicateElement() (parent lookup succeeds).
-      // Cross-page: deepClone subtree with fresh IDs, importPage() for atomic insert.
+      // True cross-page paste. duplicateElement() (parent lookup succeeds). deepClone subtree with fresh IDs, importPage() for atomic insert
       if ((e.metaKey || e.ctrlKey) && e.key === 'v' && !isTyping) {
         const srcId = clipboardRef.current;
         if (!srcId) { /* nothing */ }
@@ -216,7 +210,7 @@ const EditorLayout = () => {
               const newId = duplicateElement(srcId);
               if (newId) setSelectedId(newId);
             } else {
-              // Cross-page: rebuild full subtree with collision-free IDs
+              // rebuild full subtree with collision-free IDs
               const src = elementsRef.current;
               const idMap = new Map<string, string>();
               const walk = (id: string) => {
@@ -242,23 +236,7 @@ const EditorLayout = () => {
         }
       }
 
-      // SPRINT-D-FIX-23: ⌘G / Ctrl+G — group ≥2 multi-selected siblings into a container.
-      //
-      // CONSTRAINTS:
-      //   • Requires selectedIds.size >= 2. Single-select: no-op.
-      //   • All selected elements MUST share the same parent (canvas-mode siblings).
-      //     Cross-parent grouping is skipped with console.warn — clean fail, no mutation.
-      //   • NS-1: groupId uses crypto.randomUUID().
-      //   • C-1/C-2: all mutations use spread-clone.
-      //   • updateProject() calls pushHistory internally (H-3) — no double-push.
-      //   • PERF-2: parentMap.get() is O(1) per element — runs once on keydown.
-      //
-      // BOUNDING BOX:
-      //   1. Read each element’s absolute left/top/width/height.
-      //   2. Compute minX/minY → maxX/maxY across the set.
-      //   3. Container positioned at (minX, minY) with size (maxX−minX, maxY−minY).
-      //   4. Each child’s left/top becomes relative to the container origin:
-      //      childRelLeft = childAbsLeft − containerLeft
+      // ⌘G / Ctrl+G — group ≥2 multi-selected siblings into a container. CONSTRAINTS: • Requires selectedIds.size >= 2. Single-select: no-op
       if ((e.metaKey || e.ctrlKey) && e.key === 'g' && !isTyping) {
         e.preventDefault();
 
@@ -295,7 +273,7 @@ const EditorLayout = () => {
 
         const groupW = Math.max(maxX - minX, 20);
         const groupH = Math.max(maxY - minY, 20);
-        // NS-1: crypto.randomUUID() — no Date.now()+random collisions
+        // crypto.randomUUID() — no Date.now()+random collisions
         const groupId = `container-${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`;
 
         const next = { ...cur };
@@ -371,7 +349,7 @@ const EditorLayout = () => {
         }
       }
 
-      // UX-29 [PERMANENT]: ? key opens keyboard shortcut reference.
+      // ? key opens keyboard shortcut reference.
       if (e.key === '?' && !isTyping) {
         e.preventDefault();
         setShowShortcuts(p => !p);
@@ -386,14 +364,7 @@ const EditorLayout = () => {
     clearSelection, addToSelection, isImportOpen, elementsRef, updateProject, pushHistory,
     showShortcuts, importPage, parentMap, nudgeActiveRef]);
 
-  // SPRINT-E-FIX-9: Commit ONE history entry when arrow key is released after a nudge.
-  // Mirrors the NM-7 slider pattern:
-  //   keydown (held) → skipHistory:true repeated updates
-  //   keyUp         → ONE pushHistory(elementsRef.current)
-  //
-  // nudgeActiveRef ensures we only push when a nudge actually happened — not on
-  // every arrow-key release (e.g. scrolling a textarea, navigating a dropdown).
-  // H-4: read elementsRef.current in keyUp, not the stale elements state.
+  // Commit ONE history entry when arrow key is released after a nudge. Mirrors the NM-7 slider pattern: keydown (held) → skipHistory:true repeated updates
   useEffect(() => {
     const handleKeyUp = (e: KeyboardEvent) => {
       if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) return;
@@ -439,7 +410,7 @@ const EditorLayout = () => {
         </Suspense>
       )}
 
-      {/* UX-29 [PERMANENT]: Keyboard shortcut reference modal. Opened with '?' key. */}
+      {/* Keyboard shortcut reference modal. Opened with '?' key. */}
       {showShortcuts && (
         <div
           className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"

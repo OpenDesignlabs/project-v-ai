@@ -1,9 +1,11 @@
+/**
+ * --- TEMPLATE UTILS ---------------------------------------------------------
+ * Deep-clones a template subtree from the element tree, assigning fresh
+ * collision-resistant IDs to every node in the clone. Used when duplicating
+ * elements, instantiating drag-dropped templates, and grouping selections.
+ */
 import type { VectraProject, VectraNode } from '../types';
 
-/**
- * Takes a template (a collection of nodes) and creates a deep copy
- * with brand new unique IDs for every single node.
- */
 export const instantiateTemplate = (
     templateRootId: string,
     templateNodes: VectraProject
@@ -26,9 +28,7 @@ export const instantiateTemplate = (
     const nodesToClone = getAllDescendants(templateRootId);
 
     nodesToClone.forEach(oldId => {
-        // M-5 FIX: crypto.randomUUID() — guaranteed unique per RFC 4122.
-        // Date.now()+random had ~60M collision space and the same ms timestamp
-        // for all nodes in a 30+ node bulk instantiation on a loaded CPU.
+        // crypto.randomUUID() — guaranteed unique per RFC 4122. Date.now()+random had ~60M collision space and the same ms timestamp for all nodes in a 30+ node bulk instantiation on a loaded CPU
         const newId = `el-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
         idMap[oldId] = newId;
     });

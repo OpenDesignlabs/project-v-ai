@@ -1,13 +1,10 @@
 /**
- * ─── UI CONTEXT ───────────────────────────────────────────────────────────────
- * Owns only ephemeral, per-session UI state that changes frequently:
- * selections, hovers, active tool, zoom, pan, drag, panels, preview mode.
+ * --- UI CONTEXT -------------------------------------------------------------
+ * Manages ephemeral, per-session UI state that changes frequently:
+ * selected element, active tool, zoom, pan, drag, sidebar panels, preview mode.
  *
- * Keeping this separate from ProjectContext means that hovering over an element
- * or switching a sidebar panel does NOT re-render the entire canvas or any
- * component that only cares about document data.
- *
- * This is the "View State" in a loose MVC split with ProjectContext.
+ * Separated from ProjectContext so that hovering, zooming, or switching panels
+ * does not re-render components that only care about document data.
  */
 
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef, type ReactNode } from 'react';
@@ -28,9 +25,7 @@ interface UIContextType {
     // ── Selection ─────────────────────────────────────────────────────────────
     selectedId: string | null;
     setSelectedId: (id: string | null) => void;
-    // Note: hoveredId lives in HoverContext (src/context/HoverContext.tsx).
-    // It was extracted to prevent 60fps pointer-move from re-rendering all 200
-    // RenderNode instances via UIContext on every mouse move frame.
+    // hoveredId lives in HoverContext to prevent 60fps pointer-move from re-rendering all RenderNode instances.
     // Item 2 — Multi-select set (always contains selectedId as the anchor)
     selectedIds: Set<string>;
     addToSelection: (id: string) => void;
@@ -43,9 +38,7 @@ interface UIContextType {
     setActiveTool: (tool: EditorTool) => void;
     zoom: number;
     setZoom: React.Dispatch<React.SetStateAction<number>>;
-    // NM-8: stable zoom ref — read zoom in event handlers without subscribing
-    // to zoom state. Eliminates zoom-triggered re-renders in all RenderNodes.
-    // Pattern: same as NH-1 (Canvas.tsx zoomRef), elementsRef (ProjectContext).
+    // zoomRef — stable ref so event handlers read zoom without subscribing to the zoom state.
     zoomRef: React.MutableRefObject<number>;
     pan: { x: number; y: number };
     setPan: React.Dispatch<React.SetStateAction<{ x: number; y: number }>>;
@@ -65,12 +58,7 @@ interface UIContextType {
     setPreviewMode: (v: boolean) => void;
     device: DeviceType;
     setDevice: (d: DeviceType) => void;
-    /**
-     * Direction A — activeBreakpoint: derived from `device`.
-     * 'desktop' → writes go to node.props.style (base)
-     * 'tablet'  → writes go to node.props.breakpoints.tablet
-     * 'mobile'  → writes go to node.props.breakpoints.mobile
-     */
+    /** activeBreakpoint: derived from device. Drives which style object (base/tablet/mobile) receives property writes. */
     activeBreakpoint: 'desktop' | 'tablet' | 'mobile';
     viewMode: ViewMode;
     setViewMode: (m: ViewMode) => void;
@@ -96,17 +84,10 @@ interface UIContextType {
     currentView: AppView;
     setCurrentView: (v: AppView) => void;
 
-    /**
-     * savePageViewport: snapshot current selectedId/pan/zoom under pageId.
-     * Call BEFORE switching activePageId so the departing page's state is captured.
-     */
+    /** Snapshots the current selectedId/pan/zoom for a page before navigating away. */
     savePageViewport: (pageId: string) => void;
 
-    /**
-     * restorePageViewport: apply the cached viewport for pageId.
-     * If no cache entry exists (page never visited), resets to clean slate:
-     *   selectedId = null, pan = {x:0, y:0}, zoom = 1
-     */
+    /** Restores the cached viewport for a page, or resets to a clean slate if the page was never visited. */
     restorePageViewport: (pageId: string) => void;
 
     // ── Action runner (links, scroll) ─────────────────────────────────────────
@@ -127,21 +108,13 @@ const UIContext = createContext<UIContextType | null>(null);
 
 export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [selectedIdRaw, setSelectedIdRaw] = useState<string | null>(null);
-    // hoveredId removed from UIContext → now lives in HoverContext.
-    // See src/context/HoverContext.tsx for rationale and implementation.
-    // Item 2: selectedIds tracks the full multi-select set.
-    // selectedId is the "anchor" — the last clicked element.
+    // hoveredId moved to HoverContext so 60fps pointer-move doesn't re-render all RenderNode instances.
     const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-    // M-1 FIX: mirror selectedIds into a stable ref so isInMultiSelect can use
-    // [] deps. Previously [selectedIds] caused a new isInMultiSelect identity on
-    // every shift-click → 200 RenderNode useCallback invalidations per click on
-    // a 200-node canvas.
+    // Mirror selectedIds into a stable ref so isInMultiSelect has a [] dep array, avoiding 200 useCallback invalidations per shift-click.
     const selectedIdsRef = useRef<Set<string>>(new Set());
     useEffect(() => { selectedIdsRef.current = selectedIds; }, [selectedIds]);
 
-    // setSelectedId is the unified single-select entry point.
-    // Wrapping it ensures selectedIds stays in sync as a singleton
-    // so all existing callers work without modification.
+    // Unified single-select entry point — keeps selectedIds in sync as a singleton for all existing callers.
     const setSelectedId = useCallback((id: string | null) => {
         setSelectedIdRaw(id);
         setSelectedIds(id ? new Set([id]) : new Set());
@@ -169,10 +142,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     );
     const [activeTool, setActiveTool] = useState<EditorTool>('select');
     const [zoom, setZoom] = useState(0.5);
-    // NM-8 FIX: mirror zoom into a stable ref. Consumers that only need zoom
-    // inside event handlers (RenderNode pointer/drag math) read zoomRef.current
-    // — eliminates 200×60fps re-renders during wheel zoom on a full canvas.
-    // Same pattern as NH-1 in Canvas.tsx, elementsRef in ProjectContext.
+    // Stable zoom ref — event handlers read this directly so they don't subscribe to the 60fps zoom state.
     const zoomRef = useRef(zoom);
     useEffect(() => { zoomRef.current = zoom; }, [zoom]);
     const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -191,22 +161,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [componentRegistry, setComponentRegistry] = useState<Record<string, any>>({});
     const [recentComponents, setRecentComponents] = useState<string[]>([]);
 
-    // ── Per-page viewport cache (Direction 3 — Item 0 perf fix) ──────────────────
-    //
-    // THE PROBLEM THIS FIXES:
-    // savePageViewport previously closed over selectedId, pan, and zoom directly.
-    // Those values change at 60fps during pan/zoom gestures. useCallback([selectedId,
-    // pan, zoom]) recreated savePageViewport on every frame. Canvas.tsx's useEffect
-    // depended on it, so the event listener tore down and re-attached 60 times/sec.
-    // window.removeEventListener + addEventListener at 60fps is not free.
-    //
-    // THE FIX:
-    // viewportStateRef is a ref that mirrors the three values synchronously.
-    // A single useEffect (dep: [selectedId, pan, zoom]) writes to the ref on
-    // every change — this is the ONLY thing that depends on those values.
-    // savePageViewport reads from the ref with dep array []. It is created ONCE,
-    // never recreated, and Canvas.tsx's useEffect dep array is also [].
-    // The event listener attaches exactly once on mount and detaches on unmount.
+    // ── Per-page viewport cache (Direction 3 — Item 0 perf fix) ────────────────── THE PROBLEM THIS FIXES: savePageViewport previously closed over selectedId, pan, and zoom directly
     const pageViewportCache = useRef<Map<string, PageViewport>>(new Map());
 
     // Stable ref — always holds the latest selectedId/pan/zoom without causing
@@ -267,7 +222,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
         return () => window.removeEventListener('vectra:open-project', handler);
     }, [setCurrentView]);
 
-    // M-4 FIX: evict deleted page's viewport cache entry so pageViewportCache
+    // evict deleted page's viewport cache entry so pageViewportCache
     // doesn't accumulate indefinitely on AI-driven page churn.
     useEffect(() => {
         const handler = (e: Event) => {
@@ -303,11 +258,7 @@ export const UIProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
             device === 'tablet' ? 'tablet' : 'desktop';
 
     const addAsset = (file: File) => {
-        // H-2 FIX: generate ID synchronously BEFORE readAsDataURL.
-        // Date.now() inside onload collides on batch drops (3 files dropped at once:
-        // all FileReader.onload callbacks can resolve within the same ms tick).
-        // crypto.randomUUID() is guaranteed unique; generating before the async
-        // call ensures it is captured in the closure before any await boundary.
+        // generate ID synchronously BEFORE readAsDataURL. Date.now() inside onload collides on batch drops (3 files dropped at once: all FileReader.onload callbacks can resolve within the same ms tick)
         const assetId = `asset-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
         const reader = new FileReader();
         reader.onload = (e) => setAssets(prev => [

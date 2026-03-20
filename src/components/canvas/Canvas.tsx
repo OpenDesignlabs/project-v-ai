@@ -8,13 +8,7 @@ import { FramePicker } from './FramePicker';
 import { TEMPLATES } from '../../data/templates';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 
-// ── Item 3: ArtboardResizeHandle ─────────────────────────────────────────────────────────
-// An 8px invisible hit-target at the bottom edge of each artboard frame.
-// Dragging it live-updates height + minHeight and commits one history entry on release.
-// Lives in the canvas world coordinate space — no coordinate transform needed.
-// M-2 FIX: React.memo — ArtboardResizeHandle re-rendered on every Canvas state change
-// (pan, zoom, box-select rect). On a 3-artboard project: 3×60 = 180 wasted renders/sec
-// during wheel gestures. Memoize — only re-render when frameId or zoom changes.
+// Invisible 8px drag handle at the bottom of each artboard frame. Memoized — only re-renders when frameId or zoom changes.
 const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ frameId, zoom }) => {
     const { elements, updateProject, pushHistory, elementsRef } = useProject();
     const frame = elements[frameId];
@@ -50,10 +44,7 @@ const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ fr
         if (!dragState.current) return;
         dragState.current = null;
         e.currentTarget.releasePointerCapture(e.pointerId);
-        // NM-3 FIX: read elementsRef.current, not the closed-over elements state.
-        // onPointerUp fires in the same event flush as the last onPointerMove —
-        // elements in the closure is the render snapshot from BEFORE pointerUp,
-        // which may be one frame behind the committed drag state.
+        // Read from elementsRef (not closed-over state) — pointerUp fires in same flush as last pointermove, closure may be one frame stale.
         setTimeout(() => pushHistory(elementsRef.current), 0);
     };
 
@@ -79,32 +70,17 @@ const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ fr
     );
 });
 
-/**
- * ─── CANVAS ────────────────────────────────────────────────────────────────────
- * Split into three context subscriptions to minimise re-renders:
- *
- *  useProject()  → elements, updateProject, activePageId, instantiateTemplate
- *                  Only re-renders when the document tree mutates.
- *
- *  useUI()       → zoom, pan, isPanning, guides, drag, selection, panels
- *                  Re-renders on every wheel / pointer-move event, but these
- *                  are now isolated to Canvas — Sidebar/Header stay idle.
- *
- *  useEditor()   → handleInteractionMove, componentRegistry
- *                  Assembled bridge that combines both — read-only bridge values.
- */
+// Main canvas component. Subscribes to useProject (doc data), useUI (60fps viewport), and useEditor (interaction engine) separately to minimise re-renders.
 export const Canvas = () => {
     // ── Slow-changing project data ─────────────────────────────────────────────
     const {
         elements, updateProject, activePageId, instantiateTemplate, history, addFrame,
-        // FIX-6: parentMap for world-space multi-select bbox. Canvas already re-renders
+        // parentMap for world-space multi-select bbox. Canvas already re-renders
         // on elements change (PERF-2 safe — parentMap rebuilds on structuralKey only).
         parentMap,
     } = useProject();
 
-    // ── High-frequency viewport + UI state ────────────────────────────────────
-    // These values update 60 fps during pan/zoom. Isolating them here means
-    // Sidebar, Header and PropertyPanel never re-render on pointer move.
+    // 60fps viewport state — isolated from Sidebar and Header so they never re-render on pan/zoom.
     const {
         zoom, setZoom,
         pan, setPan,
@@ -119,7 +95,7 @@ export const Canvas = () => {
         restorePageViewport,
         // Item 2 — multi-select
         clearSelection, addToSelection,
-        // FIX-6: selectedIds drives the bounding box overlay.
+        // selectedIds drives the bounding box overlay.
         selectedIds,
     } = useUI();
 
@@ -128,19 +104,14 @@ export const Canvas = () => {
 
     const canvasRef = useRef<HTMLDivElement>(null);
     const [spacePressed, setSpacePressed] = useState(false);
-    // NH-1 FIX: mirror zoom into a ref so the wheel handler reads the current value
-    // without having zoom in its dep array. zoom in deps → listener torn down + re-attached
-    // on every setZoom call → 60fps teardown → one-frame gap where e.preventDefault() drops
-    // → browser scrolls page body instead of zooming canvas (especially bad on Safari).
+    // Stable zoom ref — read inside wheel handler without triggering listener teardown on every setZoom call.
     const zoomRef = useRef(zoom);
     useEffect(() => { zoomRef.current = zoom; }, [zoom]);
     // Item 2 — box-select state
     const boxSelectRef = useRef<{ active: boolean; startX: number; startY: number; worldStartX: number; worldStartY: number } | null>(null);
     const [boxSelectRect, setBoxSelectRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
 
-    // ── FIX-6: Multi-select bounding box ─────────────────────────────────────
-    // Computed in world space — rendered inside the transform div so world-space
-    // coords are automatically scaled + panned. Cost: O(selectedIds.size).
+    // World-space bounding box over all selected elements — auto-scales with the canvas transform.
     const multiSelBBox = useMemo(() => {
         if (selectedIds.size < 2 || previewMode) return null;
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -154,7 +125,7 @@ export const Canvas = () => {
             const elW    = parseFloat(String(s.width ?? '0'));
             const elH    = parseFloat(String(s.height ?? s.minHeight ?? '0'));
             if (elW <= 0 && elH <= 0) return;
-            // Walk one level to artboard for offset (H-1: O(1) parentMap lookup)
+            // Walk one level to artboard for offset (O(1) parentMap lookup)
             const parentId = parentMap.get(id);
             const parent = parentId ? elements[parentId] : null;
             let ax = 0, ay = 0;
@@ -182,7 +153,7 @@ export const Canvas = () => {
             if (previewMode) return;
             e.preventDefault();
             if (e.ctrlKey || e.metaKey) {
-                // NH-1 FIX: read from zoomRef — never from closed-over zoom state.
+                // read from zoomRef — never from closed-over zoom state.
                 const newZoom = Math.min(Math.max(zoomRef.current + -e.deltaY * 0.002, 0.1), 3);
                 setZoom(newZoom);
             } else {
@@ -194,20 +165,7 @@ export const Canvas = () => {
         return () => el?.removeEventListener('wheel', onWheel);
     }, [previewMode, setZoom, setPan]); // zoom removed — read via zoomRef.current
 
-    // ── Direction 3: Per-page viewport save/restore ───────────────────────────
-    // Listens for the 'vectra:page-switching' CustomEvent dispatched by
-    // ProjectContext.switchPage() just BEFORE activePageId changes.
-    //
-    // TIMING GUARANTEE
-    // ────────────────
-    // The event fires synchronously in switchPage() before setActivePageId().
-    // React batches the setActivePageId() state update for the next render.
-    // This means when our handler runs, selectedId/pan/zoom still hold the
-    // DEPARTING page's values — exactly what we want to save.
-    //
-    // After saving, we immediately restore the incoming page's viewport so
-    // that when React re-renders (after setActivePageId flushes), the canvas
-    // starts at the correct position/zoom for the new page.
+    // Saves the departing page's viewport and restores the arriving page's viewport on every page switch.
     useEffect(() => {
         const handler = (e: Event) => {
             const { from, to } = (e as CustomEvent<{ from: string; to: string }>).detail;
@@ -223,11 +181,8 @@ export const Canvas = () => {
         window.addEventListener('vectra:page-switching', handler);
         return () => window.removeEventListener('vectra:page-switching', handler);
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
-    // savePageViewport and restorePageViewport are stable ([] dep in UIContext).
-    // This effect attaches exactly once on mount and detaches on unmount.
-    // Zero listener churn during 60fps pan/zoom. (Item 0 fix)
-    // ── End Direction 3 ───────────────────────────────────────────────────────
 
+    
     // ── 2. KEYBOARD — spacebar panning ────────────────────────────────────────
     useEffect(() => {
         const onKeyDown = (e: KeyboardEvent) => {
@@ -330,10 +285,7 @@ export const Canvas = () => {
         };
     }, [elements, activePageId, previewMode, setZoom, setPan]);
 
-    // ── 4. DROP — element creation from sidebar drag ──────────────────────────
-    // UX-16 [PERMANENT]: Snap a drop coordinate to the nearest artboard frame.
-    // Prevents elements from landing in empty canvas void when the user misses a frame.
-    // DATA_BINDING drops bypass this — they use hit-test to find a specific target element.
+    // Snaps a drop coordinate to the nearest artboard frame. DATA_BINDING drops bypass this and use a hit-test instead.
     const snapDropToArtboard = (wx: number, wy: number): { x: number; y: number } => {
         const pageRoot = elements[activePageId];
         if (!pageRoot?.children) return { x: wx, y: wy };
@@ -382,17 +334,13 @@ export const Canvas = () => {
 
         const rect = canvasRef.current?.getBoundingClientRect();
         if (!rect) return;
-        // UX-16: use let so snapDropToArtboard can reassign x/y after DATA_BINDING bypass
+        // use let so snapDropToArtboard can reassign x/y after DATA_BINDING bypass
         let worldX = (e.clientX - rect.left - pan.x) / zoom;
         let worldY = (e.clientY - rect.top - pan.y) / zoom;
 
         // ── Data binding drop ───────────────────────────────────────────────
         if (dragData.type === 'DATA_BINDING') {
-            // C-3 FIX: scope candidate search to active-page descendants only.
-            // Object.values(elements) spans ALL pages — elements from other pages
-            // share the same world coordinate space (same left/top values) and
-            // produce false-positive hits, silently writing {{binding}} to an
-            // off-page element the user cannot see.
+            // Walk active-page descendants only — elements from other pages can share the same world coordinates.
             const pageDescendants = new Set<string>();
             const walkForBinding = (id: string) => {
                 if (pageDescendants.has(id)) return; // cycle-guard
@@ -425,7 +373,7 @@ export const Canvas = () => {
             }
         }
 
-        // UX-16: Snap all non-binding drops to the nearest artboard.
+        // Snap all non-binding drops to the nearest artboard.
         // 'webpage' artboard drops (new frames) bypass snap — they land at cursor.
         if (dragData.type !== 'DATA_BINDING' && dragData.payload !== 'webpage') {
             const snapped = snapDropToArtboard(worldX, worldY);
@@ -445,7 +393,7 @@ export const Canvas = () => {
             w = parseFloat(String(newNodes[newRootId].props.style?.width || 0));
             h = parseFloat(String(newNodes[newRootId].props.style?.height || 0));
         } else if (dragData.type === 'ICON') {
-            // NM-6 FIX: crypto.randomUUID() — Date.now() collides on same-ms drops
+            // crypto.randomUUID() — Date.now() collides on same-ms drops
             newRootId = `icon-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
             w = 48; h = 48;
             newNodes[newRootId] = {
@@ -471,9 +419,7 @@ export const Canvas = () => {
             h = dragData.payload === 'webpage' ? 1080 : 100;
             newNodes[newRootId] = {
                 id: newRootId, type: dragData.payload, name: conf.label, children: [],
-                // CIS-1: stamp component identity at birth — mirrors RenderNode.handleDrop.
-                // Both creation paths must stamp importMeta so no node escapes without its
-                // identity regardless of whether it was dropped onto a canvas frame or artboard.
+                // Stamp importMeta at creation so the node always carries its component identity.
                 ...(conf.importMeta ? { importMeta: conf.importMeta } : {}),
                 props: {
                     ...conf.defaultProps,
@@ -499,10 +445,7 @@ export const Canvas = () => {
 
             const newProject = { ...elements, ...newNodes };
             if (newProject[activePageId]) {
-                // NS-2 FIX: newProject[activePageId] is the same object reference as
-                // elements[activePageId] when activePageId was NOT modified in newNodes.
-                // Writing .children directly mutates live React state — C-1 class bug.
-                // Clone the node immutably before appending the new child.
+                // Spread-clone activePageId node before appending — never mutate the shared reference directly.
                 newProject[activePageId] = {
                     ...newProject[activePageId],
                     children: [...(newProject[activePageId].children || []), newRootId],
@@ -563,19 +506,7 @@ export const Canvas = () => {
                 const selMaxX = Math.max(bs.worldStartX, worldEndX);
                 const selMinY = Math.min(bs.worldStartY, worldEndY);
                 const selMaxY = Math.max(bs.worldStartY, worldEndY);
-                // M-2 FIX: Accumulate ancestor offsets to get true world-space coords.
-                //
-                // OLD BUG: collectAbsoluteNodes() returned raw style.left/top — LOCAL
-                // to each node's parent container. A button at left:48px inside a 
-                // container at left:600px has world X = 648px, but the old code compared
-                // 48 against world selMinX/selMaxX → always wrong for nested elements.
-                //
-                // FIX: collectAbsoluteNodesWithWorldCoords() threads (offsetX, offsetY)
-                // through the recursive walk. At each absolutely-positioned node, its
-                // world position = accumulated offset + own left/top. That world position
-                // becomes the new offset for its own children. Flex-mode containers do
-                // NOT contribute to offset accumulation (their children are flow-positioned,
-                // not left/top-absolutely-positioned). A visited Set prevents cycles.
+                // Accumulate ancestor offsets to convert local left/top into world-space coords for intersection testing.
 
                 interface WorldNode {
                     id: string;
@@ -663,8 +594,8 @@ export const Canvas = () => {
                                 const el = elements[cid];
                                 if (!el) return null;
                                 if (el.type !== 'webpage' && el.type !== 'canvas') return null;
-                                if (el.props?.mirrorOf) return null;   // CF-1: mirror frames skip
-                                if (el.props?.collapsed) return null;  // CF-2: collapsed frames skip
+                                if (el.props?.mirrorOf) return null;   // mirror frames skip
+                                if (el.props?.collapsed) return null;  // collapsed frames skip
                                 return <ArtboardResizeHandle key={`arh-${cid}`} frameId={cid} zoom={zoom} />;
                             })}
                         </div>
@@ -686,9 +617,7 @@ export const Canvas = () => {
                             style={{ left: boxSelectRect.x, top: boxSelectRect.y, width: boxSelectRect.w, height: boxSelectRect.h }}
                         />
                     )}
-                    {/* FIX-6: Multi-select group bounding box
-                        Inside world transform div → world-space coords auto-scale with zoom.
-                        pointer-events-none — never intercepts clicks on canvas elements. */}
+                    {/* Multi-select bounding box — rendered in world space so it scales with zoom. pointer-events-none. */}
                     {multiSelBBox && (
                         <div
                             className="absolute pointer-events-none border border-dashed border-blue-400/80 bg-blue-500/[0.04]"
@@ -705,7 +634,7 @@ export const Canvas = () => {
                 </div>
             )}
 
-            {/* FIX-8: Zoom level badge — outer container (not world div) so it never scales.
+            {/* Zoom level badge — outer container (not world div) so it never scales.
                 Click fires zoom-to-fit. Matches Header button behaviour exactly. */}
             {!previewMode && (
                 <div className="absolute bottom-4 left-4 z-[9990] pointer-events-none select-none">
