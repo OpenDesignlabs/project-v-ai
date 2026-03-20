@@ -36,8 +36,10 @@ wasm-pack.log
 
 # Private Notes
 inplem-clude.md
-# lock file
+# lock files
 pnpm-lock.yaml
+package-lock.json
+yarn.lock
 
 # public
 .agents/
