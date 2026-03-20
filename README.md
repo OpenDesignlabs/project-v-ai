@@ -38,3 +38,19 @@ The engine relies on:
 - `swc_core`: For JavaScript/TypeScript transformation.
 - `wasm-bindgen`: For Rust-JS communication.
 - `serde`: For efficient data serialization.
+
+## 📦 Static Assets Setup
+
+To keep the repository lightweight, some large third-party runtime dependencies are not tracked in git. You must download them to the `public/` directory before running the project:
+
+### Required Files:
+1. **Babel Standalone**: [babel.min.js](https://unpkg.com/@babel/standalone/babel.min.js)
+   - Save as: `public/babel.min.js`
+2. **Tailwind Play Script**: [tailwind.js](https://cdn.tailwindcss.com)
+   - Save as: `public/tailwind.js`
+
+Alternatively, you can run these commands from the project root:
+```bash
+curl -o public/babel.min.js https://unpkg.com/@babel/standalone/babel.min.js
+curl -o public/tailwind.js https://cdn.tailwindcss.com
+```

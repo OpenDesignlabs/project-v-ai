@@ -40,5 +40,5 @@ inplem-clude.md
 pnpm-lock.yaml
 
 # public
+.agents/
 public
-
