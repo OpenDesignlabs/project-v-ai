@@ -1,11 +1,11 @@
 import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { useProject } from '../context/ProjectContext';
-import { useUI } from '../context/UIContext';
-import { useEditor } from '../context/EditorContext';
+import { useProject } from '../../context/ProjectContext';
+import { useUI } from '../../context/UIContext';
+import { useEditor } from '../../context/EditorContext';
 import { RenderNode } from './RenderNode';
 import { ContainerPreview } from './ContainerPreview';
 import { FramePicker } from './FramePicker';
-import { TEMPLATES } from '../data/templates';
+import { TEMPLATES } from '../../data/templates';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
 
 // ── Item 3: ArtboardResizeHandle ─────────────────────────────────────────────────────────

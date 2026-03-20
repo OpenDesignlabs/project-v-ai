@@ -1,10 +1,10 @@
 import { useState, useRef } from 'react';
-import { useEditor } from '../context/EditorContext';
-import { TEMPLATES } from '../data/templates';
+import { useEditor } from '../../context/EditorContext';
+import { TEMPLATES } from '../../data/templates';
 import { X, Search, Type, FormInput, Image, Layout, CreditCard, Puzzle, Upload } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { processImportedCode, generateComponentId } from '../utils/importHelpers';
-import type { ComponentCategory } from '../types';
+import { cn } from '../../lib/utils';
+import { processImportedCode, generateComponentId } from '../../utils/import/importHelpers';
+import type { ComponentCategory } from '../../types';
 
 type DrawerTab = ComponentCategory | 'templates';
 

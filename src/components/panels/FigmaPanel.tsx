@@ -29,7 +29,7 @@ import {
 import { useEditor } from '../../context/EditorContext';
 import { useContainer } from '../../context/ContainerContext';
 import { useProject } from '../../context/ProjectContext';
-import { ensureProxy, figmaFetch, resetProxy } from '../../utils/figmaProxy';
+import { ensureProxy, figmaFetch, resetProxy } from '../../utils/figma/figmaProxy';
 import {
     extractFileKey,
     extractTopLevelFrames,
@@ -40,7 +40,7 @@ import {
     type FigmaFileResponse,
     type FigmaImageResponse,
     type FigmaTransformResult,
-} from '../../utils/figmaImporter';
+} from '../../utils/figma/figmaImporter';
 import { cn } from '../../lib/utils';
 
 // ─── Constants ────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { FileCode } from 'lucide-react';
-import type { ComponentConfig, ComponentCategory, ComponentImportMeta } from '../types';
+import type { ComponentConfig, ComponentCategory, ComponentImportMeta } from '../../types';
 
 // ─── NAME DETECTION ───────────────────────────────────────────────────────────
 // Ordered by specificity — most explicit pattern first.

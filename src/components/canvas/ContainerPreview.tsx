@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { useProject } from '../context/ProjectContext';
-import { useUI } from '../context/UIContext';
+import { useProject } from '../../context/ProjectContext';
+import { useUI } from '../../context/UIContext';
 
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 import {
   Maximize2, Minimize2, RefreshCw, X,
   Loader2, Zap, Monitor, Tablet, Smartphone,
 } from 'lucide-react';
-import { SHELL_HTML } from './shellHtml';
+import { SHELL_HTML } from '../../utils/codegen/shellHtml';
 
 // ─── TYPES ────────────────────────────────────────────────────────────────────
 

@@ -24,7 +24,7 @@
  */
 
 import JSZip from 'jszip';
-import type { VectraNode, VectraProject } from '../types';
+import type { VectraNode, VectraProject } from '../../types';
 
 // ─── CONSTANTS ────────────────────────────────────────────────────────────────
 

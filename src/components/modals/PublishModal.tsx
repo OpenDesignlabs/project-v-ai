@@ -19,24 +19,24 @@ import {
     ExternalLink, Eye, EyeOff, Loader2, Check, Copy,
     CheckCircle2, XCircle, RefreshCw, Lock, Zap,
 } from 'lucide-react';
-import { useEditor } from '../context/EditorContext';
-import { useContainer } from '../context/ContainerContext';
+import { useEditor } from '../../context/EditorContext';
+import { useContainer } from '../../context/ContainerContext';
 import {
     generateNextProjectCode, generateProjectCode,
-} from '../utils/codeGenerator';
+} from '../../utils/codegen/codeGenerator';
 import {
     publishToGitHub,
     type GitHubPublishConfig, type GitHubPublishResult, type GitHubPublishProgress,
-} from '../utils/githubPublisher';
+} from '../../utils/deploy/githubPublisher';
 import {
     deployToVercel,
     type VercelDeployConfig, type VercelDeployProgress, type VercelDeployResult,
-} from '../utils/vercelDeployer';
+} from '../../utils/deploy/vercelDeployer';
 import {
     deployToNetlify,
     type NetlifyDeployConfig, type NetlifyDeployProgress, type NetlifyDeployResult,
-} from '../utils/netlifyDeployer';
-import { cn } from '../lib/utils';
+} from '../../utils/deploy/netlifyDeployer';
+import { cn } from '../../lib/utils';
 
 type View = 'selector' | 'github' | 'vercel' | 'netlify' | 'zip';
 

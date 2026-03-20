@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
-import { useEditor } from '../context/EditorContext';
+import { useEditor } from '../../context/EditorContext';
 import {
     processImportedCode,
     readFileContent,
     isValidReactComponent,
     generateComponentId,
     getDetectionPreview,
-} from '../utils/importHelpers';
+} from '../../utils/import/importHelpers';
 import { X, Upload, FileText, Code, Check, AlertCircle } from 'lucide-react';
 
 interface ImportModalProps {

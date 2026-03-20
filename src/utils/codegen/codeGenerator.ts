@@ -1,4 +1,4 @@
-import type { VectraProject, VectraNode, Page, DataSource, ApiRoute } from '../types';
+import type { VectraProject, VectraNode, Page, DataSource, ApiRoute } from '../../types';
 
 export interface GeneratedFileMap {
   files: Record<string, string>;

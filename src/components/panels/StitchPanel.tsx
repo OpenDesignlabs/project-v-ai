@@ -35,7 +35,7 @@ import {
 } from 'lucide-react';
 import { useEditor } from '../../context/EditorContext';
 import { useContainer } from '../../context/ContainerContext';
-import { parseZipToVectraPage, type ZipImportResult } from '../../utils/zipImporter';
+import { parseZipToVectraPage, type ZipImportResult } from '../../utils/import/zipImporter';
 import { cn } from '../../lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────

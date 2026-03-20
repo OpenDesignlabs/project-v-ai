@@ -47,7 +47,7 @@ import {
   apiRouteToVfsPath,
   generateProjectCode,
   deduplicatePageSlugs,
-} from '../utils/codeGenerator';
+} from '../utils/codegen/codeGenerator';
 import type { VectraProject } from '../types';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────

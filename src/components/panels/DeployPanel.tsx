@@ -14,7 +14,7 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
-import { useEditor } from '../context/EditorContext';
+import { useEditor } from '../../context/EditorContext';
 import {
     Rocket, CheckCircle2, XCircle, Plus, Trash2,
     Eye, EyeOff, ExternalLink, Loader2, ChevronDown,
@@ -24,15 +24,15 @@ import {
 import {
     generateNextProjectCode,
     generateProjectCode,
-} from '../utils/codeGenerator';
+} from '../../utils/codegen/codeGenerator';
 import {
     deployToVercel,
     type VercelDeployConfig,
     type VercelDeployProgress,
     type VercelDeployResult,
     type VercelDeployPhase,
-} from '../utils/vercelDeployer';
-import { cn } from '../lib/utils';
+} from '../../utils/deploy/vercelDeployer';
+import { cn } from '../../lib/utils';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 

@@ -1,32 +1,45 @@
-import React, { useRef, useState, useEffect, useMemo, Suspense, lazy, Component, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useMemo, Suspense, Component, useCallback } from 'react';
 import type { ErrorInfo } from 'react';
-import { useProject } from '../context/ProjectContext';
-import { useUI } from '../context/UIContext';
-import { useHover } from '../context/HoverContext';
+import { useProject } from '../../context/ProjectContext';
+import { useUI } from '../../context/UIContext';
+import { useHover } from '../../context/HoverContext';
 // M-6 FIX: useEditor removed — componentRegistry now comes from useUI() directly.
-import { SANDBOX_BLOCKED_PATTERNS } from '../utils/codeSanitizer';
-import type { VectraProject, VectraNode } from '../types';
-import { TEMPLATES } from '../data/templates';
-import { COMPONENT_TYPES } from '../data/constants'; // M-6: for registry merge
+import { SANDBOX_BLOCKED_PATTERNS } from '../../utils/codegen/codeSanitizer';
+import type { VectraProject, VectraNode } from '../../types';
+import { TEMPLATES } from '../../data/templates';
+import { COMPONENT_TYPES } from '../../data/constants'; // M-6: for registry merge
 import { Resizer } from './Resizer';
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 
 import { Loader2, Plus, PlayCircle, Zap } from 'lucide-react';
 // Preserve full framer-motion imports — AnimatePresence etc. are injected into
 // the AI sandbox so components that use them don’t crash with "undefined" errors.
 import { motion, AnimatePresence, useAnimation, useInView, useMotionValue, useTransform } from 'framer-motion';
-import { getIconComponent } from '../data/iconRegistry';
+import { getIconComponent } from '../../data/iconRegistry';
 
 
-// --- LAZY LOAD MARKETPLACE COMPONENTS ---
-const GeometricShapes = lazy(() => import('./marketplace/GeometricShapes'));
-const GeometricShapesBackground = lazy(() => import('./marketplace/GeometricShapes').then(m => ({ default: m.GeometricShapesBackground })));
-const FeatureHover = lazy(() => import('./marketplace/FeatureHover'));
-const FeaturesSectionWithHoverEffects = lazy(() => import('./marketplace/FeatureHover').then(m => ({ default: m.FeaturesSectionWithHoverEffects })));
-const HeroGeometric = lazy(() => import('./marketplace/HeroGeometric').then(m => ({ default: m.HeroGeometric })));
+// --- MARKETPLACE PLACEHOLDERS ---
+// Real components will be added in a future marketplace sprint.
+// Each name maps to the element.type value used in the render switch below.
+const MarketplacePlaceholder: React.FC<{ label: string }> = ({ label }) => (
+    <div className="w-full h-full min-h-[120px] flex flex-col items-center justify-center gap-2
+                    border-2 border-dashed border-purple-500/30 rounded-lg bg-purple-500/5">
+        <div className="flex items-center gap-2 text-purple-400">
+            <Plus size={14} className="opacity-60" />
+            <span className="text-[11px] font-bold uppercase tracking-widest">{label}</span>
+        </div>
+        <span className="text-[9px] text-purple-400/50 font-mono">Marketplace · Coming Soon</span>
+    </div>
+);
+
+const GeometricShapes:               React.FC<any> = (p) => <MarketplacePlaceholder {...p} label="Geometric Shapes" />;
+const GeometricShapesBackground:     React.FC<any> = (p) => <MarketplacePlaceholder {...p} label="Geometric BG" />;
+const FeatureHover:                  React.FC<any> = (p) => <MarketplacePlaceholder {...p} label="Feature Hover" />;
+const FeaturesSectionWithHoverEffects: React.FC<any> = (p) => <MarketplacePlaceholder {...p} label="Features Section" />;
+const HeroGeometric:                 React.FC<any> = (p) => <MarketplacePlaceholder {...p} label="Hero Geometric" />;
 
 // --- SMART COMPONENTS ---
-import { SmartAccordion, SmartCarousel, SmartTable } from './smart/SmartComponents';
+import { SmartAccordion, SmartCarousel, SmartTable } from '../ui/SmartComponents';
 import * as LucideAll from 'lucide-react';
 
 // ── MOBILE MIRROR CSS INJECTION ──────────────────────────────────────────────────
@@ -220,7 +233,7 @@ function buildDeviceCSS(frameId: string, frameWidth: number): string {
 }
 
 const compilerWorker = new Worker(
-    new URL('../workers/compiler.worker.ts', import.meta.url),
+    new URL('../../workers/compiler.worker.ts', import.meta.url),
     { type: 'classic' }
 );
 
@@ -338,7 +351,7 @@ const LiveComponent = ({
         autoFixRetries.current += 1;
         setIsFixing(true);
         try {
-            const { fixComponentError } = await import('../services/aiAgent');
+            const { fixComponentError } = await import('../../services/aiAgent');
             const fixedCode = await fixComponentError(code, errorMessage);
 
             // NM-5 FIX: functional updater reads fresh state AFTER the async AI gap.
@@ -1268,11 +1281,11 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             </Suspense>
         );
     }
-    else if (element.type === 'geometric_shapes') content = <Suspense fallback={<LoadingPlaceholder />}><GeometricShapes {...(element.props as any)} /></Suspense>;
-    else if (element.type === 'geometric_bg') content = <Suspense fallback={<LoadingPlaceholder />}><GeometricShapesBackground {...(element.props as any)} /></Suspense>;
-    else if (element.type === 'feature_hover') content = <Suspense fallback={<LoadingPlaceholder />}><FeatureHover {...(element.props as any)} /></Suspense>;
-    else if (element.type === 'features_section') content = <Suspense fallback={<LoadingPlaceholder />}><FeaturesSectionWithHoverEffects {...(element.props as any)} /></Suspense>;
-    else if (element.type === 'hero_geometric') content = <Suspense fallback={<LoadingPlaceholder />}><HeroGeometric {...(element.props as any)} /></Suspense>;
+    else if (element.type === 'geometric_shapes') content = <GeometricShapes />;
+    else if (element.type === 'geometric_bg')     content = <GeometricShapesBackground />;
+    else if (element.type === 'feature_hover')    content = <FeatureHover />;
+    else if (element.type === 'features_section') content = <FeaturesSectionWithHoverEffects />;
+    else if (element.type === 'hero_geometric')   content = <HeroGeometric />;
     else if (element.type === 'hero_modern') {
         content = <>{element.children?.map(childId => <RenderNode key={isMobileMirror ? `${childId}-mobile` : childId} elementId={childId} isMobileMirror={isMobileMirror} />)}</>;
     }

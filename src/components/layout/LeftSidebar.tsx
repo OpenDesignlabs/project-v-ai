@@ -1,6 +1,6 @@
 import React, { useRef, useState, lazy, Suspense, useEffect, useCallback } from 'react';
-import { useEditor } from '../context/EditorContext';
-import { useContainer } from '../context/ContainerContext';
+import { useEditor } from '../../context/EditorContext';
+import { useContainer } from '../../context/ContainerContext';
 import {
     Plus, Layers, Image as ImageIcon,
     Search, X, Type, Layout, FormInput, Puzzle, Upload,
@@ -10,21 +10,21 @@ import {
     Send, TerminalSquare, ChevronUp, Settings2,
     Copy as CopyIcon, RotateCcw as RefreshCw, FlaskConical,
 } from 'lucide-react';
-import { cn } from '../lib/utils';
-import { processImportedCode, generateComponentId } from '../utils/importHelpers';
-import { TEMPLATES, type TemplateConfig } from '../data/templates';
-import { ICON_NAMES, getIconComponent } from '../data/iconRegistry';
+import { cn } from '../../lib/utils';
+import { processImportedCode, generateComponentId } from '../../utils/import/importHelpers';
+import { TEMPLATES, type TemplateConfig } from '../../data/templates';
+import { ICON_NAMES, getIconComponent } from '../../data/iconRegistry';
 import { Store, ShoppingBag as ShoppingBagIcon } from 'lucide-react';
 import { InsertDrawer } from './InsertDrawer';
-import type { ApiRoute, HttpMethod } from '../types';
+import type { ApiRoute, HttpMethod } from '../../types';
 
 // ── Panel chunks — each loads only when its tab is first activated ──────────
-const DeployPanel  = lazy(() => import('./DeployPanel').then(m => ({ default: m.DeployPanel })));
-const LoaderPanel  = lazy(() => import('./panels/LoaderPanel').then(m => ({ default: m.LoaderPanel })));
-const DataPanel    = lazy(() => import('./panels/DataPanel').then(m => ({ default: m.DataPanel })));
-const StitchPanel  = lazy(() => import('./panels/StitchPanel').then(m => ({ default: m.StitchPanel })));
-const FigmaPanel   = lazy(() => import('./panels/FigmaPanel').then(m => ({ default: m.FigmaPanel })));
-const MCPPanel     = lazy(() => import('./panels/MCPPanel').then(m => ({ default: m.MCPPanel })));
+const DeployPanel  = lazy(() => import('../panels/DeployPanel').then(m => ({ default: m.DeployPanel })));
+const LoaderPanel  = lazy(() => import('../panels/LoaderPanel').then(m => ({ default: m.LoaderPanel })));
+const DataPanel    = lazy(() => import('../panels/DataPanel').then(m => ({ default: m.DataPanel })));
+const StitchPanel  = lazy(() => import('../panels/StitchPanel').then(m => ({ default: m.StitchPanel })));
+const FigmaPanel   = lazy(() => import('../panels/FigmaPanel').then(m => ({ default: m.FigmaPanel })));
+const MCPPanel     = lazy(() => import('../panels/MCPPanel').then(m => ({ default: m.MCPPanel })));
 
 /** Minimal spinner shown while a panel chunk is downloading */
 const PanelFallback = () => (
@@ -65,7 +65,7 @@ const MARKETPLACE_ITEMS = [
     }
 ];
 
-const LayersPanel = lazy(() => import('./panels/LayersPanel').then(m => ({ default: m.LayersPanel })));
+const LayersPanel = lazy(() => import('../panels/LayersPanel').then(m => ({ default: m.LayersPanel })));
 
 type DrawerTab = 'recent' | 'basic' | 'layout' | 'forms' | 'media' | 'templates';
 

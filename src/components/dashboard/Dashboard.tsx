@@ -7,15 +7,15 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { useEditor } from '../context/EditorContext';
-import type { ProjectMeta } from '../types';
+import { useEditor } from '../../context/EditorContext';
+import type { ProjectMeta } from '../../types';
 import {
     Plus, Layout, Github, Code2, Cpu, Search, ArrowLeft,
     Zap, Globe, Server, Box, CheckCircle2, Star, ChevronRight,
     Copy, Trash2, Pencil, Clock, MoreHorizontal, X, FolderOpen,
     Upload, FileDown, Sparkles, Monitor, LayoutTemplate,
 } from 'lucide-react';
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 

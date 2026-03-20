@@ -3,8 +3,8 @@
 // updates every frame — Resizer re-rendered even though it only needs 3 values.
 // Direct context calls keep the subscription scope minimal.
 import React, { useRef } from 'react';
-import { useProject } from '../context/ProjectContext';
-import { useUI } from '../context/UIContext';
+import { useProject } from '../../context/ProjectContext';
+import { useUI } from '../../context/UIContext';
 
 interface ResizerProps {
     elementId: string;

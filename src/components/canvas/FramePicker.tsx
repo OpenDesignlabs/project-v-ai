@@ -6,8 +6,8 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { Monitor, Tablet, Smartphone, Plus, X, ChevronRight } from 'lucide-react';
-import { PRESETS_BY_CATEGORY, type FramePreset } from '../data/framePresets';
-import { cn } from '../lib/utils';
+import { PRESETS_BY_CATEGORY, type FramePreset } from '../../data/framePresets';
+import { cn } from '../../lib/utils';
 
 interface FramePickerProps {
     onAddFrame: (preset: FramePreset) => void;

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
-import { useEditor } from '../context/EditorContext';
+import { useEditor } from '../../context/EditorContext';
 import { Sparkles, ArrowRight, Loader2, CheckCircle2, XCircle, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 

@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef, lazy, Suspense } from 'react';
 
-import { useEditor } from '../context/EditorContext';
-import { useContainer } from '../context/ContainerContext';
-import { copyToClipboard, generateGridPage } from '../utils/codeGenerator';
+import { useEditor } from '../../context/EditorContext';
+import { useContainer } from '../../context/ContainerContext';
+import { copyToClipboard, generateGridPage } from '../../utils/codegen/codeGenerator';
 import {
     Play, Undo, Redo, Grid,
     Check, X, Copy, Trash2,
@@ -11,9 +11,9 @@ import {
     Upload, Send, FileArchive, Figma,
 } from 'lucide-react';
 // PublishModal: 982-line modal, only needed when user clicks Publish
-const PublishModal = lazy(() => import('./PublishModal').then(m => ({ default: m.PublishModal })));
+const PublishModal = lazy(() => import('../modals/PublishModal').then(m => ({ default: m.PublishModal })));
 
-import { cn } from '../lib/utils';
+import { cn } from '../../lib/utils';
 
 export const Header = () => {
     const {
@@ -87,7 +87,7 @@ export const Header = () => {
     interface GridPageResult {
         code: string;
         error: string | null;
-        layout: import('../utils/codeGenerator').GridLayout | null;
+        layout: import('../../utils/codegen/codeGenerator').GridLayout | null;
     }
 
     // Map<pageId, GridPageResult> — keyed by page.id

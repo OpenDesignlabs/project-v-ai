@@ -1,10 +1,10 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import React from 'react';
-import { useEditor } from '../context/EditorContext';
-import { useUI } from '../context/UIContext';
+import { useEditor } from '../../context/EditorContext';
+import { useUI } from '../../context/UIContext';
 import ColorPicker from 'react-best-gradient-color-picker';
-import { Section, Row, NumberInput, ColorInput, ToggleGroup, BoxModel, TextInput, SelectInput } from './ui/PremiumInputs';
-import { removeClasses } from '../utils/tailwindHelpers';
+import { Section, Row, NumberInput, ColorInput, ToggleGroup, BoxModel, TextInput, SelectInput } from '../ui/PremiumInputs';
+import { removeClasses } from '../../utils/tailwindHelpers';
 import {
     AlignLeft, AlignCenter, AlignRight, AlignJustify,
     Grid, Box, Maximize, Lock, Eye,
@@ -15,12 +15,12 @@ import {
     Smartphone, Tablet, Monitor,
     Code2, Wand2, Clipboard, ClipboardCheck, TerminalSquare, Loader2,
 } from 'lucide-react';
-import { fixComponentError } from '../services/aiAgent';
-import { cn } from '../lib/utils';
+import { fixComponentError } from '../../services/aiAgent';
+import { cn } from '../../lib/utils';
 import {
     type VectraLoaderPropSchema,
     resolveControlType,
-} from '../utils/vectraLoaderBridge';
+} from '../../utils/vectraLoaderBridge';
 
 // --- TYPES ---
 // CODE-TAB-1 [PERMANENT]: 'code' tab is only shown/active for custom_code nodes.

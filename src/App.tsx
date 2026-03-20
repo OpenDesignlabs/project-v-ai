@@ -9,14 +9,14 @@ import { useFileSync } from './hooks/useFileSync';
 import { useAssetSync } from './hooks/useAssetSync';
 
 // 1. LAZY LOAD CHUNKS — editor shell (loaded once when entering editor)
-const Header       = lazy(() => import('./components/Header').then(m => ({ default: m.Header })));
-const LeftSidebar  = lazy(() => import('./components/LeftSidebar').then(m => ({ default: m.LeftSidebar })));
-const RightSidebar = lazy(() => import('./components/RightSidebar').then(m => ({ default: m.RightSidebar })));
-const Canvas       = lazy(() => import('./components/Canvas').then(m => ({ default: m.Canvas })));
-const ImportModal  = lazy(() => import('./components/ImportModal').then(m => ({ default: m.ImportModal })));
-const MagicBar     = lazy(() => import('./components/MagicBar').then(m => ({ default: m.MagicBar })));
+const Header       = lazy(() => import('./components/layout/Header').then(m => ({ default: m.Header })));
+const LeftSidebar  = lazy(() => import('./components/layout/LeftSidebar').then(m => ({ default: m.LeftSidebar })));
+const RightSidebar = lazy(() => import('./components/layout/RightSidebar').then(m => ({ default: m.RightSidebar })));
+const Canvas       = lazy(() => import('./components/canvas/Canvas').then(m => ({ default: m.Canvas })));
+const ImportModal  = lazy(() => import('./components/modals/ImportModal').then(m => ({ default: m.ImportModal })));
+const MagicBar     = lazy(() => import('./components/modals/MagicBar').then(m => ({ default: m.MagicBar })));
 // 2. Dashboard — 1188-line route, only loaded on dashboard view
-const Dashboard    = lazy(() => import('./components/Dashboard').then(m => ({ default: m.Dashboard })));
+const Dashboard    = lazy(() => import('./components/dashboard/Dashboard').then(m => ({ default: m.Dashboard })));
 // --- MONOCHROME ANIMATED LOGO ---
 const VectraAnimatedLogo = () => (
   <svg width="120" height="120" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg" className="animate-[logo-float_3s_ease-in-out_infinite]">

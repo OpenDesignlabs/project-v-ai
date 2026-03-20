@@ -36,7 +36,7 @@
  *   This runs at every level of recursion — raw abs coords are never used directly.
  */
 
-import type { VectraNode, VectraProject } from '../types';
+import type { VectraNode, VectraProject } from '../../types';
 
 // ─── FIGMA API TYPES ──────────────────────────────────────────────────────────
 // Subset of Figma v1 REST API — only fields Vectra actually reads.
