@@ -42,7 +42,8 @@ wasm-pack.log
 # Private Notes
 inplem-clude.md
 comment_analysis.md
-# lock files — pnpm-lock.yaml MUST be tracked for Vercel reproducible builds
+# lock files
+pnpm-lock.yaml
 package-lock.json
 yarn.lock
 Cargo.lock
