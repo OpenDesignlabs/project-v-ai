@@ -3,12 +3,22 @@
     "buildCommand": "pnpm run build",
     "outputDirectory": "dist",
     "installCommand": "pnpm install --frozen-lockfile",
+
     "rewrites": [
+        {
+            "source": "/cdn/babel",
+            "destination": "https://unpkg.com/@babel/standalone/babel.min.js"
+        },
+        {
+            "source": "/cdn/tailwind",
+            "destination": "https://cdn.tailwindcss.com/"
+        },
         {
             "source": "/((?!assets|favicon\\.svg|babel\\.min\\.js|tailwind\\.js|vite\\.svg|\\.wasm).*)",
             "destination": "/index.html"
         }
     ],
+
     "headers": [
         {
             "source": "/(.*)",
@@ -30,7 +40,10 @@
         {
             "source": "/(babel\\.min\\.js|tailwind\\.js)",
             "headers": [
-                { "key": "Cache-Control", "value": "public, max-age=604800, stale-while-revalidate=86400" }
+                { "key": "Cache-Control",                    "value": "public, max-age=604800, stale-while-revalidate=86400" },
+                { "key": "Cross-Origin-Resource-Policy",     "value": "cross-origin" },
+                { "key": "Access-Control-Allow-Origin",      "value": "*" },
+                { "key": "Access-Control-Allow-Methods",     "value": "GET, OPTIONS" }
             ]
         }
     ]
