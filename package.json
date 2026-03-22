@@ -12,8 +12,9 @@
   },
   "scripts": {
     "dev": "vite",
+    "build:engine": "curl -sSf https://rustwasm.github.io/wasm-pack/installer/init.sh | sh -s -- -y && cd vectra-engine && wasm-pack build --target web --release",
     "build:assets": "mkdir -p public && curl --fail --retry 3 --location -o public/babel.min.js https://unpkg.com/@babel/standalone/babel.min.js && curl --fail --retry 3 --location -o public/tailwind.js https://cdn.tailwindcss.com",
-    "build": "pnpm run build:assets && tsc -b && vite build",
+    "build": "pnpm run build:engine && pnpm run build:assets && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
