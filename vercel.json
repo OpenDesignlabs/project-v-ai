@@ -4,54 +4,33 @@
     "outputDirectory": "dist",
     "installCommand": "pnpm install --frozen-lockfile",
     "rewrites": [
-        { "source": "/((?!assets|favicon\\.svg|babel\\.min\\.js|tailwind\\.js|vite\\.svg).*)", "destination": "/index.html" }
+        {
+            "source": "/((?!assets|favicon\\.svg|babel\\.min\\.js|tailwind\\.js|vite\\.svg|\\.wasm).*)",
+            "destination": "/index.html"
+        }
     ],
     "headers": [
         {
             "source": "/(.*)",
             "headers": [
-                {
-                    "key": "Cross-Origin-Embedder-Policy",
-                    "value": "require-corp"
-                },
-                {
-                    "key": "Cross-Origin-Opener-Policy",
-                    "value": "same-origin"
-                },
-                {
-                    "key": "X-Content-Type-Options",
-                    "value": "nosniff"
-                },
-                {
-                    "key": "Referrer-Policy",
-                    "value": "strict-origin-when-cross-origin"
-                },
-                {
-                    "key": "Permissions-Policy",
-                    "value": "camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()"
-                },
-                {
-                    "key": "X-Frame-Options",
-                    "value": "SAMEORIGIN"
-                }
+                { "key": "Cross-Origin-Embedder-Policy",   "value": "require-corp" },
+                { "key": "Cross-Origin-Opener-Policy",     "value": "same-origin" },
+                { "key": "X-Content-Type-Options",         "value": "nosniff" },
+                { "key": "Referrer-Policy",                "value": "strict-origin-when-cross-origin" },
+                { "key": "Permissions-Policy",             "value": "camera=(), microphone=(), geolocation=(), clipboard-read=(), clipboard-write=()" },
+                { "key": "X-Frame-Options",                "value": "SAMEORIGIN" }
             ]
         },
         {
             "source": "/assets/(.*)",
             "headers": [
-                {
-                    "key": "Cache-Control",
-                    "value": "public, max-age=31536000, immutable"
-                }
+                { "key": "Cache-Control", "value": "public, max-age=31536000, immutable" }
             ]
         },
         {
             "source": "/(babel\\.min\\.js|tailwind\\.js)",
             "headers": [
-                {
-                    "key": "Cache-Control",
-                    "value": "public, max-age=604800, stale-while-revalidate=86400"
-                }
+                { "key": "Cache-Control", "value": "public, max-age=604800, stale-while-revalidate=86400" }
             ]
         }
     ]
