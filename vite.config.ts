@@ -55,19 +55,19 @@ export default defineConfig({
 
           // ── Src: application modules split by feature ──────────────────
           // RenderNode: 1600-line component tree renderer
-          if (id.includes('src/components/RenderNode'))    return 'chunk-app-rendernode';
+          if (id.includes('src/components/canvas/RenderNode'))    return 'chunk-app-rendernode';
           // Code generator: 1480-line multi-framework export engine
-          if (id.includes('src/utils/codeGenerator'))      return 'chunk-app-codegen';
+          if (id.includes('src/utils/codegen/codeGenerator'))      return 'chunk-app-codegen';
           // AI agent: only pulled in when AI features are invoked
           if (id.includes('src/services/aiAgent'))         return 'chunk-app-ai';
           // All sidebar panels: 6 panels loaded per-activation
           if (id.includes('src/components/panels/') ||
-              id.includes('src/components/DeployPanel'))   return 'chunk-app-panels';
+              id.includes('src/components/modals/DeployPanel'))   return 'chunk-app-panels';
           // Publish modal + deployer utilities
-          if (id.includes('src/components/PublishModal') ||
-              id.includes('src/utils/netlifyDeployer'))    return 'chunk-app-publish';
+          if (id.includes('src/components/modals/PublishModal') ||
+              id.includes('src/utils/deploy/netlifyDeployer'))    return 'chunk-app-publish';
           // Dashboard: route-level, lazy-loaded in App.tsx
-          if (id.includes('src/components/Dashboard'))     return 'chunk-app-dashboard';
+          if (id.includes('src/components/dashboard/Dashboard'))     return 'chunk-app-dashboard';
         },
       },
     },

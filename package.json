@@ -12,7 +12,8 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build:assets": "mkdir -p public && curl -o public/babel.min.js https://unpkg.com/@babel/standalone/babel.min.js && curl -o public/tailwind.js https://cdn.tailwindcss.com",
+    "build": "pnpm run build:assets && tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview"
   },
