@@ -8,44 +8,29 @@
   <title>Vectra</title>
 
   <!--
-    Babel Standalone — CDN-first with local fallback.
-    CDN: unpkg serves Babel with CORP: cross-origin header, so COEP: require-corp allows it.
-    Fallback: /babel.min.js (self-hosted in /public) used if CDN times out or is blocked.
-    window.Babel is the guard — if it's already set the inline fallback script is a no-op.
+    Babel Standalone — CDN primary, self-hosted fallback.
+    Tries unpkg.com first (faster, always latest). If the CDN is unreachable
+    (network block, COEP rejection, or offline), onerror swaps src to the
+    version tracked in /public/babel.min.js which ships with every Vercel deploy.
   -->
   <script
     src="https://unpkg.com/@babel/standalone/babel.min.js"
     crossorigin="anonymous"
-    onerror="this.onerror=null;this.src='/babel.min.js'"
+    onerror="this.onerror=null; this.src='/babel.min.js';"
   ></script>
-  <!-- Safety net: if the onerror src-swap also failed (e.g. network fully offline),
-       synchronously load the local copy via document.write so the app never starts
-       without Babel. This runs only when window.Babel is still undefined. -->
-  <script>
-    if (!window.Babel) {
-      document.write('<script src="/babel.min.js"><\/script>');
-    }
-  </script>
 
   <!--
-    Tailwind Play CDN — CDN-first with local fallback.
-    CDN: cdn.tailwindcss.com returns CORP: cross-origin so COEP allows it.
-    Fallback: /tailwind.js (self-hosted in /public).
-    window.tailwind is the guard.
+    Tailwind Play CDN — CDN primary, self-hosted fallback.
+    Same pattern: cdn.tailwindcss.com first, /tailwind.js as fallback.
+    crossorigin="anonymous" satisfies COEP: require-corp.
   -->
   <script
     src="https://cdn.tailwindcss.com"
     crossorigin="anonymous"
-    onerror="this.onerror=null;this.src='/tailwind.js'"
+    onerror="this.onerror=null; this.src='/tailwind.js';"
   ></script>
-  <script>
-    if (!window.tailwind) {
-      document.write('<script src="/tailwind.js"><\/script>');
-    }
-  </script>
 
 </head>
-
 
 <body>
   <div id="root"></div>
