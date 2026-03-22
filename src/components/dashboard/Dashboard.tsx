@@ -9,11 +9,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useEditor } from '../../context/EditorContext';
 import type { ProjectMeta } from '../../types';
+import { loadProjectDataFromDB2 } from '../../utils/db';
 import {
     Plus, Layout, Github, Code2, Cpu, Search, ArrowLeft,
     Zap, Globe, Server, Box, CheckCircle2, Star, ChevronRight,
     Copy, Trash2, Pencil, Clock, MoreHorizontal, X, FolderOpen,
-    Upload, FileDown, Sparkles, Monitor, LayoutTemplate,
+    Upload, FileDown, Sparkles, Monitor, LayoutTemplate, Loader2,
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
@@ -337,15 +338,22 @@ const UndoToast: React.FC<UndoToastProps> = ({ projectName, durationMs, onUndo, 
 interface ProjectCardProps {
     meta: ProjectMeta;
     isActive: boolean;
+    isExporting: boolean;
     onOpen: () => void;
     onRename: (newName: string) => void;
     onDuplicate: () => void;
     onDelete: () => void;
     onExport: () => void;
+    // Sprint 5: color label + description (stored in localStorage per-project)
+    color?: string;
+    description?: string;
+    onColorChange: (color: string) => void;
+    onDescriptionChange: (desc: string) => void;
 }
 
 const ProjectCard: React.FC<ProjectCardProps> = ({
-    meta, isActive, onOpen, onRename, onDuplicate, onDelete, onExport,
+    meta, isActive, isExporting, onOpen, onRename, onDuplicate, onDelete, onExport,
+    color, description, onColorChange, onDescriptionChange,
 }) => {
     const [isMenuOpen, setIsMenuOpen] = useState(false);
     const [isRenaming, setIsRenaming] = useState(false);
@@ -400,6 +408,14 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                 <div className="absolute top-3 left-3 z-10 w-1.5 h-1.5 rounded-full bg-[#007acc] shadow-[0_0_6px_#007acc80]" />
             )}
 
+            {/* Color label dot — shown in top-right corner when a color is set */}
+            {color && (
+                <div
+                    className="absolute top-3 right-10 z-10 w-2.5 h-2.5 rounded-full shadow-sm ring-1 ring-white/10"
+                    style={{ background: color }}
+                    title="Project color label"
+                />
+            )}
             {/* ── Wireframe Thumbnail ─────────────────────────────────────── */}
             <div className="w-full h-[140px] rounded-lg overflow-hidden mb-4 bg-[#0a0a0b] border border-white/5 flex items-center justify-center shrink-0 relative">
                 {thumbSvg ? (
@@ -478,11 +494,42 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                                         <Copy size={12} className="shrink-0" /> Duplicate
                                     </button>
                                     <button
-                                        onClick={() => { setIsMenuOpen(false); onExport(); }}
-                                        className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-zinc-400 hover:text-white hover:bg-white/5 transition-colors text-left"
+                                        onClick={() => { if (!isExporting) { setIsMenuOpen(false); onExport(); } }}
+                                        disabled={isExporting}
+                                        className={cn(
+                                            'w-full flex items-center gap-2.5 px-3 py-2 text-xs transition-colors text-left',
+                                            isExporting
+                                                ? 'text-zinc-600 cursor-wait'
+                                                : 'text-zinc-400 hover:text-white hover:bg-white/5'
+                                        )}
                                     >
-                                        <FileDown size={12} className="shrink-0" /> Export .vectra
+                                        {isExporting
+                                            ? <Loader2 size={12} className="shrink-0 animate-spin" />
+                                            : <FileDown size={12} className="shrink-0" />}
+                                        {isExporting ? 'Exporting…' : 'Export .vectra'}
                                     </button>
+                                    {/* Color label picker */}
+                                    <div className="px-3 py-2 border-t border-white/5 mt-1">
+                                        <p className="text-[9px] text-zinc-600 mb-1.5 uppercase tracking-wider font-bold">Color label</p>
+                                        <div className="flex gap-1.5 flex-wrap">
+                                            {['#ef4444','#f97316','#eab308','#22c55e','#3b82f6','#8b5cf6','#ec4899','#6b7280'].map(c => (
+                                                <button
+                                                    key={c}
+                                                    title={c}
+                                                    onClick={() => { onColorChange(c); setIsMenuOpen(false); }}
+                                                    className="w-5 h-5 rounded-full border-2 transition-all hover:scale-110"
+                                                    style={{ background: c, borderColor: color === c ? '#fff' : 'transparent' }}
+                                                />
+                                            ))}
+                                            {color && (
+                                                <button
+                                                    title="Remove color label"
+                                                    onClick={() => { onColorChange(''); setIsMenuOpen(false); }}
+                                                    className="w-5 h-5 rounded-full border border-white/20 text-zinc-600 hover:text-zinc-300 flex items-center justify-center text-[9px] transition-colors"
+                                                >✕</button>
+                                            )}
+                                        </div>
+                                    </div>
                                     <div className="h-px bg-white/5 my-1" />
                                     <button
                                         onClick={() => { setIsMenuOpen(false); setIsConfirmingDelete(true); }}
@@ -521,6 +568,20 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                 >
                     {meta.name}
                 </h3>
+            )}
+
+            {/* Description — click to edit via prompt (no extra input state needed) */}
+            {!isRenaming && (
+                <p
+                    className="text-[10px] text-zinc-600 mb-2 min-h-[14px] cursor-text hover:text-zinc-400 transition-colors truncate"
+                    onClick={() => {
+                        const newDesc = window.prompt('Project description', description ?? '');
+                        if (newDesc !== null) onDescriptionChange(newDesc);
+                    }}
+                    title={description ? description : 'Click to add description'}
+                >
+                    {description || <span className="italic opacity-0 group-hover:opacity-60 transition-opacity">Add description…</span>}
+                </p>
             )}
 
             {/* Metadata row */}
@@ -656,6 +717,9 @@ export const Dashboard = () => {
     // project list sort mode. 'recent'    — descending lastEditedAt (existing default — no change for current users) 'name'      — ascending alpha by project name
     const [sortMode, setSortMode] = useState<'recent' | 'name' | 'framework'>('recent');
 
+    // Per-project export loading guard — holds the meta.id while an IDB read is in flight.
+    const [isExporting, setIsExporting] = useState<string | null>(null);
+
     // ── Sprint 2: soft-delete state + handlers ─────────────────────────────
     const UNDO_WINDOW_MS = 5000;
 
@@ -694,6 +758,18 @@ export const Dashboard = () => {
     // Dismiss toast cosmetically — timer still runs, purge still fires
     const handleDismissToast = () => setPendingDelete(null);
 
+    // Per-project extras (color label + description) stored in localStorage.
+    // Lightweight: no context changes needed — reads are synchronous, writes are tiny.
+    const getProjectExtras = (id: string): { color?: string; description?: string } => {
+        try { return JSON.parse(localStorage.getItem(`vectra_meta_${id}`) ?? '{}'); } catch { return {}; }
+    };
+    const setProjectExtras = (id: string, patch: { color?: string; description?: string }) => {
+        try {
+            const prev = getProjectExtras(id);
+            localStorage.setItem(`vectra_meta_${id}`, JSON.stringify({ ...prev, ...patch }));
+        } catch { /* storage unavailable */ }
+    };
+
     /** Creates a new project and switches to the editor. */
     const handleCreate = async () => {
         if (isCreating) return;
@@ -713,27 +789,56 @@ export const Dashboard = () => {
             }
         }
         createNewProject(selectedFramework);
+
+        // BUG-DASH-1 FIX: UIContext listens for 'vectra:open-project' to switch currentView → 'editor'.
+        // handleOpen() (the working path for existing projects) dispatches the same event.
+        // Without this dispatch, currentView stays 'dashboard' permanently after creation.
+        window.dispatchEvent(new CustomEvent('vectra:open-project'));
+
+        // Reset spinner after navigation — prevents stuck loading button if user goes Back.
+        setTimeout(() => setIsCreating(false), 800);
     };
 
-    // ── Export project as .vectra ────────────────────────────────────── version MUST be 2. Export uses createObjectURL + anchor click — no server involved. Dashboard-level export is a metadata stub;
-    const handleExportProject = useCallback((meta: ProjectMeta) => {
-        const payload: VectraFile = {
-            version: 2,
-            framework: meta.framework,
-            name: meta.name,
-            elements: {},
-            pages: [],
-            theme: {},
-            exportedAt: Date.now(),
-        };
-        const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `${meta.name.replace(/\s+/g, '-').toLowerCase()}.vectra`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }, []);
+    // Export project as .vectra — async IDB read so export contains real data, not an empty stub (UX-26-1).
+    // Dashboard has no live elements in memory; must read from IDB keyed by project UUID.
+    const handleExportProject = useCallback(async (meta: ProjectMeta) => {
+        if (isExporting) return;
+        setIsExporting(meta.id);
+        try {
+            let projectData = await loadProjectDataFromDB2(meta.id);
+
+            // Fallback: localStorage snap cache written by ProjectContext autosave.
+            if (!projectData) {
+                try {
+                    const snapRaw = localStorage.getItem(`vectra_snap_${meta.id}`);
+                    if (snapRaw) projectData = JSON.parse(snapRaw);
+                } catch { /* snap corrupt — proceed with empty fallback */ }
+            }
+
+            const payload: VectraFile = {
+                version: 2,
+                framework: meta.framework,
+                name: meta.name,
+                elements: (projectData?.elements ?? {}) as Record<string, any>,
+                pages: (projectData?.pages ?? []) as any[],
+                theme: (projectData?.theme ?? {}) as Record<string, string>,
+                exportedAt: Date.now(),
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${meta.name.replace(/\s+/g, '-').toLowerCase()}.vectra`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('[Vectra] Export failed:', err);
+        } finally {
+            setIsExporting(null);
+        }
+    }, [isExporting]);
 
     // ── Import .vectra file ──────────────────────────────────────────── MUST call restoreProjectToIndex() THEN loadProject() in that order. Never call loadProject() on an orphan not in the index
     const handleImportFile = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -951,11 +1056,16 @@ export const Dashboard = () => {
                                     key={meta.id}
                                     meta={meta}
                                     isActive={meta.id === activeProjectId}
+                                    isExporting={isExporting === meta.id}
+                                    color={getProjectExtras(meta.id).color}
+                                    description={getProjectExtras(meta.id).description}
                                     onOpen={() => handleOpen(meta)}
                                     onRename={name => renameProject(meta.id, name)}
                                     onDuplicate={() => duplicateProject(meta)}
                                     onDelete={() => handleSoftDelete(meta)}
                                     onExport={() => handleExportProject(meta)}
+                                    onColorChange={c => { setProjectExtras(meta.id, { color: c }); }}
+                                    onDescriptionChange={d => { setProjectExtras(meta.id, { description: d }); }}
                                 />
                             ))}
 

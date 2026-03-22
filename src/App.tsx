@@ -15,6 +15,9 @@ const RightSidebar = lazy(() => import('./components/layout/RightSidebar').then(
 const Canvas       = lazy(() => import('./components/canvas/Canvas').then(m => ({ default: m.Canvas })));
 const ImportModal  = lazy(() => import('./components/modals/ImportModal').then(m => ({ default: m.ImportModal })));
 const MagicBar     = lazy(() => import('./components/modals/MagicBar').then(m => ({ default: m.MagicBar })));
+const AISuccessToast = lazy(() =>
+    import('./components/modals/AISuccessToast').then(m => ({ default: m.AISuccessToast }))
+);
 // 2. Dashboard — 1188-line route, only loaded on dashboard view
 const Dashboard    = lazy(() => import('./components/dashboard/Dashboard').then(m => ({ default: m.Dashboard })));
 // --- MONOCHROME ANIMATED LOGO ---
@@ -396,6 +399,7 @@ const EditorLayout = () => {
     <div className="h-screen w-full flex flex-col bg-[#1e1e1e] overflow-hidden select-none font-sans">
       <Suspense fallback={<LoadingScreen message="Loading Interface..." />}>
         <MagicBar />
+        <AISuccessToast />
         <Header />
         <div className="flex-1 flex overflow-hidden relative">
           <LeftSidebar />
@@ -429,34 +433,37 @@ const EditorLayout = () => {
             <div className="p-6 grid grid-cols-2 gap-8">
               {([
                 { group: 'Canvas', items: [
-                  ['Space + drag', 'Pan canvas'],
+                  ['Space + drag',    'Pan canvas'],
                   ['Ctrl/⌘ + scroll', 'Zoom in/out'],
-                  ['⌘0 / Ctrl+0', 'Zoom to fit'],
-                  ['Arrow keys', 'Nudge 1px'],
-                  ['Shift + Arrow', 'Nudge 10px'],
+                  ['⌘0 / Ctrl+0',    'Zoom to fit'],
+                  ['Arrow keys',      'Nudge 1px'],
+                  ['Shift + Arrow',   'Nudge 10px'],
+                  ['Click empty',     'Deselect all'],
                 ]},
                 { group: 'Selection', items: [
-                  ['Click', 'Select element'],
-                  ['Shift + click', 'Multi-select'],
-                  ['Escape', 'Deselect'],
-                  ['Delete / Backspace', 'Delete selected'],
-                  ['Right-click', 'Context menu'],
+                  ['Click',                'Select element'],
+                  ['Shift + click',        'Add to multi-select'],
+                  ['Drag to box-select',   'Select multiple'],
+                  ['Escape',               'Deselect'],
+                  ['Delete / Backspace',   'Delete selected'],
+                  ['Right-click',          'Context menu'],
                 ]},
                 { group: 'Edit', items: [
-                  ['⌘D / Ctrl+D', 'Duplicate'],
-                  ['⌘G / Ctrl+G', 'Group into container'],
-                  ['⌘C / Ctrl+C', 'Copy'],
-                  ['⌘V / Ctrl+V', 'Paste (cross-page)'],
-                  ['⌘Z / Ctrl+Z', 'Undo'],
-                  ['⌘⇧Z / Ctrl+Y', 'Redo'],
-                  ['Double-click', 'Edit text inline'],
+                  ['⌘D / Ctrl+D',     'Duplicate'],
+                  ['⌘G / Ctrl+G',     'Group into container'],
+                  ['⌘C / Ctrl+C',     'Copy'],
+                  ['⌘V / Ctrl+V',     'Paste (cross-page)'],
+                  ['⌘Z / Ctrl+Z',     'Undo (works on AI output)'],
+                  ['⌘⇧Z / Ctrl+Y',   'Redo'],
+                  ['Double-click',    'Edit text inline'],
                 ]},
-                { group: 'View & Tools', items: [
-                  ['⌘K / Ctrl+K', 'Open AI magic bar'],
-                  ['I', 'Toggle insert drawer'],
-                  ['⌘I / Ctrl+I', 'Import component'],
-                  ['?', 'This shortcut list'],
-                  ['Escape', 'Close panels / dialogs'],
+                { group: 'AI & View', items: [
+                  ['⌘K / Ctrl+K',    'Open AI magic bar'],
+                  ['↑/↓ in AI bar',  'Navigate prompt history'],
+                  ['I',              'Toggle insert drawer'],
+                  ['⌘I / Ctrl+I',   'Import component'],
+                  ['?',              'This shortcut list'],
+                  ['Escape',         'Close panels / dialogs'],
                 ]},
               ] as const).map(({ group, items }) => (
                 <div key={group}>

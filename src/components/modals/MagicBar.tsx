@@ -1,60 +1,219 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import { useEditor } from '../../context/EditorContext';
-import { Sparkles, ArrowRight, Loader2, CheckCircle2, XCircle, Zap } from 'lucide-react';
+import {
+    Sparkles, ArrowRight, Loader2, CheckCircle2, XCircle, Zap,
+    CheckCircle,
+} from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// ─── STATIC FALLBACK HINTS ────────────────────────────────────────────────────
-// Used when the canvas is empty or activePageId can't be resolved.
+// ─── CONSTANTS ────────────────────────────────────────────────────────────────
+
 const FALLBACK_HINTS = [
     'Build a full landing page',
     'Create a SaaS hero section',
     'Design a portfolio homepage',
 ];
 
+const HISTORY_KEY = 'vectra_prompt_history';
+const MAX_HISTORY = 12;
+
+// ─── TYPES ────────────────────────────────────────────────────────────────────
+
+type StageId = 'analyze' | 'sending' | 'parsing' | 'injecting';
+type StageStatus = 'pending' | 'active' | 'done';
+
+interface GenerationStage {
+    id: StageId;
+    label: string;
+    status: StageStatus;
+    ms?: number;
+    model?: string;
+    sections?: string[];
+    count?: number;
+}
+
+// ─── SUB-COMPONENTS ───────────────────────────────────────────────────────────
+
+const SectionChip: React.FC<{ name: string }> = ({ name }) => (
+    <span
+        style={{
+            background: 'rgba(109,40,217,0.2)',
+            border: '1px solid rgba(109,40,217,0.4)',
+            color: '#a78bfa',
+            fontSize: '9px',
+            fontFamily: 'monospace',
+            padding: '1px 5px',
+            borderRadius: '4px',
+            whiteSpace: 'nowrap',
+        }}
+    >
+        {name}
+    </span>
+);
+
+const StageRow: React.FC<{ stage: GenerationStage; streamChars?: number }> = ({ stage, streamChars }) => {
+    const isDone    = stage.status === 'done';
+    const isActive  = stage.status === 'active';
+    const isPending = stage.status === 'pending';
+
+    return (
+        <motion.div
+            initial={{ opacity: 0, x: -4 }}
+            animate={{ opacity: isPending ? 0.35 : 1, x: 0 }}
+            className="flex items-center gap-2.5 min-h-[28px]"
+        >
+            {/* Status icon */}
+            <div className="shrink-0 w-[18px] h-[18px] flex items-center justify-center">
+                {isDone && (
+                    <div className="w-[18px] h-[18px] rounded-full bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center">
+                        <CheckCircle size={10} className="text-emerald-400" />
+                    </div>
+                )}
+                {isActive && (
+                    <div className="w-[18px] h-[18px] rounded-full border-2 border-blue-500 flex items-center justify-center">
+                        <div className="w-[6px] h-[6px] rounded-full bg-blue-500 animate-pulse" />
+                    </div>
+                )}
+                {isPending && (
+                    <div className="w-[18px] h-[18px] rounded-full border border-zinc-700" />
+                )}
+            </div>
+
+            {/* Label */}
+            <span
+                className="text-[11px] font-medium"
+                style={{ color: isDone ? '#52525b' : isActive ? '#e4e4e7' : '#3f3f46' }}
+            >
+                {stage.label}
+            </span>
+
+            {/* Active-stage extras */}
+            {isActive && stage.id === 'sending' && !!streamChars && streamChars > 0 && (
+                <span className="text-[9px] font-mono text-zinc-600 ml-auto">
+                    {streamChars.toLocaleString()} chars
+                </span>
+            )}
+            {isActive && stage.id === 'parsing' && (
+                <span className="text-[9px] text-zinc-600 ml-auto animate-pulse">extracting…</span>
+            )}
+            {isActive && stage.id === 'injecting' && (
+                <span className="text-[9px] text-zinc-600 ml-auto animate-pulse">updating canvas…</span>
+            )}
+
+            {/* Done-stage extras */}
+            {isDone && stage.id === 'parsing' && stage.sections && stage.sections.length > 0 && (
+                <div className="flex items-center gap-1 ml-auto flex-wrap">
+                    {stage.sections.slice(0, 4).map(s => <SectionChip key={s} name={s} />)}
+                    {stage.sections.length > 4 && (
+                        <span className="text-[9px] text-zinc-600">+{stage.sections.length - 4}</span>
+                    )}
+                </div>
+            )}
+            {isDone && stage.id === 'injecting' && stage.count !== undefined && (
+                <span className="text-[9px] font-mono text-emerald-600 ml-auto">
+                    {stage.count} section{stage.count !== 1 ? 's' : ''}
+                </span>
+            )}
+            {isDone && stage.ms !== undefined && (
+                <span className="text-[9px] font-mono text-zinc-700 ml-1 tabular-nums">
+                    {stage.ms}ms
+                </span>
+            )}
+        </motion.div>
+    );
+};
+
+const GenerationPipeline: React.FC<{
+    stages: GenerationStage[];
+    streamChars: number;
+    model: string;
+}> = ({ stages, streamChars, model }) => (
+    <div className="px-4 py-3 border-t border-white/5">
+        {/* Model badge */}
+        <div className="flex items-center gap-2 mb-3">
+            <div className="w-1.5 h-1.5 rounded-full bg-blue-500 animate-pulse" />
+            <span className="text-[9px] font-mono text-zinc-600 truncate">
+                {model.split('/').pop() ?? model}
+            </span>
+        </div>
+        {/* Stage rows */}
+        <div className="flex flex-col gap-1">
+            {stages.map(stage => (
+                <StageRow key={stage.id} stage={stage} streamChars={streamChars} />
+            ))}
+        </div>
+    </div>
+);
+
+// ─── HELPERS ──────────────────────────────────────────────────────────────────
+
+const loadHistory = (): string[] => {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY) ?? '[]'); }
+    catch { return []; }
+};
+
+const saveHistory = (prompt: string) => {
+    try {
+        const prev = loadHistory().filter(p => p !== prompt);
+        localStorage.setItem(HISTORY_KEY, JSON.stringify([prompt, ...prev].slice(0, MAX_HISTORY)));
+    } catch { /* storage unavailable */ }
+};
+
+const makeInitialStages = (): GenerationStage[] => [
+    { id: 'analyze',   label: 'Analyzed prompt',      status: 'pending' },
+    { id: 'sending',   label: 'Calling AI model',     status: 'pending' },
+    { id: 'parsing',   label: 'Extracted sections',   status: 'pending' },
+    { id: 'injecting', label: 'Injected into canvas', status: 'pending' },
+];
+
+// ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
+
 export const MagicBar = () => {
-    // elements/pages/activePageId added for contextual hint derivation. MagicBar was already subscribed to ProjectContext via useEditor(). Adding these to the destructure is zero extra re-render cost —
     const {
         isMagicBarOpen, setMagicBarOpen, runAI,
         elements, pages, activePageId,
     } = useEditor();
 
-    const [input, setInput] = useState('');
+    const [input, setInput]   = useState('');
     const [status, setStatus] = useState<'idle' | 'thinking' | 'generating' | 'done' | 'error'>('idle');
-    const [feedback, setFeedback] = useState('');
-    // streaming state — updated by vectra:ai-stream-chunk events
+    const [feedback, setFeedback]         = useState('');
     const [streamCharCount, setStreamCharCount] = useState(0);
-    const [currentSection, setCurrentSection] = useState('');
+    // Stage pipeline state
+    const [stages, setStages]       = useState<GenerationStage[]>(makeInitialStages);
+    const [activeModel, setActiveModel] = useState('');
+    // Prompt history navigation
+    const [promptHistory]   = useState<string[]>(loadHistory);
+    const [historyIdx, setHistoryIdx] = useState(-1);
+    // Per-stage timing
+    const stageStartRef = useRef<number>(0);
     const inputRef = useRef<HTMLInputElement>(null);
 
+    // Focus / reset on open/close
     useEffect(() => {
         if (isMagicBarOpen && inputRef.current) inputRef.current.focus();
         if (!isMagicBarOpen) {
             setStatus('idle');
             setFeedback('');
             setStreamCharCount(0);
-            setCurrentSection('');
+            setStages(makeInitialStages());
+            setHistoryIdx(-1);
         }
     }, [isMagicBarOpen]);
 
-    // ── Contextual hints ────────────────────────────────────── Re-derived whenever the bar opens (isMagicBarOpen flips to true). Scans the active artboard's existing children to detect which sections
+    // Contextual hints (unchanged canvas-aware logic)
     const contextualHints = useMemo((): string[] => {
         if (!isMagicBarOpen) return FALLBACK_HINTS;
-
         const pageMeta = pages.find(p => p.id === activePageId);
         if (!pageMeta) return FALLBACK_HINTS;
-
         const pageNode = elements[pageMeta.rootId];
         const artboardId = pageNode?.children?.find((cid: string) => {
             const t = elements[cid]?.type;
             return t === 'webpage' || t === 'artboard' || t === 'canvas';
         });
         if (!artboardId) return FALLBACK_HINTS;
-
         const artboard = elements[artboardId];
         const artboardChildren: string[] = artboard?.children ?? [];
         if (artboardChildren.length === 0) return FALLBACK_HINTS;
-
-        // Build a set of what already exists on this artboard
         const childTypes = new Set<string>();
         const childNames = new Set<string>();
         artboardChildren.forEach((cid: string) => {
@@ -63,70 +222,75 @@ export const MagicBar = () => {
             childTypes.add(el.type);
             if (el.name) childNames.add(el.name.toLowerCase());
         });
-
-        const has = (typeMatch: string, nameFragment: string) =>
-            childTypes.has(typeMatch) ||
-            [...childNames].some(n => n.includes(nameFragment));
-
-        const hasNavbar      = has('navbar', 'nav');
-        const hasHero        = has('hero', 'hero');
-        const hasFeatures    = has('features_section', 'feature');
-        const hasPricing     = has('pricing', 'pric');
-        const hasFooter      = has('', 'footer');
-        const hasTestimonials = has('', 'testimonial');
-        const hasContact     = has('', 'contact') || has('', 'cta');
-        const hasFaq         = has('', 'faq');
-
-        // Build ordered suggestion list of what's absent
+        const has = (t: string, n: string) =>
+            childTypes.has(t) || [...childNames].some(name => name.includes(n));
         const suggestions: string[] = [];
-        if (!hasNavbar)       suggestions.push('Add a sticky navigation bar');
-        if (!hasHero)         suggestions.push('Add a hero section with gradient CTA');
-        if (!hasFeatures && hasHero) suggestions.push('Add a features bento grid');
-        if (!hasPricing)      suggestions.push('Add a pricing comparison table');
-        if (!hasTestimonials) suggestions.push('Add a testimonials carousel');
-        if (!hasContact)      suggestions.push('Add a contact / CTA section');
-        if (!hasFooter)       suggestions.push('Add a footer with links');
-        if (!hasFaq)          suggestions.push('Add a FAQ accordion');
-
-        // Pad with creative extras so we always show at least 3
+        if (!has('navbar', 'nav'))              suggestions.push('Add a sticky navigation bar');
+        if (!has('hero', 'hero'))               suggestions.push('Add a hero section with gradient CTA');
+        if (!has('features_section', 'feature') && has('hero', 'hero')) suggestions.push('Add a features bento grid');
+        if (!has('pricing', 'pric'))            suggestions.push('Add a pricing comparison table');
+        if (!has('', 'testimonial'))            suggestions.push('Add a testimonials carousel');
+        if (!has('', 'contact') && !has('', 'cta')) suggestions.push('Add a contact / CTA section');
+        if (!has('', 'footer'))                 suggestions.push('Add a footer with links');
+        if (!has('', 'faq'))                    suggestions.push('Add a FAQ accordion');
         const extras = [
-            'Add animated stats counter section',
-            'Add a team members grid',
-            'Redesign page with glassmorphism style',
-            'Add a dark-mode hero with particle effects',
+            'Add animated stats counter section', 'Add a team members grid',
+            'Redesign page with glassmorphism style', 'Add a dark-mode hero with particle effects',
             'Add a comparison section with checkmarks',
         ];
-        for (const extra of extras) {
+        for (const e of extras) {
             if (suggestions.length >= 5) break;
-            if (!suggestions.includes(extra)) suggestions.push(extra);
+            if (!suggestions.includes(e)) suggestions.push(e);
         }
-
         return suggestions.slice(0, 5);
     }, [isMagicBarOpen, elements, pages, activePageId]);
-    // ── End SPRINT-B-FIX-1 ────────────────────────────────────────────────────
 
-    // ── Streaming event listener ────────────────────────────── Attached only during 'generating' status — zero cost at idle. callDirectAPIWithStreaming in aiAgent.ts dispatches 'vectra:ai-stream-chunk'
+    // ── Stage event listener — attached only during 'generating' (zero cost at idle)
     useEffect(() => {
-        if (status !== 'generating') {
-            setStreamCharCount(0);
-            setCurrentSection('');
-            return;
-        }
+        if (status !== 'generating') return;
+
+        const handleStage = (e: Event) => {
+            const detail = (e as CustomEvent).detail as {
+                stage: 'sending' | 'parsing' | 'injecting';
+                model?: string;
+                sections?: string[];
+                count?: number;
+            };
+            const now     = Date.now();
+            const elapsed = now - stageStartRef.current;
+            stageStartRef.current = now;
+
+            setStages(prev => prev.map(s => {
+                // Mark the just-completed predecessor as done
+                if (detail.stage === 'sending'   && s.id === 'analyze')   return { ...s, status: 'done', ms: elapsed };
+                if (detail.stage === 'parsing'   && s.id === 'sending')   return { ...s, status: 'done', ms: elapsed };
+                if (detail.stage === 'injecting' && s.id === 'parsing')   return { ...s, status: 'done', ms: elapsed, sections: detail.sections };
+                // Mark the current stage as active
+                if (s.id === detail.stage) {
+                    if (detail.stage === 'sending')   { setActiveModel(detail.model ?? ''); return { ...s, status: 'active' }; }
+                    if (detail.stage === 'parsing')   return { ...s, status: 'active' };
+                    if (detail.stage === 'injecting') return { ...s, status: 'active', count: detail.count };
+                }
+                return s;
+            }));
+        };
+
+        window.addEventListener('vectra:ai-stage', handleStage);
+        return () => window.removeEventListener('vectra:ai-stage', handleStage);
+    }, [status]);
+
+    // ── Stream chunk listener (char count)
+    useEffect(() => {
+        if (status !== 'generating') { setStreamCharCount(0); return; }
         const handleChunk = (e: Event) => {
             const { accumulated } = (e as CustomEvent<{ text: string; accumulated: string }>).detail;
             setStreamCharCount(accumulated.length);
-            // Extract last "// SECTION: Name" marker as it's written
-            const matches = [...accumulated.matchAll(/\/\/\s*SECTION:\s*([^\n\r]+)/g)];
-            if (matches.length > 0) {
-                setCurrentSection(matches[matches.length - 1][1].trim());
-            }
         };
         window.addEventListener('vectra:ai-stream-chunk', handleChunk);
         return () => window.removeEventListener('vectra:ai-stream-chunk', handleChunk);
     }, [status]);
-    // ── End SPRINT-B-FIX-4 ───────────────────────────────────────────────────
 
-    // isRunning ref prevents concurrent double-submission from StrictMode re-invoke, rapid double-click, or keyboard Enter race. A ref (not state) avoids a re-render on guard check
+    // STRICT-MODE-DOUBLE-INVOKE [PERMANENT]: isRunning ref — never setTimeout
     const isRunning = useRef(false);
 
     const handleSubmit = async (e: React.FormEvent) => {
@@ -137,13 +301,24 @@ export const MagicBar = () => {
 
         try {
             setStatus('thinking');
-            // 120ms micro-yield: flushes 'thinking' paint without creating a
-            // double-invoke window the way a bare setTimeout(fn, 800) does.
             await new Promise(r => setTimeout(r, 120));
+
+            // Reset pipeline + mark analyze as instantly done + record start time
+            const freshStages = makeInitialStages();
+            freshStages[0] = { ...freshStages[0], status: 'done', ms: 120 };
+            setStages(freshStages);
+            stageStartRef.current = Date.now();
+            setStreamCharCount(0);
             setStatus('generating');
 
             const resultMessage = await runAI(input);
 
+            // Mark any still-active stages as done
+            setStages(prev => prev.map(s =>
+                s.status === 'active' ? { ...s, status: 'done' } : s
+            ));
+
+            saveHistory(input);
             setStatus('done');
             setFeedback(resultMessage || 'Done');
 
@@ -151,23 +326,38 @@ export const MagicBar = () => {
                 setMagicBarOpen(false);
                 setInput('');
                 isRunning.current = false;
-            }, 1500);
+            }, 1200);
         } catch (err: any) {
-            // Never silently swallow AI errors.
             const msg = err?.message ?? 'Something went wrong. Please try again.';
             setFeedback(msg);
             setStatus('error');
             setTimeout(() => {
                 setStatus('idle');
                 setFeedback('');
+                setStages(makeInitialStages());
                 isRunning.current = false;
-            }, 3000);
+            }, 3500);
         }
     };
 
+    // ── Prompt history keyboard navigation (↑ / ↓)
+    const handleInputKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+        if (status !== 'idle') return;
+        if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            const nextIdx = Math.min(historyIdx + 1, promptHistory.length - 1);
+            setHistoryIdx(nextIdx);
+            if (promptHistory[nextIdx]) setInput(promptHistory[nextIdx]);
+        } else if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            const nextIdx = Math.max(historyIdx - 1, -1);
+            setHistoryIdx(nextIdx);
+            setInput(nextIdx === -1 ? '' : (promptHistory[nextIdx] ?? ''));
+        }
+    }, [status, historyIdx, promptHistory]);
+
     if (!isMagicBarOpen) return null;
 
-    // Streaming progress — estimated 0–100% based on typical 4000-char response
     const streamProgress = Math.min(100, Math.round((streamCharCount / 4000) * 100));
 
     return (
@@ -176,7 +366,7 @@ export const MagicBar = () => {
                 {/* Backdrop */}
                 <motion.div
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                    onClick={() => setMagicBarOpen(false)}
+                    onClick={() => { if (status === 'idle') setMagicBarOpen(false); }}
                     className="absolute inset-0 bg-black/60 backdrop-blur-sm"
                 />
 
@@ -186,11 +376,9 @@ export const MagicBar = () => {
                     exit={{ opacity: 0, scale: 0.95, y: 10 }}
                     className="relative w-full max-w-2xl bg-[#09090b] border border-white/10 rounded-xl shadow-2xl overflow-hidden"
                 >
-                    {/* SPRINT-B-FIX-4: Streaming progress bar
-                        Only visible during 'generating'. Grows from 0→100% as tokens arrive.
-                        Height 2px — subtle, never distracts from the input. */}
+                    {/* Progress bar */}
                     {status === 'generating' && (
-                        <div className="absolute top-0 left-0 right-0 h-[2px] bg-zinc-800 overflow-hidden">
+                        <div className="absolute top-0 left-0 right-0 h-[2px] bg-zinc-800/80 overflow-hidden">
                             <motion.div
                                 className="h-full bg-gradient-to-r from-blue-500 to-violet-500"
                                 initial={{ width: '0%' }}
@@ -201,53 +389,38 @@ export const MagicBar = () => {
                     )}
 
                     <form onSubmit={handleSubmit} className="relative">
-                        {/* Header bar */}
+                        {/* Header */}
                         <div className="absolute top-4 left-4 flex items-center gap-2 text-blue-400 select-none pointer-events-none">
                             <Sparkles
                                 size={16}
                                 className={status === 'thinking' || status === 'generating' ? 'animate-spin' : ''}
                             />
                             <span className="text-xs font-bold tracking-wider uppercase">
-                                {status === 'idle'       && 'Vectra AI Agent'}
-                                {status === 'thinking'   && 'Analyzing Prompt...'}
-                                {status === 'generating' && 'Writing Code...'}
-                                {status === 'done'       && 'Completed'}
-                                {status === 'error'      && 'Generation Failed'}
+                                {status === 'idle'       && 'Vectra AI'}
+                                {status === 'thinking'   && 'Analyzing…'}
+                                {status === 'generating' && 'Generating…'}
+                                {status === 'done'       && 'Done'}
+                                {status === 'error'      && 'Failed'}
                             </span>
-
-                            {/* SPRINT-B-FIX-4: Section ticker — appears as sections are detected */}
-                            {status === 'generating' && currentSection && (
-                                <span className="flex items-center gap-1 text-[10px] text-zinc-500 font-mono">
-                                    <span className="text-zinc-700">›</span>
-                                    <motion.span
-                                        key={currentSection}
-                                        initial={{ opacity: 0, x: 4 }}
-                                        animate={{ opacity: 1, x: 0 }}
-                                        className="text-violet-400"
-                                    >
-                                        {currentSection}
-                                    </motion.span>
-                                </span>
-                            )}
-                            {status === 'generating' && streamCharCount > 0 && (
-                                <span className="text-[9px] text-zinc-700 font-mono ml-1">
-                                    {streamCharCount.toLocaleString()} chars
-                                </span>
+                            {/* History hint */}
+                            {status === 'idle' && promptHistory.length > 0 && !input && (
+                                <span className="text-[9px] text-zinc-700 font-mono">↑ history</span>
                             )}
                         </div>
 
-                        {/* Text input */}
+                        {/* Input */}
                         <input
                             ref={inputRef}
                             type="text"
                             value={input}
-                            onChange={(e) => setInput(e.target.value)}
-                            placeholder="Describe what to build or add..."
+                            onChange={e => { setInput(e.target.value); setHistoryIdx(-1); }}
+                            onKeyDown={handleInputKeyDown}
+                            placeholder="Describe what to build or add…"
                             className="w-full bg-transparent text-lg text-white placeholder-zinc-500 px-4 pt-12 pb-16 outline-none"
                             disabled={status !== 'idle'}
                         />
 
-                        {/* Status feedback overlay — success (green) or error (red) */}
+                        {/* Done / error overlay */}
                         {(status === 'done' || status === 'error') && (
                             <div className={`absolute inset-0 bg-[#09090b]/90 flex items-center justify-center gap-2 font-medium px-6 text-center ${
                                 status === 'error' ? 'text-red-400' : 'text-green-400'
@@ -271,29 +444,33 @@ export const MagicBar = () => {
                             <button
                                 type="submit"
                                 disabled={status !== 'idle' || !input.trim()}
-                                className={`
-                                    flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold text-white transition-all
-                                    ${status !== 'idle' || !input.trim()
+                                className={`flex items-center gap-2 px-4 py-1.5 rounded-lg text-xs font-bold text-white transition-all ${
+                                    status !== 'idle' || !input.trim()
                                         ? 'bg-zinc-800 text-zinc-500 cursor-not-allowed'
-                                        : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/20'}
-                                `}
+                                        : 'bg-blue-600 hover:bg-blue-500 shadow-lg shadow-blue-900/20'
+                                }`}
                             >
-                                {status === 'idle' ? (
-                                    <><span>Generate</span><ArrowRight size={14} /></>
-                                ) : (
-                                    <><Loader2 size={14} className="animate-spin" /><span>Processing...</span></>
-                                )}
+                                {status === 'idle'
+                                    ? <><span>Generate</span><ArrowRight size={14} /></>
+                                    : <><Loader2 size={14} className="animate-spin" /><span>Working…</span></>
+                                }
                             </button>
                         </div>
                     </form>
 
-                    {/* SPRINT-B-FIX-1: Contextual hint chips
-                        Shown only when input is empty and bar is idle.
-                        Content is canvas-aware (derived from live elements above).
-                        Static chips remain as fallback on empty canvas. */}
+                    {/* Live stage pipeline — shown during generation */}
+                    {(status === 'generating' || status === 'thinking') && (
+                        <GenerationPipeline
+                            stages={stages}
+                            streamChars={streamCharCount}
+                            model={activeModel}
+                        />
+                    )}
+
+                    {/* Hint chips — idle + empty only */}
                     {!input && status === 'idle' && (
                         <div className="px-4 pb-4 flex flex-wrap gap-2">
-                            {contextualHints.map((hint) => (
+                            {contextualHints.map(hint => (
                                 <button
                                     key={hint}
                                     onClick={() => setInput(hint)}
@@ -303,6 +480,24 @@ export const MagicBar = () => {
                                     {hint}
                                 </button>
                             ))}
+                        </div>
+                    )}
+
+                    {/* Recent prompts — idle + empty + history exists */}
+                    {!input && status === 'idle' && promptHistory.length > 0 && (
+                        <div className="px-4 pb-3 border-t border-white/[0.04]">
+                            <p className="text-[9px] text-zinc-700 uppercase tracking-wider mb-1.5 mt-2">Recent</p>
+                            <div className="flex flex-wrap gap-1.5">
+                                {promptHistory.slice(0, 4).map((p, i) => (
+                                    <button
+                                        key={i}
+                                        onClick={() => setInput(p)}
+                                        className="text-[10px] text-zinc-600 hover:text-zinc-300 border border-zinc-800 hover:border-zinc-600 px-2 py-0.5 rounded transition-all truncate max-w-[200px]"
+                                    >
+                                        {p}
+                                    </button>
+                                ))}
+                            </div>
                         </div>
                     )}
                 </motion.div>

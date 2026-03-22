@@ -6,7 +6,25 @@
  * Vectra canvas elements using figmaImporter.ts.
  */
 
-import React, { useState, useCallback, useRef, useMemo } from 'react';
+/* ============================================
+   VECTRA CHANGE LOG
+   File(s): src/components/panels/FigmaPanel.tsx
+   --------------------------------------------
+   ADDED:     frame thumbnail batch-fetch after file load
+              token validation via /v1/me before file fetch
+              thumbnails displayed in frame picker
+   MODIFIED:  handleImport — BUGFIX: image fill fetch now uses
+              result.imageFillNodeIds.join(',') instead of info.id
+              (previously fetched the wrong node, images never resolved)
+              registerComponent — fixed shape (icon, category, defaultProps)
+              instead of the broken `as any` cast
+   PRESERVED: all proxy/auth/step logic unchanged
+              FIG-COORD-1, FIG-SAFE-3, FIGMA-SEC-1 all intact
+   RISK:      thumbnails are fire-and-forget; never block pick step
+   CROSS-REF: FIG-COORD-1, FIGMA-SEC-1, STI-PAGE-1, C-1
+   ============================================ */
+
+import React, { useState, useCallback, useRef, useMemo, useEffect } from 'react';
 import {
     Figma, Link, Key, Loader2,
     CheckCircle2, XCircle, AlertTriangle,
@@ -36,7 +54,15 @@ const FIGMA_TOKEN_KEY = 'vectra_figma_token'; // sessionStorage only — FIGMA-S
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type PanelStep = 'connect' | 'booting_proxy' | 'fetching' | 'pick' | 'importing' | 'done' | 'error';
+type PanelStep =
+    | 'connect'
+    | 'booting_proxy'
+    | 'validating'
+    | 'fetching'
+    | 'pick'
+    | 'importing'
+    | 'done'
+    | 'error';
 
 interface FrameSelection {
     info: FigmaFrameInfo;
@@ -66,26 +92,31 @@ export const FigmaPanel: React.FC = () => {
     const { instance, status: vfsStatus } = useContainer();
 
     // ── Auth state ────────────────────────────────────────────────────────────
-    const [token, setToken]       = useState<string>(() => sessionStorage.getItem(FIGMA_TOKEN_KEY) ?? '');
-    const [fileUrl, setFileUrl]   = useState('');
+    const [token, setToken]         = useState<string>(() => sessionStorage.getItem(FIGMA_TOKEN_KEY) ?? '');
+    const [fileUrl, setFileUrl]     = useState('');
     const [showToken, setShowToken] = useState(false);
 
     // ── Panel state ───────────────────────────────────────────────────────────
-    const [step, setStep]         = useState<PanelStep>('connect');
-    const [errorMsg, setErrorMsg] = useState('');
+    const [step, setStep]           = useState<PanelStep>('connect');
+    const [errorMsg, setErrorMsg]   = useState('');
     const [importLog, setImportLog] = useState<string[]>([]);
-    const [fileName, setFileName] = useState('');
+    const [fileName, setFileName]   = useState('');
 
     // ── Frame selection ───────────────────────────────────────────────────────
     const [frameSelections, setFrameSelections] = useState<FrameSelection[]>([]);
     const [frameSearch, setFrameSearch]         = useState('');
     const [importProgress, setImportProgress]   = useState<ImportProgress[]>([]);
 
+    // ── Thumbnails (background fetch — never blocks pick step) ────────────────
+    const [thumbnails, setThumbnails] = useState<Map<string, string>>(new Map());
+    const [thumbLoading, setThumbLoading] = useState(false);
+
     // ── Post-import summary ───────────────────────────────────────────────────
     const [summary, setSummary] = useState<ImportSummary | null>(null);
 
-    const fileDataRef = useRef<FigmaFileResponse | null>(null);
-    const abortRef    = useRef<AbortController | null>(null);
+    const fileDataRef   = useRef<FigmaFileResponse | null>(null);
+    const abortRef      = useRef<AbortController | null>(null);
+    const thumbAbortRef = useRef<AbortController | null>(null);
 
     const log = useCallback((msg: string) => {
         setImportLog(prev => [...prev, `${new Date().toLocaleTimeString()} ${msg}`]);
@@ -98,6 +129,38 @@ export const FigmaPanel: React.FC = () => {
         else   sessionStorage.removeItem(FIGMA_TOKEN_KEY);
     }, []);
 
+    // ── Thumbnail batch fetch — fires after pick step, never blocks it ────────
+    const fetchThumbnails = useCallback(async (
+        frames: FigmaFrameInfo[],
+        fileKey: string,
+        tok: string,
+    ) => {
+        if (frames.length === 0) return;
+        thumbAbortRef.current?.abort();
+        thumbAbortRef.current = new AbortController();
+        setThumbLoading(true);
+        try {
+            const ids = frames.map(f => f.id).join(',');
+            const imgRes = await figmaFetch<FigmaImageResponse>(
+                `/v1/images/${fileKey}?ids=${ids}&format=png&scale=0.15`,
+                tok,
+                thumbAbortRef.current.signal,
+            );
+            if (imgRes?.images) {
+                const map = new Map<string, string>();
+                for (const [id, url] of Object.entries(imgRes.images)) {
+                    if (url) map.set(id, url);
+                }
+                setThumbnails(map);
+            }
+        } catch { /* non-fatal */ } finally {
+            setThumbLoading(false);
+        }
+    }, []);
+
+    // Abort thumbnail fetch on unmount
+    useEffect(() => () => { thumbAbortRef.current?.abort(); }, []);
+
     // ── Filtered frames ───────────────────────────────────────────────────────
     const filteredFrames = useMemo(() => {
         if (!frameSearch.trim()) return frameSelections;
@@ -107,7 +170,7 @@ export const FigmaPanel: React.FC = () => {
 
     const selectedCount = frameSelections.filter(f => f.selected).length;
 
-    // ── Connect + fetch ───────────────────────────────────────────────────────
+    // ── Connect → proxy → validate → fetch ───────────────────────────────────
     const handleConnect = useCallback(async () => {
         if (!token.trim()) { setErrorMsg('Figma PAT is required.'); return; }
         if (!fileUrl.trim()) { setErrorMsg('Figma file URL is required.'); return; }
@@ -122,21 +185,45 @@ export const FigmaPanel: React.FC = () => {
 
         setErrorMsg('');
         setImportLog([]);
+        setThumbnails(new Map());
         setStep('booting_proxy');
 
+        // Step 1 — boot proxy
         try {
             log('Starting Figma CORS proxy in WebContainer…');
             await ensureProxy(instance);
-            log('✅ Proxy running on port 3001');
+            log('✅ Proxy running');
         } catch (err) {
             setErrorMsg(`Proxy failed to start: ${(err as Error).message}`);
             setStep('error');
             return;
         }
 
+        // Step 2 — validate token via /v1/me
+        setStep('validating');
+        log('Validating access token…');
+        abortRef.current = new AbortController();
+        try {
+            await figmaFetch<{ id: string; email: string; handle: string }>(
+                '/v1/me',
+                token,
+                abortRef.current.signal,
+            );
+            log('✅ Token valid');
+        } catch (err) {
+            if ((err as Error).name === 'AbortError') return;
+            const msg = (err as Error).message;
+            const isAuthErr = msg.includes('403') || msg.includes('401');
+            setErrorMsg(isAuthErr
+                ? 'Invalid Figma token. Check your Personal Access Token in Figma → Account Settings.'
+                : `Token validation failed: ${msg}`);
+            setStep('error');
+            return;
+        }
+
+        // Step 3 — fetch file
         setStep('fetching');
         log(`Fetching Figma file: ${fileKey}…`);
-        abortRef.current = new AbortController();
 
         try {
             const data = await figmaFetch<FigmaFileResponse>(
@@ -159,13 +246,17 @@ export const FigmaPanel: React.FC = () => {
                 return;
             }
 
-            setFrameSelections(frames.map(info => ({
+            const selections = frames.map(info => ({
                 info,
-                mode: info.isComponent ? 'component' : 'page',
+                mode: (info.isComponent ? 'component' : 'page') as 'page' | 'component',
                 selected: !info.isComponent,
-            })));
+            }));
+            setFrameSelections(selections);
             setFrameSearch('');
             setStep('pick');
+
+            // Fire thumbnail fetch in background — never blocks pick step
+            fetchThumbnails(frames, fileKey, token);
 
         } catch (err) {
             if ((err as Error).name === 'AbortError') return;
@@ -174,7 +265,7 @@ export const FigmaPanel: React.FC = () => {
             log(`❌ ${msg}`);
             setStep('error');
         }
-    }, [token, fileUrl, vfsStatus, instance, log]);
+    }, [token, fileUrl, vfsStatus, instance, log, fetchThumbnails]);
 
     // ── Frame controls ────────────────────────────────────────────────────────
     const toggleFrame  = useCallback((id: string) => setFrameSelections(prev => prev.map(fs => fs.info.id === id ? { ...fs, selected: !fs.selected } : fs)), []);
@@ -209,17 +300,13 @@ export const FigmaPanel: React.FC = () => {
             setImportProgress(prev => prev.map(p =>
                 p.frameId === info.id ? { ...p, status: 'running' } : p
             ));
-
             log(`Importing "${info.name}" as ${mode}…`);
 
             try {
                 const figmaNode = findNodeById(fileDataRef.current!, info.id);
                 if (!figmaNode) throw new Error(`Frame "${info.name}" not found in document`);
 
-                const result: FigmaTransformResult = transformFigmaFrame(
-                                figmaNode,
-                                mode, // 'page' | 'component'
-                            );
+                const result: FigmaTransformResult = transformFigmaFrame(figmaNode, mode);
                 totalNodes += Object.keys(result.nodes).length;
                 frameNames.push(info.name);
 
@@ -228,14 +315,25 @@ export const FigmaPanel: React.FC = () => {
                     importPage({ nodes: result.nodes, rootId: result.rootId, pageName: info.name, slug });
                     pagesCreated++;
                 } else {
-                    // Component mode — import as hidden staging page (FIG-A: hidden flag)
                     const hiddenSlug = `/__figma_comp__${info.id.slice(0, 8)}`;
-                    importPage({ nodes: result.nodes, rootId: result.rootId, pageName: `__figma_comp__${info.name}`, slug: hiddenSlug });
+                    importPage({
+                        nodes: result.nodes,
+                        rootId: result.rootId,
+                        pageName: `__figma_comp__${info.name}`,
+                        slug: hiddenSlug,
+                    });
+                    // FIXED: was passing `as any` with invalid shape — now proper ComponentConfig
                     registerComponent(`figma-${info.id}`, {
+                        icon: Box,
                         label: info.name,
-                        type: 'figma-frame',
-                        importMeta: { source: 'figma', fileKey, frameId: info.id },
-                    } as any);
+                        category: 'layout',
+                        defaultProps: { style: { position: 'relative', width: '100%' } },
+                        importMeta: {
+                            packageName: `./figma/${fileKey}`,
+                            exportName: info.name.replace(/\s+/g, '').replace(/[^a-zA-Z0-9]/g, ''),
+                            isDefault: true,
+                        },
+                    });
                     componentsCreated++;
                 }
 
@@ -244,21 +342,25 @@ export const FigmaPanel: React.FC = () => {
                 ));
                 log(`✅ "${info.name}" done (${Object.keys(result.nodes).length} nodes)`);
 
-                // Async image fills — FIG-SAFE-3: no mutation of raw Figma response
-                (async () => {
-                    try {
-                        const imgRes = await figmaFetch<FigmaImageResponse>(
-                            `/v1/images/${fileKey}?ids=${info.id}&format=png`,
-                            token,
-                        );
-                        if (!imgRes?.images) return;
-                        // applyImageFills needs 3 args: nodes, imageFillMap, figmaImageUrls
-                        const patchedNodes = applyImageFills(result.nodes, result.imageFillMap, imgRes.images);
-                        window.dispatchEvent(new CustomEvent('vectra:figma-image-patch', {
-                            detail: { nodes: patchedNodes, rootId: result.rootId },
-                        }));
-                    } catch { /* non-fatal — images are optional */ }
-                })();
+                // BUG FIX: was ids=${info.id} (frame ID — wrong).
+                // Must be the actual IMAGE-fill child node IDs from result.imageFillNodeIds.
+                // FIG-SAFE-3: no mutation of raw Figma response.
+                if (result.imageFillNodeIds.length > 0) {
+                    (async () => {
+                        try {
+                            const fillIds = result.imageFillNodeIds.join(',');
+                            const imgRes = await figmaFetch<FigmaImageResponse>(
+                                `/v1/images/${fileKey}?ids=${fillIds}&format=png`,
+                                token,
+                            );
+                            if (!imgRes?.images) return;
+                            const patchedNodes = applyImageFills(result.nodes, result.imageFillMap, imgRes.images);
+                            window.dispatchEvent(new CustomEvent('vectra:figma-image-patch', {
+                                detail: { nodes: patchedNodes, rootId: result.rootId },
+                            }));
+                        } catch { /* non-fatal */ }
+                    })();
+                }
 
             } catch (err) {
                 const msg = (err as Error).message;
@@ -277,8 +379,9 @@ export const FigmaPanel: React.FC = () => {
 
     // ── Reconnect ─────────────────────────────────────────────────────────────
     const handleReconnect = useCallback(async () => {
-        await resetProxy(); // async — waits for graceful process exit
+        await resetProxy();
         abortRef.current?.abort();
+        thumbAbortRef.current?.abort();
         setStep('connect');
         setErrorMsg('');
         setImportLog([]);
@@ -287,6 +390,7 @@ export const FigmaPanel: React.FC = () => {
         setImportProgress([]);
         setSummary(null);
         setFileName('');
+        setThumbnails(new Map());
         fileDataRef.current = null;
     }, []);
 
@@ -294,13 +398,13 @@ export const FigmaPanel: React.FC = () => {
     return (
         <div className="flex flex-col h-full text-[#ccc] select-none overflow-hidden">
 
-            {/* ── Header ────────────────────────────────────────────────────── */}
+            {/* ── Header ───────────────────────────────────────────────────── */}
             <div className="px-3 pt-3 pb-2.5 border-b border-[#2c2c2e] shrink-0">
                 <div className="flex items-center gap-2 mb-0.5">
                     <Figma size={13} className="text-pink-400" />
                     <span className="text-[10px] font-bold text-white uppercase tracking-wider">Figma Import</span>
                     {fileName && (
-                        <span className="ml-auto text-[9px] font-mono text-[#48484a] truncate max-w-[120px]">{fileName}</span>
+                        <span className="ml-auto text-[9px] font-mono text-[#48484a] truncate max-w-[120px]" title={fileName}>{fileName}</span>
                     )}
                 </div>
                 <p className="text-[9px] text-[#48484a] leading-relaxed">
@@ -310,10 +414,9 @@ export const FigmaPanel: React.FC = () => {
 
             <div className="flex-1 overflow-y-auto custom-scrollbar">
 
-                {/* ── Connect step ──────────────────────────────────────────── */}
+                {/* ── Connect ──────────────────────────────────────────────── */}
                 {step === 'connect' && (
                     <div className="p-3 space-y-2.5">
-                        {/* PAT */}
                         <div>
                             <label className="flex items-center gap-1.5 text-[9px] font-bold text-[#636366] uppercase tracking-wider mb-1">
                                 <Key size={9} /> Personal Access Token
@@ -338,7 +441,6 @@ export const FigmaPanel: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* File URL */}
                         <div>
                             <label className="flex items-center gap-1.5 text-[9px] font-bold text-[#636366] uppercase tracking-wider mb-1">
                                 <Link size={9} /> File URL
@@ -370,25 +472,29 @@ export const FigmaPanel: React.FC = () => {
                     </div>
                 )}
 
-                {/* ── Booting / Fetching ────────────────────────────────────── */}
-                {(step === 'booting_proxy' || step === 'fetching') && (
+                {/* ── Loading steps ─────────────────────────────────────────── */}
+                {(step === 'booting_proxy' || step === 'validating' || step === 'fetching') && (
                     <div className="flex flex-col items-center gap-3 py-12 px-4">
                         <Loader2 size={24} className="text-pink-400 animate-spin" />
                         <p className="text-[11px] font-semibold text-[#636366]">
-                            {step === 'booting_proxy' ? 'Starting CORS proxy…' : 'Fetching file…'}
+                            {step === 'booting_proxy' ? 'Starting CORS proxy…'
+                             : step === 'validating'   ? 'Validating token…'
+                             : 'Fetching file…'}
                         </p>
                         <div className="w-full space-y-0.5 max-h-24 overflow-y-auto">
                             {importLog.map((l, i) => (
-                                <div key={i} className={cn('text-[9px] font-mono', l.includes('✅') ? 'text-emerald-400' : l.includes('❌') ? 'text-red-400' : 'text-[#48484a]')}>{l}</div>
+                                <div key={i} className={cn('text-[9px] font-mono',
+                                    l.includes('✅') ? 'text-emerald-400'
+                                    : l.includes('❌') ? 'text-red-400'
+                                    : 'text-[#48484a]')}>{l}</div>
                             ))}
                         </div>
                     </div>
                 )}
 
-                {/* ── Pick step ─────────────────────────────────────────────── */}
+                {/* ── Pick ─────────────────────────────────────────────────── */}
                 {step === 'pick' && (
                     <div className="p-3 space-y-2.5">
-                        {/* Header row */}
                         <div className="flex items-center justify-between">
                             <span className="text-[10px] font-bold text-[#636366] uppercase tracking-wider">
                                 {frameSelections.length} Frame{frameSelections.length !== 1 ? 's' : ''}
@@ -401,7 +507,13 @@ export const FigmaPanel: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Search */}
+                        {thumbLoading && (
+                            <div className="flex items-center gap-1.5 text-[9px] text-[#3a3a3c]">
+                                <Loader2 size={8} className="animate-spin" />
+                                <span>Loading previews…</span>
+                            </div>
+                        )}
+
                         <div className="relative">
                             <Search size={9} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#48484a]" />
                             <input
@@ -417,55 +529,68 @@ export const FigmaPanel: React.FC = () => {
                             )}
                         </div>
 
-                        {/* Frame list */}
                         <div className="space-y-1.5">
                             {filteredFrames.length === 0 && (
                                 <p className="text-[10px] text-[#48484a] text-center py-4">No frames match "{frameSearch}"</p>
                             )}
-                            {filteredFrames.map(fs => (
-                                <div key={fs.info.id}
-                                    className={cn(
-                                        'flex items-center gap-2 px-2.5 py-2 rounded-xl border transition-all cursor-pointer group',
-                                        fs.selected
-                                            ? 'border-pink-500/30 bg-pink-500/5'
-                                            : 'border-[#2c2c2e] hover:border-[#3a3a3c]'
-                                    )}
-                                    onClick={() => toggleFrame(fs.info.id)}
-                                >
-                                    <div className={cn(
-                                        'w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-all',
-                                        fs.selected ? 'bg-pink-500 border-pink-500' : 'border-[#3a3a3c] group-hover:border-[#636366]'
-                                    )}>
-                                        {fs.selected && <CheckCircle2 size={9} className="text-white" />}
-                                    </div>
-
-                                    {fs.mode === 'page'
-                                        ? <Layout size={10} className={fs.selected ? 'text-pink-400' : 'text-[#48484a]'} />
-                                        : <Box     size={10} className={fs.selected ? 'text-purple-400' : 'text-[#48484a]'} />}
-
-                                    <span className="flex-1 text-[10px] font-semibold truncate text-[#e5e5ea]">{fs.info.name}</span>
-
-                                    {/* Dimension badge — from .bounds (FigmaFrameInfo has no direct width/height) */}
-                                    {fs.info.bounds && (
-                                        <span className="text-[8px] font-mono text-[#48484a] shrink-0 bg-[#1c1c1e] px-1 py-0.5 rounded">
-                                            {Math.round(fs.info.bounds.width)}×{Math.round(fs.info.bounds.height)}
-                                        </span>
-                                    )}
-
-                                    {/* Mode toggle */}
-                                    <button
-                                        onClick={e => { e.stopPropagation(); toggleMode(fs.info.id); }}
+                            {filteredFrames.map(fs => {
+                                const thumb = thumbnails.get(fs.info.id);
+                                return (
+                                    <div key={fs.info.id}
                                         className={cn(
-                                            'text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 transition-all',
-                                            fs.mode === 'page'
-                                                ? 'bg-blue-500/15 text-blue-400 hover:bg-blue-500/25'
-                                                : 'bg-purple-500/15 text-purple-400 hover:bg-purple-500/25'
+                                            'flex items-center gap-2 px-2.5 py-2 rounded-xl border transition-all cursor-pointer group',
+                                            fs.selected
+                                                ? 'border-pink-500/30 bg-pink-500/5'
+                                                : 'border-[#2c2c2e] hover:border-[#3a3a3c]'
                                         )}
+                                        onClick={() => toggleFrame(fs.info.id)}
                                     >
-                                        {fs.mode}
-                                    </button>
-                                </div>
-                            ))}
+                                        {/* Checkbox */}
+                                        <div className={cn(
+                                            'w-3.5 h-3.5 rounded border flex items-center justify-center shrink-0 transition-all',
+                                            fs.selected ? 'bg-pink-500 border-pink-500' : 'border-[#3a3a3c] group-hover:border-[#636366]'
+                                        )}>
+                                            {fs.selected && <CheckCircle2 size={9} className="text-white" />}
+                                        </div>
+
+                                        {/* Thumbnail or icon placeholder */}
+                                        {thumb ? (
+                                            <img
+                                                src={thumb}
+                                                alt=""
+                                                className="w-9 h-6 object-cover rounded shrink-0 bg-[#1c1c1e] border border-[#2c2c2e]"
+                                                onError={e => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                                            />
+                                        ) : (
+                                            <div className="w-9 h-6 rounded shrink-0 bg-[#1c1c1e] border border-[#2c2c2e] flex items-center justify-center">
+                                                {fs.mode === 'page'
+                                                    ? <Layout size={9} className="text-[#3a3a3c]" />
+                                                    : <Box     size={9} className="text-[#3a3a3c]" />}
+                                            </div>
+                                        )}
+
+                                        <span className="flex-1 text-[10px] font-semibold truncate text-[#e5e5ea]">{fs.info.name}</span>
+
+                                        {fs.info.bounds && (
+                                            <span className="text-[8px] font-mono text-[#48484a] shrink-0 bg-[#1c1c1e] px-1 py-0.5 rounded">
+                                                {Math.round(fs.info.bounds.width)}×{Math.round(fs.info.bounds.height)}
+                                            </span>
+                                        )}
+
+                                        <button
+                                            onClick={e => { e.stopPropagation(); toggleMode(fs.info.id); }}
+                                            className={cn(
+                                                'text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 transition-all',
+                                                fs.mode === 'page'
+                                                    ? 'bg-blue-500/15 text-blue-400 hover:bg-blue-500/25'
+                                                    : 'bg-purple-500/15 text-purple-400 hover:bg-purple-500/25'
+                                            )}
+                                        >
+                                            {fs.mode}
+                                        </button>
+                                    </div>
+                                );
+                            })}
                         </div>
 
                         <button
@@ -484,7 +609,7 @@ export const FigmaPanel: React.FC = () => {
                     </div>
                 )}
 
-                {/* ── Importing ─────────────────────────────────────────────── */}
+                {/* ── Importing ────────────────────────────────────────────── */}
                 {step === 'importing' && (
                     <div className="p-3 space-y-2">
                         <div className="flex items-center gap-2 py-2">
@@ -504,15 +629,13 @@ export const FigmaPanel: React.FC = () => {
                     </div>
                 )}
 
-                {/* ── Done ──────────────────────────────────────────────────── */}
+                {/* ── Done ─────────────────────────────────────────────────── */}
                 {step === 'done' && summary && (
                     <div className="p-3 space-y-3">
                         <div className="flex flex-col items-center gap-2 py-4">
                             <CheckCircle2 size={28} className="text-emerald-400" />
                             <p className="text-[13px] font-bold text-white">Import Complete</p>
                         </div>
-
-                        {/* Summary card */}
                         <div className="border border-emerald-500/20 bg-emerald-500/5 rounded-xl p-3 space-y-2">
                             <div className="grid grid-cols-3 gap-2 text-center">
                                 <div>
@@ -537,24 +660,19 @@ export const FigmaPanel: React.FC = () => {
                                 ))}
                             </div>
                         </div>
-
-                        {/* Log */}
                         <div className="space-y-0.5 max-h-24 overflow-y-auto custom-scrollbar">
                             {importLog.map((l, i) => (
                                 <div key={i} className={cn('text-[9px] font-mono', l.includes('✅') ? 'text-emerald-400' : l.includes('❌') ? 'text-red-400' : 'text-[#48484a]')}>{l}</div>
                             ))}
                         </div>
-
-                        <div className="flex gap-2">
-                            <button onClick={handleReconnect}
-                                className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-bold bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[#aeaeb2] transition-colors">
-                                <RefreshCw size={10} /> Import More
-                            </button>
-                        </div>
+                        <button onClick={handleReconnect}
+                            className="w-full flex items-center justify-center gap-1.5 py-2 rounded-lg text-[10px] font-bold bg-[#2c2c2e] hover:bg-[#3a3a3c] text-[#aeaeb2] transition-colors">
+                            <RefreshCw size={10} /> Import More
+                        </button>
                     </div>
                 )}
 
-                {/* ── Error ─────────────────────────────────────────────────── */}
+                {/* ── Error ────────────────────────────────────────────────── */}
                 {step === 'error' && (
                     <div className="p-3 space-y-3">
                         <div className="flex flex-col items-center gap-2 py-6">

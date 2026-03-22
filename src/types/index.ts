@@ -1,4 +1,4 @@
-﻿import type { LucideIcon } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 
 // ─── WASM LAYOUT ENGINE ───────────────────────────────────────────────────────
 // Returned by ProjectContext.querySnapping(). Defined here (not in ProjectContext)
@@ -39,6 +39,27 @@ export interface Asset {
     name: string;
 }
 
+/**
+ * AI-SOURCE-1 [PERMANENT]: AiSourceMeta is stamped onto custom_code nodes
+ * at generation time by sanitizeAIElements (aiHelpers.ts).
+ * It is the single source of truth for:
+ *   1. Canvas section badges (RenderNode section name chip)
+ *   2. RightSidebar AI node panel (original prompt, regenerate button)
+ *   3. Layers panel AI badge
+ *   4. MagicBar "Edit Selected" mode (pre-fills prompt from aiSource.prompt)
+ * Never set manually — only written by the AI generation pipeline.
+ */
+export interface AiSourceMeta {
+    /** The user's original prompt that produced this section. */
+    prompt: string;
+    /** Matches the // SECTION: marker name and element.name. */
+    sectionName: string;
+    /** Model string, e.g. "zai-org/GLM-5:zai-org". */
+    model: string;
+    /** Unix ms timestamp when generation completed. */
+    generatedAt: number;
+}
+
 export interface VectraNode {
     id: string;
     type: string;
@@ -59,6 +80,12 @@ export interface VectraNode {
      * Never present on: div, p, h1, img, input, button, icon, canvas, webpage.
      */
     importMeta?: ComponentImportMeta;
+    /**
+     * AI-SOURCE-1 [PERMANENT]: Present only on nodes created by the AI pipeline
+     * (type === 'custom_code' with injected .code). Absent on all hand-placed nodes.
+     * Drives canvas badges, RightSidebar AI panel, and the "Edit Selected" re-prompt path.
+     */
+    aiSource?: AiSourceMeta;
     props: {
         className?: string;
         style?: React.CSSProperties;
@@ -202,6 +229,10 @@ export interface ProjectMeta {
     lastEditedAt: number;
     /** Number of pages in the project — updated on autosave. Quick display info. */
     pageCount: number;
+    /** Optional hex accent color shown as a dot on the Dashboard card. */
+    color?: string;
+    /** Optional short description shown on the Dashboard card. */
+    description?: string;
 }
 
 export interface Guide {
@@ -277,11 +308,18 @@ export interface DragData {
 
 export interface InteractionState {
     type: 'MOVE' | 'RESIZE';
-    itemId: string;
+    itemId: string;         // primary node (anchor for single-node ops)
     startX?: number;
     startY?: number;
     startRect?: { left: number; top: number; width: number; height: number };
     handle?: string;
+    // ── MULTI-SELECT GROUP MOVE ────────────────────────────────────────────
+    // Present when a multi-select drag begins. Absent for all single-node ops.
+    // MULTI-MOVE-1 [PERMANENT]: startRects populated at drag-start (pointerDown)
+    // from live elements state — not from a closure. Read once, stable for the
+    // entire drag gesture. Never updated during pointermove.
+    itemIds?: string[];                                              // all selected node IDs
+    startRects?: Record<string, { left: number; top: number }>;    // per-node origin
 }
 
 export type EditorTool = 'select' | 'hand' | 'type';

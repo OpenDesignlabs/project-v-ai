@@ -1,4 +1,4 @@
-import type { VectraProject, VectraNode } from '../types';
+import type { VectraProject, VectraNode, AiSourceMeta } from '../types';
 
 // --- 1. JSON REPAIR ---
 // Fixes truncated or malformed JSON from the AI by auto-closing missing braces
@@ -88,7 +88,12 @@ export const repairJSON = (jsonStr: string): string => {
 // --- 2. ID SANITIZATION --- Renames all IDs in an AI-generated element map to be globally unique, preventing collisions with existing project nodes (e.g. "root_1", "container_1")
 export const sanitizeAIElements = (
     elements: Record<string, VectraNode>,
-    rootId: string
+    rootId: string,
+    // AI-SOURCE-1: optional metadata stamped onto generated sections.
+    // When present, every custom_code node in the incoming elements map
+    // receives an aiSource field at creation time. Container/wrapper nodes
+    // (type !== 'custom_code') intentionally never receive aiSource.
+    aiMeta?: Pick<AiSourceMeta, 'prompt' | 'model'>
 ): { sanitizedElements: Record<string, VectraNode>; newRootId: string } => {
     const idMap: Record<string, string> = {};
     const incomingIds = Object.keys(elements);
@@ -110,7 +115,23 @@ export const sanitizeAIElements = (
             (childId: string) => idMap[childId] || childId
         );
 
-        sanitizedElements[newId] = { ...el, id: newId, children: newChildren };
+        // AI-SOURCE-1: stamp provenance on code-bearing section nodes only.
+        // Container wrappers (PageWrapper, Wrapper) are structural — no aiSource.
+        const shouldStamp = el.type === 'custom_code' && !!el.code && !!aiMeta;
+
+        sanitizedElements[newId] = {
+            ...el,
+            id: newId,
+            children: newChildren,
+            ...(shouldStamp ? {
+                aiSource: {
+                    prompt: aiMeta!.prompt,
+                    sectionName: el.name ?? 'Section',
+                    model: aiMeta!.model,
+                    generatedAt: Date.now(),
+                } satisfies AiSourceMeta
+            } : {}),
+        };
     });
 
     const newRootId = idMap[rootId] || rootId;
@@ -118,6 +139,7 @@ export const sanitizeAIElements = (
         originalRoot: rootId,
         newRoot: newRootId,
         totalElements: Object.keys(sanitizedElements).length,
+        aiStamped: Object.values(sanitizedElements).filter(n => n.aiSource).length,
     });
 
     return { sanitizedElements, newRootId };
@@ -129,11 +151,13 @@ export const mergeAIContent = (
     pageRootId: string,
     aiElements: Record<string, VectraNode>,
     aiRootId: string,
-    isFullPage: boolean
+    isFullPage: boolean,
+    // AI-SOURCE-1: thread through to sanitizeAIElements for provenance stamping.
+    aiMeta?: Pick<AiSourceMeta, 'prompt' | 'model'>
 ): VectraProject => {
 
-    // Step 1 – sanitize incoming IDs
-    const { sanitizedElements, newRootId } = sanitizeAIElements(aiElements, aiRootId);
+    // Step 1 – sanitize incoming IDs (+ stamp aiSource when aiMeta provided)
+    const { sanitizedElements, newRootId } = sanitizeAIElements(aiElements, aiRootId, aiMeta);
 
     // Step 2 – merge flat maps
     const mergedProject: VectraProject = { ...currentProject, ...sanitizedElements };

@@ -28,6 +28,9 @@ interface AIResponse {
     rootId?: string;
     action: 'create' | 'update' | 'error';
     message: string;
+    // AI-SOURCE-1: carries model identity back to ProjectContext so it can be
+    // threaded into mergeAIContent → sanitizeAIElements → aiSource stamp.
+    aiMeta?: { prompt: string; model: string };
 }
 
 // aligned with project-wide crypto.randomUUID() standard (M-5 / aiHelpers.ts fix).
@@ -542,6 +545,18 @@ const processCloudLLM = async (
     canvasContext?: string
 ): Promise<AIResponse> => {
 
+    // ── API KEY GATE ────────────────────────────────────────────────────────────────────────
+    // Fires before any async work, before the prompt is sent, before the flag
+    // is set. Returns a clear, actionable error so the user knows exactly what
+    // to fix — never a cryptic "Failed to parse AI response" from a 401.
+    if (!AI_CONFIG.primaryApiKey) {
+        return {
+            action: 'error',
+            message: '🔑 No AI key found. Add VITE_AI_PRIMARY_KEY=<your-key> to .env.local and restart the dev server.',
+        };
+    }
+    // ── END GATE ────────────────────────────────────────────────────────────────────────
+
     const isPagePrompt = /page|website|portfolio|landing|blog|store|dashboard/i.test(prompt);
 
     const systemPrompt = `VECTRA SECTION-FIRST COMPONENT GENERATOR
@@ -711,6 +726,12 @@ ${canvasContext}
     let content = '';
     try {
         console.log('🤖 [Generator] Calling primary model (section-first, streaming)...');
+
+        // ── STAGE EVENT 1: model call about to fire ─────────────────────────────────────────
+        window.dispatchEvent(new CustomEvent('vectra:ai-stage', {
+            detail: { stage: 'sending', model: AI_CONFIG.primaryModel }
+        }));
+
         // Use streaming variant so MagicBar gets live section ticker.
         // SRE Agent (fixComponentError) keeps callDirectAPI — see SPRINT-B-FIX-4-PERM.
         content = await callDirectAPIWithStreaming(systemPrompt, `Generate: ${prompt}`, AI_CONFIG.primaryModel, 0.65, AI_CONFIG.primaryApiKey);
@@ -728,6 +749,14 @@ ${canvasContext}
 
         const sectionMap = extractSections(rawReactCode);
         console.log(`✅ [Generator] Sections: [${[...sectionMap.keys()].filter(k => k !== 'default').join(', ')}]`);
+
+        // ── STAGE EVENT 2: parsing complete, section names known ────────────────────────
+        window.dispatchEvent(new CustomEvent('vectra:ai-stage', {
+            detail: {
+                stage: 'parsing',
+                sections: [...sectionMap.keys()].filter(k => k !== 'default'),
+            }
+        }));
 
         const jsonMatch = content.match(/```json\s*\n([\s\S]*?)\n```/i);
         let rawJson = jsonMatch?.[1]?.trim() ?? '';
@@ -773,6 +802,11 @@ ${canvasContext}
 
         if (injectedCount === 0) throw new Error('No custom_code elements found in AI JSON');
 
+        // ── STAGE EVENT 3: code injection complete, canvas about to update ────────────────
+        window.dispatchEvent(new CustomEvent('vectra:ai-stage', {
+            detail: { stage: 'injecting', count: injectedCount }
+        }));
+
         // Guard rail: enforce position:relative + width:100% on sections (AI-SECTION-1)
         for (const el of Object.values(parsed.elements) as any[]) {
             if (el.type === 'custom_code') {
@@ -793,7 +827,9 @@ ${canvasContext}
             action: 'create',
             elements: { ...parsed.elements },
             rootId: parsed.rootId,
-            message: `Generated ${injectedCount} section${injectedCount > 1 ? 's' : ''} ✨`
+            message: `Generated ${injectedCount} section${injectedCount > 1 ? 's' : ''} ✨`,
+            // AI-SOURCE-1: bubble up model identity for provenance stamping in mergeAIContent.
+            aiMeta: { prompt, model: AI_CONFIG.primaryModel },
         };
 
     } catch (e) {

@@ -5,8 +5,13 @@ logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+# lock file
 pnpm-debug.log*
 lerna-debug.log*
+
+# Scripts and Backups
+scripts/
+src.zip
 
 node_modules
 dist

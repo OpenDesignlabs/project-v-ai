@@ -7,6 +7,7 @@ import { ContainerPreview } from './ContainerPreview';
 import { FramePicker } from './FramePicker';
 import { TEMPLATES } from '../../data/templates';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
+import { Copy, Trash2 } from 'lucide-react';
 
 // Invisible 8px drag handle at the bottom of each artboard frame. Memoized — only re-renders when frameId or zoom changes.
 const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ frameId, zoom }) => {
@@ -70,13 +71,194 @@ const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ fr
     );
 });
 
+// ─── FLOATING SELECTION TOOLBAR ──────────────────────────────────────────────
+// TOOLBAR-1 [PERMANENT]: Fixed position — OUTSIDE the world transform div so it
+// never scales with zoom. Position derived from getBoundingClientRect().
+// Hidden: during interaction (drag/resize), in previewMode, for artboards, nothing selected.
+
+const TOOLBAR_H = 36;
+const TOOLBAR_GAP = 8;
+
+const SingleNodeToolbar: React.FC<{
+    elementId: string;
+    nodeEl: HTMLElement | null;
+}> = ({ elementId, nodeEl }) => {
+    const { deleteElement, duplicateElement } = useEditor();
+    const { clearSelection } = useUI();
+    // Artboard-type guard — we need elements for this check
+    const { elements } = useProject();
+    const element = elements[elementId];
+
+    if (!nodeEl || !element) return null;
+    // Never show toolbar on artboard root nodes
+    if (element.type === 'canvas' || element.type === 'webpage' || element.type === 'artboard') return null;
+    const rect = nodeEl.getBoundingClientRect();
+    const toolbarY = rect.top - TOOLBAR_H - TOOLBAR_GAP;
+    if (toolbarY < 4) return null; // would clip above viewport
+
+    const Divider = () => <div className="w-px h-4 bg-white/10 shrink-0 mx-0.5" />;
+
+    return (
+        <div
+            className="fixed z-[10001] pointer-events-auto"
+            style={{ left: Math.max(8, rect.left), top: toolbarY }}
+        >
+            <div className="flex items-center gap-0.5 bg-[#1a1a1c]/95 border border-white/[0.09] rounded-xl px-1.5 py-1 shadow-2xl shadow-black/60 backdrop-blur-sm">
+                {/* Duplicate */}
+                <button
+                    title="Duplicate (Cmd+D)"
+                    onClick={() => duplicateElement(elementId)}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-zinc-300 hover:bg-white/10 hover:text-white transition-all select-none"
+                >
+                    <Copy size={12} /><span>Duplicate</span>
+                </button>
+                <Divider />
+                {/* Delete */}
+                <button
+                    title="Delete"
+                    onClick={() => { deleteElement(elementId); clearSelection(); }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-md text-[11px] font-medium text-red-400 hover:bg-red-500/15 hover:text-red-300 transition-all select-none"
+                >
+                    <Trash2 size={12} /><span>Delete</span>
+                </button>
+            </div>
+        </div>
+    );
+};
+
+// Multi-select align + distribute bar (shown when 2+ nodes selected)
+const AlignDistributeBar: React.FC<{
+    selectedIds: Set<string>;
+    bboxEl: HTMLElement | null;
+}> = ({ selectedIds, bboxEl }) => {
+    const { elements, updateProject, pushHistory, elementsRef } = useProject();
+
+    if (!bboxEl || selectedIds.size < 2) return null;
+    const rect = bboxEl.getBoundingClientRect();
+    const toolbarY = rect.top - TOOLBAR_H - TOOLBAR_GAP;
+    if (toolbarY < 4) return null;
+
+    const getBBox = () => {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        selectedIds.forEach(id => {
+            const el = elements[id];
+            if (!el?.props?.style) return;
+            const s = el.props.style as Record<string, any>;
+            const l = parseFloat(String(s.left ?? '0'));
+            const t = parseFloat(String(s.top  ?? '0'));
+            const w = parseFloat(String(s.width ?? '0'));
+            const h = parseFloat(String(s.height ?? s.minHeight ?? '0'));
+            minX = Math.min(minX, l); minY = Math.min(minY, t);
+            maxX = Math.max(maxX, l + w); maxY = Math.max(maxY, t + h);
+        });
+        return { minX, minY, maxX, maxY };
+    };
+
+    const align = (axis: 'left' | 'centerH' | 'right' | 'top' | 'centerV' | 'bottom') => {
+        const { minX, minY, maxX, maxY } = getBBox();
+        const cur = elementsRef.current;
+        const updates: Record<string, any> = { ...cur };
+        selectedIds.forEach(id => {
+            const el = cur[id];
+            if (!el?.props?.style) return;
+            const s = el.props.style as Record<string, any>;
+            const w = parseFloat(String(s.width ?? '0'));
+            const h = parseFloat(String(s.height ?? s.minHeight ?? '0'));
+            let newLeft = parseFloat(String(s.left ?? '0'));
+            let newTop  = parseFloat(String(s.top  ?? '0'));
+            if (axis === 'left')    newLeft = minX;
+            if (axis === 'centerH') newLeft = minX + (maxX - minX) / 2 - w / 2;
+            if (axis === 'right')   newLeft = maxX - w;
+            if (axis === 'top')     newTop  = minY;
+            if (axis === 'centerV') newTop  = minY + (maxY - minY) / 2 - h / 2;
+            if (axis === 'bottom')  newTop  = maxY - h;
+            updates[id] = { ...el, props: { ...el.props, style: { ...el.props.style,
+                left: `${Math.round(newLeft)}px`, top: `${Math.round(newTop)}px` } } };
+        });
+        updateProject(updates);
+        pushHistory(updates);
+    };
+
+    const distribute = (dir: 'h' | 'v') => {
+        const cur = elementsRef.current;
+        const ids = [...selectedIds].filter(id => cur[id]?.props?.style);
+        if (ids.length < 3) return;
+        ids.sort((a, b) => {
+            const sa = cur[a]!.props.style as Record<string, any>;
+            const sb = cur[b]!.props.style as Record<string, any>;
+            return dir === 'h'
+                ? parseFloat(String(sa.left ?? '0')) - parseFloat(String(sb.left ?? '0'))
+                : parseFloat(String(sa.top  ?? '0')) - parseFloat(String(sb.top  ?? '0'));
+        });
+        const first = cur[ids[0]]!.props.style as Record<string, any>;
+        const last  = cur[ids[ids.length - 1]]!.props.style as Record<string, any>;
+        const startPos  = parseFloat(String(dir === 'h' ? first.left : first.top ?? '0'));
+        const endExtent = parseFloat(String(dir === 'h' ? last.left : last.top ?? '0'))
+                        + parseFloat(String(dir === 'h' ? (last.width ?? '0') : (last.height ?? last.minHeight ?? '0')));
+        const totalSize = ids.reduce((sum, id) => {
+            const s = cur[id]!.props.style as Record<string, any>;
+            return sum + parseFloat(String(dir === 'h' ? (s.width ?? '0') : (s.height ?? s.minHeight ?? '0')));
+        }, 0);
+        const gap = (endExtent - startPos - totalSize) / (ids.length - 1);
+        let cursor = startPos;
+        const updates: Record<string, any> = { ...cur };
+        ids.forEach(id => {
+            const el = cur[id]!;
+            const s = el.props.style as Record<string, any>;
+            const sz = parseFloat(String(dir === 'h' ? (s.width ?? '0') : (s.height ?? s.minHeight ?? '0')));
+            updates[id] = { ...el, props: { ...el.props, style: { ...el.props.style,
+                ...(dir === 'h' ? { left: `${Math.round(cursor)}px` } : { top: `${Math.round(cursor)}px` }),
+            }}};
+            cursor += sz + gap;
+        });
+        updateProject(updates);
+        pushHistory(updates);
+    };
+
+    type ABtnDef = { icon: React.ReactNode; action: () => void; title: string };
+    const btns: ABtnDef[] = [
+        { icon: <span className="text-[11px] font-mono">⊢L</span>,  action: () => align('left'),    title: 'Align left edges' },
+        { icon: <span className="text-[11px] font-mono">C↔</span>,  action: () => align('centerH'), title: 'Align centers horizontally' },
+        { icon: <span className="text-[11px] font-mono">R⊣</span>,  action: () => align('right'),   title: 'Align right edges' },
+        { icon: <span className="text-[11px] font-mono">⊤T</span>,  action: () => align('top'),     title: 'Align top edges' },
+        { icon: <span className="text-[11px] font-mono">C↕</span>,  action: () => align('centerV'), title: 'Align centers vertically' },
+        { icon: <span className="text-[11px] font-mono">B⊥</span>,  action: () => align('bottom'),  title: 'Align bottom edges' },
+        { icon: <span className="text-[11px] font-mono">⇔H</span>,  action: () => distribute('h'),  title: 'Distribute horizontally (3+ nodes)' },
+        { icon: <span className="text-[11px] font-mono">⇕V</span>,  action: () => distribute('v'),  title: 'Distribute vertically (3+ nodes)' },
+    ];
+
+    return (
+        <div
+            className="fixed z-[10001] pointer-events-auto"
+            style={{ left: Math.max(8, rect.left), top: toolbarY }}
+        >
+            <div className="flex items-center gap-0.5 bg-[#1a1a1c]/95 border border-white/[0.09] rounded-xl px-1.5 py-1 shadow-2xl shadow-black/60 backdrop-blur-sm">
+                <span className="text-[9px] text-zinc-600 px-1.5 font-mono shrink-0">{selectedIds.size}</span>
+                <div className="w-px h-4 bg-white/10 mx-0.5" />
+                {btns.map((btn, i) => (
+                    <React.Fragment key={i}>
+                        {i === 6 && <div className="w-px h-4 bg-white/10 mx-0.5" />}
+                        <button
+                            title={btn.title}
+                            onClick={btn.action}
+                            className="p-1.5 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-all"
+                        >
+                            {btn.icon}
+                        </button>
+                    </React.Fragment>
+                ))}
+            </div>
+        </div>
+    );
+};
+
 // Main canvas component. Subscribes to useProject (doc data), useUI (60fps viewport), and useEditor (interaction engine) separately to minimise re-renders.
 export const Canvas = () => {
     // ── Slow-changing project data ─────────────────────────────────────────────
     const {
         elements, updateProject, activePageId, instantiateTemplate, history, addFrame,
-        // parentMap for world-space multi-select bbox. Canvas already re-renders
-        // on elements change (PERF-2 safe — parentMap rebuilds on structuralKey only).
+        elementsRef,
+        // parentMap for world-space multi-select bbox.
         parentMap,
     } = useProject();
 
@@ -270,6 +452,38 @@ export const Canvas = () => {
             });
         };
 
+        // Scroll-to-node: pan so the clicked layer element is centered in the viewport at current zoom.
+        const handleScrollToNode = (e: Event) => {
+            if (previewMode) return;
+            const { id } = (e as CustomEvent<{ id: string }>).detail;
+            const el = elements[id];
+            if (!el?.props?.style) return;
+
+            const s = el.props.style as Record<string, any>;
+            // Walk one level up to artboard for world-space offset (O(1) parentMap lookup).
+            const parentId = parentMap.get(id);
+            const parent = parentId ? elements[parentId] : null;
+            let ax = 0, ay = 0;
+            if (parent?.props?.style) {
+                const ps = parent.props.style as Record<string, any>;
+                ax = parseFloat(String(ps.left ?? '0'));
+                ay = parseFloat(String(ps.top  ?? '0'));
+            }
+            const elLeft   = ax + parseFloat(String(s.left   ?? '0'));
+            const elTop    = ay + parseFloat(String(s.top    ?? '0'));
+            const elWidth  = parseFloat(String(s.width  ?? '200'));
+            const elHeight = parseFloat(String(s.height ?? s.minHeight ?? '100'));
+
+            const rect = canvasRef.current?.getBoundingClientRect();
+            if (!rect) return;
+
+            // Center the element in the viewport, keeping current zoom level.
+            setPan({
+                x: rect.width  / 2 - (elLeft + elWidth  / 2) * zoomRef.current,
+                y: rect.height / 2 - (elTop  + elHeight / 2) * zoomRef.current,
+            });
+        };
+
         const onKeyDown = (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === '0') {
                 e.preventDefault();
@@ -277,13 +491,58 @@ export const Canvas = () => {
             }
         };
 
+        // vectra:wrap-node — fired by SingleNodeToolbar "Wrap" button.
+        // Builds a new container around the target element using current elementsRef state.
+        const handleWrapNode = (e: Event) => {
+            const { id } = (e as CustomEvent<{ id: string }>).detail;
+            const cur = elementsRef.current;
+            const el = cur[id];
+            if (!el) return;
+            const pid = parentMap.get(id);
+            if (!pid) return;
+            const s = (el.props?.style || {}) as Record<string, any>;
+            const wrapperId = `wrapper_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+            updateProject({
+                ...cur,
+                [wrapperId]: {
+                    id: wrapperId, type: 'container', name: 'Container',
+                    children: [id],
+                    props: {
+                        layoutMode: 'canvas',
+                        style: {
+                            position: 'absolute',
+                            left: s.left ?? '0px', top: s.top ?? '0px',
+                            width: s.width ?? '200px', height: s.height ?? '100px',
+                        },
+                        className: '',
+                    },
+                },
+                [id]: { ...el, props: { ...el.props, style: { ...s, left: '0px', top: '0px' } } },
+                [pid]: { ...cur[pid], children: (cur[pid].children || []).map((c: string) => c === id ? wrapperId : c) },
+            });
+            setSelectedId(wrapperId);
+        };
+
+        // vectra:ai-edit-node — fired by SingleNodeToolbar "AI Edit" button.
+        // Stamps the target node id on window so MagicBar can pre-fill the prompt context.
+        const handleAiEditNode = (e: Event) => {
+            const { id } = (e as CustomEvent<{ id: string }>).detail;
+            (window as any).__vectra_ai_edit_target = id;
+        };
+
         window.addEventListener('keydown', onKeyDown);
         window.addEventListener('vectra:zoom-to-fit', handleZoomToFit);
+        window.addEventListener('vectra:scroll-to-node', handleScrollToNode);
+        window.addEventListener('vectra:wrap-node', handleWrapNode);
+        window.addEventListener('vectra:ai-edit-node', handleAiEditNode);
         return () => {
             window.removeEventListener('keydown', onKeyDown);
             window.removeEventListener('vectra:zoom-to-fit', handleZoomToFit);
+            window.removeEventListener('vectra:scroll-to-node', handleScrollToNode);
+            window.removeEventListener('vectra:wrap-node', handleWrapNode);
+            window.removeEventListener('vectra:ai-edit-node', handleAiEditNode);
         };
-    }, [elements, activePageId, previewMode, setZoom, setPan]);
+    }, [elements, activePageId, previewMode, setZoom, setPan, parentMap, elementsRef, updateProject, setSelectedId]);
 
     // Snaps a drop coordinate to the nearest artboard frame. DATA_BINDING drops bypass this and use a hit-test instead.
     const snapDropToArtboard = (wx: number, wy: number): { x: number; y: number } => {
@@ -601,15 +860,52 @@ export const Canvas = () => {
                         </div>
                     </CanvasErrorBoundary>
 
-                    {/* Snap guides */}
-                    {guides.map((g, i) => (
-                        <div key={i} className="absolute bg-red-500 z-[9999]" style={{
-                            left: g.orientation === 'vertical' ? g.pos : g.start,
-                            top: g.orientation === 'vertical' ? g.start : g.pos,
-                            width: g.orientation === 'vertical' ? '1px' : (g.end - g.start),
-                            height: g.orientation === 'vertical' ? (g.end - g.start) : '1px',
-                        }} />
-                    ))}
+                    {/* Snap guides — line + distance label badge */}
+                    {guides.map((g, i) => {
+                        const isVertical = g.orientation === 'vertical';
+                        const lineLength = g.end - g.start;
+                        // Only show a label when the guide is long enough and carries a distance value
+                        const labelText  = g.label ? `${Math.round(parseFloat(g.label))}` : null;
+                        const showLabel  = labelText !== null && lineLength > 20;
+                        const midMain    = (g.start + g.end) / 2;
+
+                        return (
+                            <React.Fragment key={i}>
+                                {/* Guide line */}
+                                <div
+                                    className="absolute bg-red-500 z-[9999] pointer-events-none"
+                                    style={{
+                                        left:   isVertical ? g.pos   : g.start,
+                                        top:    isVertical ? g.start : g.pos,
+                                        width:  isVertical ? '1px'   : lineLength,
+                                        height: isVertical ? lineLength : '1px',
+                                    }}
+                                />
+                                {/* Distance label — floats at the midpoint of the guide */}
+                                {showLabel && (
+                                    <div
+                                        className="absolute z-[10000] pointer-events-none select-none"
+                                        style={{
+                                            left: isVertical ? g.pos + 4 : midMain - 16,
+                                            top:  isVertical ? midMain - 9 : g.pos + 4,
+                                            background: 'rgba(220,38,38,0.92)',
+                                            color: '#fff',
+                                            fontSize: '9px',
+                                            fontFamily: 'monospace',
+                                            fontWeight: 700,
+                                            padding: '1px 5px',
+                                            borderRadius: '3px',
+                                            whiteSpace: 'nowrap',
+                                            lineHeight: '16px',
+                                            letterSpacing: '0.03em',
+                                        }}
+                                    >
+                                        {labelText}
+                                    </div>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
                     {/* Item 2: Box-select rectangle */}
                     {boxSelectRect && (
                         <div
@@ -620,6 +916,7 @@ export const Canvas = () => {
                     {/* Multi-select bounding box — rendered in world space so it scales with zoom. pointer-events-none. */}
                     {multiSelBBox && (
                         <div
+                            data-multisel-bbox
                             className="absolute pointer-events-none border border-dashed border-blue-400/80 bg-blue-500/[0.04]"
                             style={{ left: multiSelBBox.x, top: multiSelBBox.y, width: multiSelBBox.w, height: multiSelBBox.h, zIndex: 9997 }}
                         >
@@ -650,6 +947,19 @@ export const Canvas = () => {
 
             {/* CF-1: Frame Picker — fixed to viewport bottom-left */}
             {!previewMode && <FramePicker onAddFrame={addFrame} />}
+
+            {/* ── TOOLBAR-1 [PERMANENT]: Floating toolbars — fixed, outside world div, never scale with zoom.
+                Single-node toolbar: Duplicate + Delete for selected non-artboard nodes.
+                Multi-select bar:    Align (6) + Distribute (2) when selectedIds.size ≥ 2.
+                Hidden during interaction, previewMode, or nothing selected.        */}
+            {!previewMode && !interaction && _sid && selectedIds.size <= 1 && (() => {
+                const domEl = document.querySelector(`[data-vid="${_sid}"]`) as HTMLElement | null;
+                return <SingleNodeToolbar elementId={_sid} nodeEl={domEl} />;
+            })()}
+            {!previewMode && !interaction && selectedIds.size >= 2 && (() => {
+                const bboxDom = document.querySelector('[data-multisel-bbox]') as HTMLElement | null;
+                return <AlignDistributeBar selectedIds={selectedIds} bboxEl={bboxDom} />;
+            })()}
         </div>
     );
 };

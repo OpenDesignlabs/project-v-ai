@@ -25,12 +25,19 @@ export interface FigmaBoundingBox {
     height: number;
 }
 
+export interface FigmaGradientStop {
+    position: number; // 0–1 offset along the gradient
+    color: FigmaColor;
+}
+
 export interface FigmaPaint {
     type: 'SOLID' | 'GRADIENT_LINEAR' | 'GRADIENT_RADIAL' | 'IMAGE' | string;
     color?: FigmaColor;
     opacity?: number;
-    imageRef?: string; // present when type === 'IMAGE'
+    imageRef?: string;   // present when type === 'IMAGE'
     visible?: boolean;
+    /** Present for GRADIENT_LINEAR / GRADIENT_RADIAL paints */
+    gradientStops?: FigmaGradientStop[];
 }
 
 export interface FigmaTypeStyle {
@@ -169,6 +176,17 @@ export const figmaColorToCSS = (color: FigmaColor, opacityOverride?: number): st
     return `rgba(${r}, ${g}, ${b}, ${a})`;
 };
 
+/** Returns a CSS gradient string from a GRADIENT_LINEAR or GRADIENT_RADIAL Figma paint. */
+const extractGradientFill = (paint: FigmaPaint): string | undefined => {
+    if (!paint.gradientStops || paint.gradientStops.length === 0) return undefined;
+    const stops = paint.gradientStops
+        .map(s => `${figmaColorToCSS(s.color)} ${Math.round(s.position * 100)}%`)
+        .join(', ');
+    if (paint.type === 'GRADIENT_LINEAR') return `linear-gradient(135deg, ${stops})`;
+    if (paint.type === 'GRADIENT_RADIAL') return `radial-gradient(circle, ${stops})`;
+    return undefined;
+};
+
 /** Returns the first visible SOLID fill as a CSS color, or undefined. */
 const extractFigmaFill = (
     fills: FigmaPaint[] | undefined,
@@ -180,6 +198,12 @@ const extractFigmaFill = (
         const eff = (solid.opacity ?? 1) * nodeOpacity;
         return figmaColorToCSS(solid.color, eff < 1 ? eff : undefined);
     }
+    // Fall back to gradient if no solid fill
+    const gradient = fills.find(f =>
+        (f.type === 'GRADIENT_LINEAR' || f.type === 'GRADIENT_RADIAL') &&
+        f.visible !== false && f.gradientStops?.length
+    );
+    if (gradient) return extractGradientFill(gradient);
     return undefined;
 };
 
@@ -327,7 +351,14 @@ const figmaNodeToVectraNode = (
     if (node.type === 'ELLIPSE') style.borderRadius = '50%';
 
     const bgFill = extractFigmaFill(node.fills, node.opacity);
-    if (bgFill) style.backgroundColor = bgFill;
+    if (bgFill) {
+        // Gradient values must go into `background`, not `backgroundColor`
+        if (bgFill.startsWith('linear-gradient') || bgFill.startsWith('radial-gradient')) {
+            (style as any).background = bgFill;
+        } else {
+            style.backgroundColor = bgFill;
+        }
+    }
 
     const border = extractFigmaStroke(node.strokes, node.strokeWeight);
     if (border) style.border = border;

@@ -1253,10 +1253,23 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                     canvasNodeId,
                     result.elements!,
                     result.rootId!,
-                    isFullPage
+                    isFullPage,
+                    result.aiMeta   // ← AI-SOURCE-1: thread prompt+model for provenance stamping
                 );
                 setElements(merged);
                 pushHistory(merged);
+
+                const sectionCount = Object.values(result.elements!).filter(
+                    n => n.type === 'custom_code'
+                ).length;
+
+                // Fire-and-forget event for AISuccessToast.
+                // Listeners: src/components/modals/AISuccessToast.tsx (App.tsx render tree).
+                // Safe even if no listener — CustomEvent is silently dropped.
+                window.dispatchEvent(new CustomEvent('vectra:ai-done', {
+                    detail: { sectionCount, prompt }
+                }));
+
                 console.log(
                     '✅ AI: Canvas updated with',
                     Object.keys(result.elements!).length,

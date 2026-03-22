@@ -1,4 +1,4 @@
-﻿import React, { useRef, useState, useEffect, useMemo, Suspense, Component, useCallback } from 'react';
+import React, { useRef, useState, useEffect, useMemo, Suspense, Component, useCallback } from 'react';
 import type { ErrorInfo } from 'react';
 import { useProject } from '../../context/ProjectContext';
 import { useUI } from '../../context/UIContext';
@@ -474,12 +474,12 @@ const CtxBtn: React.FC<{ label: string; onClick: () => void; danger?: boolean; i
     <button
         onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
         onClick={(e) => { e.stopPropagation(); onClick(); }}
-        className={`flex items-center gap-2 px-3 py-1.5 text-[11px] w-full text-left transition-colors ${
+        className={`flex items-center gap-2.5 px-3 py-2 text-[11px] w-full text-left transition-colors ${
             danger ? 'text-red-400 hover:bg-red-500/15 hover:text-red-300'
                    : 'text-[#ccc] hover:bg-[#007acc] hover:text-white'
         }`}
     >
-        <span className="w-3 text-center opacity-70 text-[10px]">{icon}</span>
+        <span className="w-3.5 text-center opacity-60 text-[10px] shrink-0">{icon}</span>
         {label}
     </button>
 );
@@ -488,24 +488,39 @@ const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
     onClose, onDuplicate, onDelete, onLock, onHide, onWrapInContainer, onSelectParent, onCopy,
 }) => {
     useEffect(() => {
-        const close = () => onClose();
-        const timer = setTimeout(() => window.addEventListener('mousedown', close), 50);
-        return () => { clearTimeout(timer); window.removeEventListener('mousedown', close); };
+        // BUG-CTX-1 FIX: capture-phase pointerdown fires BEFORE stopPropagation in RenderNode.
+        // Old bubble 'mousedown' never reached window because every RenderNode calls stopPropagation.
+        const close = (e: PointerEvent) => {
+            const menu = document.getElementById('vectra-ctx-menu');
+            if (menu && menu.contains(e.target as Node)) return; // click inside menu = keep open
+            onClose();
+        };
+        const timer = setTimeout(() => {
+            window.addEventListener('pointerdown', close, { capture: true });
+        }, 80);
+        return () => {
+            clearTimeout(timer);
+            window.removeEventListener('pointerdown', close, { capture: true });
+        };
     }, [onClose]);
-    const menuW = 172; const menuH = 260;
-    const clampedX = Math.min(x, window.innerWidth  - menuW - 8);
-    const clampedY = Math.min(y, window.innerHeight - menuH - 8);
+
+    // BUG-CTX-2 FIX: minWidth 210 so 'Wrap in Container' (17 chars) doesn't clip at 172px.
+    const MIN_W = 210;
+    const EST_H = 292;
+    const clampedX = Math.min(x, window.innerWidth  - MIN_W - 8);
+    const clampedY = Math.min(y, window.innerHeight - EST_H - 8);
     return (
         <div
+            id="vectra-ctx-menu"
             className="fixed z-[9999] bg-[#252526] border border-[#3f3f46] shadow-2xl rounded-lg py-1 flex flex-col"
-            style={{ left: clampedX, top: clampedY, width: menuW }}
+            style={{ left: clampedX, top: clampedY, minWidth: MIN_W }}
             onContextMenu={(e) => e.preventDefault()}
         >
             <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider border-b border-[#3f3f46] mb-1 font-mono truncate">
-                {elementId.slice(0, 22)}
+                {elementId.slice(0, 24)}
             </div>
             <CtxBtn icon="⍘"  label="Duplicate"          onClick={onDuplicate} />
-            <CtxBtn icon="C" label="Copy"               onClick={onCopy} />
+            <CtxBtn icon="C"  label="Copy"                onClick={onCopy} />
             {!isArtboard && <CtxBtn icon="⊞" label="Wrap in Container" onClick={onWrapInContainer} />}
             <CtxBtn icon="↑"  label="Select Parent"       onClick={onSelectParent} />
             <div className="h-px bg-[#3f3f46] my-1" />
@@ -586,6 +601,89 @@ const FloatingFormatBar: React.FC<{ anchorId: string; onClose: () => void }> = (
     );
 };
 
+// ─── AI NODE HEIGHT HANDLE ────────────────────────────────────────────────────
+// Renders an 8px invisible drag strip at the bottom edge of selected custom_code
+// nodes. On drag: updates minHeight (skipHistory). On release: pushHistory once.
+// Uses nodeRef to read the current rendered height at drag-start — gives the
+// correct starting point even when the component has grown taller than its stored minHeight.
+const AINodeHeightHandle: React.FC<{
+    elementId: string;
+    nodeRef: React.RefObject<HTMLDivElement | null>;
+    zoomRef: React.MutableRefObject<number>;
+}> = ({ elementId, nodeRef, zoomRef }) => {
+    const { elements, updateProject, pushHistory, elementsRef } = useProject();
+    const element = elements[elementId];
+    const dragState = useRef<{ startY: number; startH: number } | null>(null);
+    const [isDragging, setIsDragging] = useState(false);
+
+    if (!element) return null;
+
+    const onPointerDown = (e: React.PointerEvent) => {
+        e.stopPropagation();
+        e.preventDefault();
+        e.currentTarget.setPointerCapture(e.pointerId);
+        // Read DOM's actual rendered height — more accurate than stored minHeight.
+        const renderedH = nodeRef.current?.offsetHeight ?? 200;
+        dragState.current = { startY: e.clientY, startH: renderedH };
+        setIsDragging(true);
+    };
+
+    const onPointerMove = (e: React.PointerEvent) => {
+        if (!dragState.current) return;
+        const delta = (e.clientY - dragState.current.startY) / zoomRef.current;
+        const newMinH = Math.max(80, Math.round(dragState.current.startH + delta));
+        // C-1: full spread-clone at every level. NM-7: skipHistory during drag.
+        updateProject({
+            ...elementsRef.current,
+            [elementId]: {
+                ...element,
+                props: {
+                    ...element.props,
+                    style: { ...element.props.style, minHeight: `${newMinH}px` },
+                },
+            },
+        }, { skipHistory: true });
+    };
+
+    const onPointerUp = (e: React.PointerEvent) => {
+        if (!dragState.current) return;
+        dragState.current = null;
+        e.currentTarget.releasePointerCapture(e.pointerId);
+        setIsDragging(false);
+        // H-4: read from ref — one history entry per drag gesture.
+        pushHistory(elementsRef.current);
+    };
+
+    return (
+        <div
+            title="Drag to set minimum height"
+            onPointerDown={onPointerDown}
+            onPointerMove={onPointerMove}
+            onPointerUp={onPointerUp}
+            style={{
+                position: 'absolute',
+                bottom: '-4px',
+                left: 0,
+                right: 0,
+                height: '8px',
+                cursor: 'ns-resize',
+                zIndex: 9999,
+            }}
+            className="group"
+        >
+            {/* Violet indicator — distinguishes from artboard's blue handle */}
+            <div
+                className="absolute inset-x-0 top-[3px] h-[2px] rounded-full transition-opacity"
+                style={{
+                    background: isDragging ? '#8b5cf6' : 'rgba(139,92,246,0.7)',
+                    opacity: isDragging ? 1 : 0,
+                }}
+            />
+            <style>{`.group:hover > div { opacity: 1 !important; }`}</style>
+        </div>
+    );
+};
+
 interface RenderNodeProps { elementId: string; isMobileMirror?: boolean; }
 
 export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirror = false }) => {
@@ -605,6 +703,8 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         device,
         // Item 2 — multi-select
         isInMultiSelect, addToSelection, removeFromSelection,
+        // MULTI-MOVE-1: selectedIds.size lets pointer-down decide if this starts a group drag.
+        selectedIds,
         // pull componentRegistry directly from UIContext (where it lives) instead of going through useEditor(), which double-subscribes RenderNode to both ProjectContext AND UIContext for just this one field
         componentRegistry: rawRegistry,
     } = useUI();
@@ -748,8 +848,40 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             const currentLeft = parseFloat(String(bpOverride.left ?? String(baseStyle.left || 0)));
             const currentTop = parseFloat(String(bpOverride.top ?? String(baseStyle.top || 0)));
             dragStart.current = { x: e.clientX, y: e.clientY, left: currentLeft, top: currentTop };
-            setInteraction({ type: 'MOVE', itemId: elementId });
-            syncLayoutEngine(elementId);
+
+            // ── MULTI-MOVE-1: Group drag — populate startRects for all selected nodes ─
+            // When this node is part of a 2+ multi-select, initiate a group drag by
+            // recording the world-space origin of every selected node upfront.
+            // handleInteractionMove reads itemIds + startRects to move them in lockstep.
+            const isGroupDrag = isInMultiSelect(elementId) && selectedIds.size >= 2;
+            if (isGroupDrag) {
+                const startRects: Record<string, { left: number; top: number }> = {};
+                selectedIds.forEach(id => {
+                    const el = elementsRef.current[id];
+                    if (!el) return;
+                    const s = el.props.style || {};
+                    const bpO = device !== 'desktop'
+                        ? (el.props.breakpoints?.[device as 'mobile' | 'tablet'] || {})
+                        : {};
+                    startRects[id] = {
+                        left: parseFloat(String(bpO.left ?? String(s.left ?? 0))),
+                        top:  parseFloat(String(bpO.top  ?? String(s.top  ?? 0))),
+                    };
+                });
+                setInteraction({
+                    type: 'MOVE',
+                    itemId: elementId,
+                    startX: e.clientX,
+                    startY: e.clientY,
+                    startRect: { left: currentLeft, top: currentTop, width: 0, height: 0 },
+                    itemIds: [...selectedIds],  // MULTI-MOVE-1
+                    startRects,                // MULTI-MOVE-1
+                });
+            } else {
+                // Original single-node path — unchanged
+                setInteraction({ type: 'MOVE', itemId: elementId });
+                syncLayoutEngine(elementId);
+            }
         }
     };
 
@@ -1331,13 +1463,36 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     );
                 })() : (
                     // Regular (non-mirror) artboard — renders its own children
-                    element.children?.map(childId => (
-                        <RenderNode
-                            key={isMobileMirror ? `${childId}-mirror` : childId}
-                            elementId={childId}
-                            isMobileMirror={isMobileMirror}
-                        />
-                    ))
+                    // ONBOARD-1: Empty artboard prompt.
+                    <>
+                        {(!element.children || element.children.length === 0) && !previewMode && (
+                            <div
+                                className="absolute inset-0 flex flex-col items-center justify-center gap-4 pointer-events-none select-none"
+                                style={{ zIndex: 1 }}
+                            >
+                                <div className="w-14 h-14 rounded-2xl border-2 border-dashed border-zinc-300/40 flex items-center justify-center">
+                                    <Plus size={24} className="text-zinc-400/60" />
+                                </div>
+                                <div className="text-center">
+                                    <p className="text-sm font-semibold text-zinc-400/70">Start designing</p>
+                                    <p className="text-[11px] text-zinc-500/60 mt-1.5 leading-relaxed">
+                                        Drag from the insert panel
+                                        <br />
+                                        or press{' '}
+                                        <kbd className="bg-zinc-200/20 text-zinc-300/80 px-1.5 py-0.5 rounded text-[10px] font-mono">⌘K</kbd>
+                                        {' '}to generate with AI
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+                        {element.children?.map(childId => (
+                            <RenderNode
+                                key={isMobileMirror ? `${childId}-mirror` : childId}
+                                elementId={childId}
+                                isMobileMirror={isMobileMirror}
+                            />
+                        ))}
+                    </>
                 )}
 
                 {/* ── Mobile Mirror ───────────────────────────────────────────────────────
@@ -1490,10 +1645,6 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             className={cn(
                 finalClass,
                 'box-border',
-                isSelected && !isMobileMirror && !isEditing && 'outline outline-2 outline-blue-500 z-50',
-                // Item 2 — multi-select ring: distinct orange so anchor vs group is clear
-                isMultiSel && !isSelected && !isMobileMirror && 'outline outline-2 outline-orange-400 z-40',
-                isHovered && !isSelected && !isMultiSel && !isMobileMirror && 'outline outline-2 outline-blue-500 z-40',
                 canMove ? 'cursor-move' : '',
                 isArtboard ? 'bg-white' : ''
             )}
@@ -1505,6 +1656,94 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
             {isSelected && !isMobileMirror && !isEditing && !element.locked && (isParentCanvas || isArtboard) && !previewMode && (
                 <Resizer elementId={elementId} />
             )}
+
+            {/* AI-SOURCE-1: Section name badge — shown on hover or selection for AI-generated nodes.
+                Appears as a small chip floating above the element so the user can identify which
+                section they're looking at without opening the sidebar.
+                pointer-events: none so it never blocks interaction with the canvas element.      */}
+            {(element.type === 'custom_code' || element.type === 'custom_component') &&
+             (isSelected || isHovered) && !previewMode && !isMobileMirror && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        top: '-22px',
+                        left: '0',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '5px',
+                        background: element.aiSource ? '#7c3aed' : '#374151',
+                        color: '#fff',
+                        fontSize: '9px',
+                        fontWeight: 700,
+                        letterSpacing: '0.07em',
+                        padding: '2px 8px 2px 6px',
+                        borderRadius: '5px 5px 0 0',
+                        whiteSpace: 'nowrap',
+                        pointerEvents: 'none',
+                        zIndex: 9999,
+                        textTransform: 'uppercase',
+                        userSelect: 'none',
+                    }}
+                >
+                    {element.aiSource && (
+                        <span style={{ opacity: 0.7, fontSize: '8px' }}>✶</span>
+                    )}
+                    {element.aiSource?.sectionName ?? element.name}
+                </div>
+            )}
+
+{/* ── RING-OVERLAY-1 [PERMANENT]: Selection/hover rings as absolutely-positioned overlay divs.
+    WHY: CSS outline clips at overflow:hidden parents and ignores border-radius in some browsers.
+    Overlay divs are pointer-events:none — they never intercept drag/click.
+    rounded-[inherit] follows the element's own border-radius automatically.        */}
+            {isSelected && !isMobileMirror && !isEditing && !previewMode && (
+                <div
+                    className="pointer-events-none absolute rounded-[inherit]"
+                    style={{
+                        inset: 0,
+                        outline: '2px solid #3b82f6',
+                        outlineOffset: '1px',
+                        boxShadow: '0 0 0 4px rgba(59,130,246,0.10)',
+                        zIndex: 9999,
+                    }}
+                />
+            )}
+            {isMultiSel && !isSelected && !isMobileMirror && !previewMode && (
+                <div
+                    className="pointer-events-none absolute rounded-[inherit]"
+                    style={{
+                        inset: 0,
+                        outline: '2px solid #f97316',
+                        outlineOffset: '1px',
+                        boxShadow: '0 0 0 3px rgba(249,115,22,0.10)',
+                        zIndex: 9998,
+                    }}
+                />
+            )}
+            {isHovered && !isSelected && !isMultiSel && !isMobileMirror && !previewMode && (
+                <div
+                    className="pointer-events-none absolute rounded-[inherit]"
+                    style={{
+                        inset: 0,
+                        outline: '1.5px dashed rgba(59,130,246,0.55)',
+                        outlineOffset: '1px',
+                        zIndex: 9997,
+                    }}
+                />
+            )}
+
+            {/* AI-HEIGHT-HANDLE-1: Bottom-edge drag handle for selected AI section nodes.
+                Custom_code nodes use position:relative (AI-SECTION-1) so Resizer is never shown.
+                Pattern: NM-7 slider — skipHistory at 60fps, pushHistory once on pointerUp.    */}
+            {isSelected && !isMobileMirror && !previewMode &&
+             (element.type === 'custom_code' || element.type === 'custom_component') && element.code && (
+                <AINodeHeightHandle
+                    elementId={elementId}
+                    nodeRef={nodeRef}
+                    zoomRef={zoomRef}
+                />
+            )}
+
             {content}
 
             {/* Floating format bar — shown when editing a text/heading/button node */}

@@ -11,12 +11,12 @@ import {
     Copy, Check, ChevronDown, ChevronRight,
     Zap, Trash2, Terminal, FileCode, Server,
     Play, AlertCircle, Radio, Power,
-    ToggleLeft, ToggleRight,
+    ToggleLeft, ToggleRight, BookOpen,
 } from 'lucide-react';
 import { useContainer } from '../../context/ContainerContext';
 import {
     ensureMcpServer, stopMcpServer, checkMcpHealth,
-    generateIdeConfig, getMcpPostUrl,
+    generateIdeConfig, getMcpPostUrl, VECTRA_DOCS,
     type IdeConfigResult,
 } from '../../utils/mcpServer';
 import { cn } from '../../lib/utils';
@@ -60,7 +60,7 @@ const TOOL_DEFS: Array<{
     { name: 'vectra_get_page',       badge: 'Read',  desc: 'Get all nodes on a page',                defaultArgs: '{\n  "pageId": "page-home"\n}' },
     { name: 'vectra_get_element',    badge: 'Read',  desc: 'Get a single element by ID',             defaultArgs: '{\n  "elementId": ""\n}' },
     { name: 'vectra_find_elements',  badge: 'Read',  desc: 'Search elements by type or name',        defaultArgs: '{\n  "type": "heading"\n}' },
-    { name: 'vectra_add_element',    badge: 'Write', desc: 'Add a node to the canvas',               defaultArgs: '{\n  "parentId": "",\n  "element": {\n    "type": "text",\n    "name": "New Text",\n    "content": "Hello",\n    "props": { "style": {} }\n  }\n}' },
+    { name: 'vectra_add_element',    badge: 'Write', desc: 'Add a node to the canvas',               defaultArgs: '{\n  "pageId": "page-home",\n  "parentId": "main-frame",\n  "type": "text",\n  "name": "New Text",\n  "content": "Hello",\n  "style": { "position": "relative", "width": "100%" }\n}' },
     { name: 'vectra_update_element', badge: 'Write', desc: 'Update node props / style',              defaultArgs: '{\n  "elementId": "",\n  "content": "Updated"\n}' },
     { name: 'vectra_delete_element', badge: 'Write', desc: 'Delete a node and its children',         defaultArgs: '{\n  "elementId": ""\n}' },
     { name: 'vectra_add_page',       badge: 'Write', desc: 'Create a new page',                      defaultArgs: '{\n  "name": "New Page"\n}' },
@@ -100,6 +100,7 @@ export const MCPPanel: React.FC = () => {
     // ── Activity log ──────────────────────────────────────────────────────────
     const [activity, setActivity]     = useState<ActivityEntry[]>([]);
     const [showToolRef, setShowToolRef] = useState(false);
+    const [showDocs, setShowDocs]       = useState(false);
 
     // ── Auto-start ────────────────────────────────────────────────────────────
     const [autoStart, setAutoStart]   = useState<boolean>(() => {
@@ -116,6 +117,61 @@ export const MCPPanel: React.FC = () => {
 
     // ── Health pulse timer ────────────────────────────────────────────────────
     const healthTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+    // ── Bridge state — listens to useMcpBridge hook status events ────────────
+    const [bridgeConnected, setBridgeConnected] = useState(false);
+    const [bridgeCopied, setBridgeCopied]       = useState(false);
+    const [bridgeIde, setBridgeIde]             = useState<IdeTarget>('cursor');
+    const [showBridgeConfig, setShowBridgeConfig] = useState(false);
+
+    const BRIDGE_IDE_CONFIGS: Record<IdeTarget, { config: string; filePath: string; note: string }> = {
+        'cursor': {
+            config: JSON.stringify({
+                mcpServers: { vectra: { command: 'npx', args: ['-y', '@vectra/mcp-bridge'] } },
+            }, null, 2),
+            filePath: '~/.cursor/mcp.json',
+            note: 'Paste into ~/.cursor/mcp.json. Restart Cursor. The bridge starts automatically.',
+        },
+        'vscode': {
+            config: JSON.stringify({
+                mcp: { servers: { vectra: { type: 'stdio', command: 'npx', args: ['-y', '@vectra/mcp-bridge'] } } },
+            }, null, 2),
+            filePath: '.vscode/mcp.json (project root)',
+            note: 'Requires VS Code 1.99+ with GitHub Copilot. Restart after saving.',
+        },
+        'windsurf': {
+            config: JSON.stringify({
+                mcpServers: { vectra: { command: 'npx', args: ['-y', '@vectra/mcp-bridge'] } },
+            }, null, 2),
+            filePath: '~/.codeium/windsurf/mcp_config.json',
+            note: 'Paste into mcp_config.json. Restart Windsurf. The bridge starts automatically.',
+        },
+        'claude-desktop': {
+            config: JSON.stringify({
+                mcpServers: { vectra: { command: 'npx', args: ['-y', '@vectra/mcp-bridge'] } },
+            }, null, 2),
+            filePath: '~/Library/Application Support/Claude/claude_desktop_config.json',
+            note: 'Windows: %APPDATA%\\Claude\\claude_desktop_config.json. Restart Claude Desktop.',
+        },
+    };
+
+    useEffect(() => {
+        const handle = (e: Event) => {
+            const { connected } = (e as CustomEvent).detail as { connected: boolean };
+            setBridgeConnected(connected);
+        };
+        window.addEventListener('vectra:bridge-status', handle);
+        return () => window.removeEventListener('vectra:bridge-status', handle);
+    }, []);
+
+    const copyBridgeConfig = useCallback(() => {
+        const cfg = BRIDGE_IDE_CONFIGS[bridgeIde].config;
+        navigator.clipboard.writeText(cfg).then(() => {
+            setBridgeCopied(true);
+            setTimeout(() => setBridgeCopied(false), 2000);
+        });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [bridgeIde]);
 
     const log = useCallback((msg: string) => {
         setServerLog(prev => {
@@ -409,6 +465,138 @@ export const MCPPanel: React.FC = () => {
 
             <div className="flex-1 px-4 py-3 space-y-4">
 
+                {/* ══ LOCAL BRIDGE (Recommended) ════════════════════════════ */}
+                <div className="space-y-2">
+                    {/* Bridge header + status */}
+                    <div className={cn(
+                        'flex items-center gap-2 px-3 py-2.5 rounded-xl border transition-all',
+                        bridgeConnected
+                            ? 'bg-green-500/8 border-green-500/25'
+                            : 'bg-[#1c1c1e] border-[#2c2c2e]'
+                    )}>
+                        <span className={cn(
+                            'w-2 h-2 rounded-full shrink-0',
+                            bridgeConnected ? 'bg-green-400 animate-pulse' : 'bg-[#3a3a3c]'
+                        )} />
+                        <div className="flex-1 min-w-0">
+                            <div className={cn('text-[10px] font-bold', bridgeConnected ? 'text-green-400' : 'text-[#636366]')}>
+                                {bridgeConnected ? 'Bridge Connected' : 'Local Bridge'}
+                                <span className="ml-1.5 font-normal normal-case text-[8px] text-[#48484a]">
+                                    {bridgeConnected ? '— IDE can connect now' : '— Recommended connection method'}
+                                </span>
+                            </div>
+                            {bridgeConnected && (
+                                <div className="text-[8px] font-mono text-green-400/60">localhost:3333 → live canvas</div>
+                            )}
+                        </div>
+                        <button
+                            onClick={() => setShowBridgeConfig(p => !p)}
+                            className="shrink-0 text-[#3a3a3c] hover:text-[#636366] transition-colors"
+                        >
+                            {showBridgeConfig ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                        </button>
+                    </div>
+
+                    {/* Bridge setup (collapsed by default once connected) */}
+                    {(!bridgeConnected || showBridgeConfig) && (
+                        <div className="space-y-2.5 bg-[#111113] border border-[#2c2c2e] rounded-xl p-3">
+
+                            {/* Step 1 — IDE config (the only step the user does) */}
+                            <div>
+                                <div className="flex items-center gap-1.5 mb-1.5">
+                                    <span className="w-4 h-4 rounded-full bg-[#2c2c2e] flex items-center justify-center text-[8px] font-bold text-[#636366] shrink-0">1</span>
+                                    <span className="text-[9px] font-bold text-[#636366] uppercase tracking-wider">Configure your IDE (once — done forever)</span>
+                                </div>
+
+                                <div className="flex bg-[#1c1c1e] border border-[#2c2c2e] rounded-lg overflow-hidden mb-2">
+                                    {IDE_TABS.map(tab => (
+                                        <button key={tab.id} onClick={() => setBridgeIde(tab.id)}
+                                            className={cn(
+                                                'flex-1 py-1 text-[9px] font-semibold transition-colors',
+                                                bridgeIde === tab.id ? 'bg-[#2c2c2e] text-white' : 'text-[#48484a] hover:text-[#636366]'
+                                            )}>
+                                            {tab.label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                <div className="relative">
+                                    <pre className="bg-[#0d0d0f] border border-[#2c2c2e] rounded-lg p-2.5 text-[8.5px] font-mono text-[#aeaeb2] overflow-x-auto whitespace-pre max-h-24 custom-scrollbar">
+                                        {BRIDGE_IDE_CONFIGS[bridgeIde].config}
+                                    </pre>
+                                    <button onClick={copyBridgeConfig}
+                                        className="absolute top-1.5 right-1.5 p-1.5 rounded bg-[#1c1c1e] border border-[#2c2c2e] text-[#48484a] hover:text-white transition-all">
+                                        {bridgeCopied ? <Check size={9} className="text-green-400" /> : <Copy size={9} />}
+                                    </button>
+                                </div>
+                                <p className="text-[8px] text-[#48484a] mt-1">{BRIDGE_IDE_CONFIGS[bridgeIde].note}</p>
+                                <p className="text-[7.5px] font-mono text-[#3a3a3c] mt-0.5">{BRIDGE_IDE_CONFIGS[bridgeIde].filePath}</p>
+                            </div>
+
+                            {/* Step 2 — open Vectra */}
+                            <div>
+                                <div className="flex items-center gap-1.5 mb-1">
+                                    <span className="w-4 h-4 rounded-full bg-[#2c2c2e] flex items-center justify-center text-[8px] font-bold text-[#636366] shrink-0">2</span>
+                                    <span className="text-[9px] font-bold text-[#636366] uppercase tracking-wider">Open Vectra in this browser tab</span>
+                                </div>
+                                <div className={cn(
+                                    'flex items-center gap-2 px-2.5 py-2 rounded-lg border text-[9px] transition-all',
+                                    bridgeConnected
+                                        ? 'bg-green-500/8 border-green-500/20 text-green-400'
+                                        : 'bg-[#1c1c1e] border-[#2c2c2e] text-[#48484a]'
+                                )}>
+                                    <span className={cn('w-1.5 h-1.5 rounded-full shrink-0',
+                                        bridgeConnected ? 'bg-green-400 animate-pulse' : 'bg-[#3a3a3c]'
+                                    )} />
+                                    {bridgeConnected
+                                        ? 'Vectra is connected to the bridge — your IDE agent is live'
+                                        : 'Waiting for Vectra to open…'}
+                                </div>
+                            </div>
+
+                            {/* Step 3 */}
+                            <div className="flex items-start gap-2 p-2 bg-blue-500/5 border border-blue-500/15 rounded-lg">
+                                <span className="w-4 h-4 rounded-full bg-[#2c2c2e] flex items-center justify-center text-[8px] font-bold text-[#636366] shrink-0 mt-0.5">3</span>
+                                <p className="text-[9px] text-[#636366] leading-relaxed">
+                                    Ask your IDE agent:{' '}
+                                    <span className="text-[#aeaeb2] italic">"What pages does my Vectra project have?"</span>
+                                    <br />
+                                    <span className="text-[#3a3a3c]">The IDE auto-spawns the bridge. No terminal needed.</span>
+                                </p>
+                            </div>
+
+                            {/* Why stdio > HTTP/SSE */}
+                            <div className="border-t border-[#1c1c1e] pt-2.5">
+                                <p className="text-[8px] font-bold text-[#3a3a3c] uppercase tracking-wider mb-1">Why stdio transport?</p>
+                                {[
+                                    ['No terminal needed', 'IDE auto-spawns the bridge when agent activates'],
+                                    ['Zero port conflicts', 'IDE↔Bridge uses stdin/stdout — no HTTP port at all'],
+                                    ['Live state',         'Reads directly from canvas — no VFS debounce delay'],
+                                    ['Works offline',      'No hosted servers, no auth, no internet required'],
+                                ].map(([label, desc]) => (
+                                    <div key={label} className="flex gap-2 text-[8px] mb-1">
+                                        <span className="text-green-400/60 shrink-0">✓</span>
+                                        <span className="text-[#3a3a3c]"><span className="text-[#48484a]">{label}:</span> {desc}</span>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+
+                <div className="border-t border-[#1c1c1e]" />
+
+                {/* ── WebContainer MCP Server (advanced / fallback) ──────────── */}
+                <div>
+                    <button
+                        onClick={() => setShowBridgeConfig(p => !p)} // reuse to toggle advanced
+                        className="w-full flex items-center justify-between text-[9px] font-bold text-[#3a3a3c] uppercase tracking-wider py-0.5 hover:text-[#48484a] transition-colors"
+                    >
+                        <span className="flex items-center gap-1.5"><Server size={9} /> WebContainer Server (advanced)</span>
+                        <ChevronRight size={9} />
+                    </button>
+                </div>
+
                 {/* ── Server control ────────────────────────────────────────── */}
                 <div className="space-y-2">
                     {serverStatus === 'stopped' || serverStatus === 'error' ? (
@@ -613,6 +801,95 @@ export const MCPPanel: React.FC = () => {
                         </div>
                     </div>
                 )}
+
+                {/* ── Agent Documentation ───────────────────────────────────── */}
+                <div>
+                    <button
+                        onClick={() => setShowDocs(p => !p)}
+                        className="w-full flex items-center justify-between text-[10px] font-bold text-[#636366] uppercase tracking-wider py-1 hover:text-[#aeaeb2] transition-colors"
+                    >
+                        <span className="flex items-center gap-1.5">
+                            <BookOpen size={10} /> Agent Docs
+                            <span className="text-[8px] font-normal normal-case text-[#3a3a3c]">auto-delivered on connect</span>
+                        </span>
+                        {showDocs ? <ChevronDown size={11} /> : <ChevronRight size={11} />}
+                    </button>
+
+                    {showDocs && (
+                        <div className="mt-2 space-y-2">
+                            {/* What gets delivered on connect */}
+                            <div className="bg-green-500/5 border border-green-500/15 rounded-xl p-2.5 space-y-1.5">
+                                <p className="text-[9px] font-bold text-green-400/80 uppercase tracking-wider">Delivered on initialize</p>
+                                <p className="text-[9px] text-[#636366] leading-relaxed">
+                                    When any agent connects, the server automatically sends onboarding instructions via the MCP
+                                    {' '}<code className="text-[#aeaeb2] bg-[#1c1c1e] px-1 rounded">initialize</code> response.
+                                    The agent sees this before making any tool call.
+                                </p>
+                                <div className="flex gap-3 text-center">
+                                    {[
+                                        { label: 'Tools',     value: '10', color: 'text-blue-400' },
+                                        { label: 'Resources', value: '2',  color: 'text-purple-400' },
+                                        { label: 'Prompts',   value: '2',  color: 'text-orange-400' },
+                                    ].map(({ label, value, color }) => (
+                                        <div key={label} className="flex-1 bg-[#1c1c1e] border border-[#2c2c2e] rounded-lg py-1.5">
+                                            <div className={cn('text-[14px] font-bold', color)}>{value}</div>
+                                            <div className="text-[8px] text-[#48484a] uppercase tracking-wide">{label}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Resources available */}
+                            <div className="space-y-1">
+                                <p className="text-[9px] font-bold text-[#636366] uppercase tracking-wider px-0.5">Resources (agent reads on demand)</p>
+                                {[
+                                    { uri: 'vectra://docs',  label: 'Full documentation', desc: 'Data model, node types, workflow, rules' },
+                                    { uri: 'vectra://tools', label: 'Tool schemas',        desc: 'Full JSON schemas for all 10 tools' },
+                                ].map(r => (
+                                    <div key={r.uri} className="flex items-start gap-2 p-2 bg-[#1c1c1e] rounded-xl border border-[#2c2c2e]">
+                                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5 bg-purple-500/15 text-purple-400">RES</span>
+                                        <div className="min-w-0">
+                                            <div className="text-[10px] font-mono text-[#cccccc]">{r.label}</div>
+                                            <div className="text-[9px] text-[#48484a]">{r.desc}</div>
+                                            <div className="text-[8px] font-mono text-[#3a3a3c] mt-0.5">{r.uri}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Prompts available */}
+                            <div className="space-y-1">
+                                <p className="text-[9px] font-bold text-[#636366] uppercase tracking-wider px-0.5">Prompts (agent uses for workflow)</p>
+                                {[
+                                    { name: 'vectra_workflow',  desc: 'Step-by-step workflow guide with task context' },
+                                    { name: 'vectra_read_docs', desc: 'Instructs agent to read docs before proceeding' },
+                                ].map(p => (
+                                    <div key={p.name} className="flex items-start gap-2 p-2 bg-[#1c1c1e] rounded-xl border border-[#2c2c2e]">
+                                        <span className="text-[8px] font-bold px-1.5 py-0.5 rounded shrink-0 mt-0.5 bg-orange-500/15 text-orange-400">PRO</span>
+                                        <div>
+                                            <div className="text-[10px] font-mono text-[#cccccc]">{p.name}</div>
+                                            <div className="text-[9px] text-[#48484a]">{p.desc}</div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Docs preview */}
+                            <div className="rounded-xl overflow-hidden border border-[#2c2c2e]">
+                                <div className="px-2.5 py-1.5 bg-[#1c1c1e] flex items-center gap-1.5">
+                                    <BookOpen size={9} className="text-[#48484a]" />
+                                    <span className="text-[9px] font-bold text-[#636366] uppercase tracking-wider">Documentation preview</span>
+                                </div>
+                                <div className="bg-[#0d0d0f] px-2.5 py-2 max-h-48 overflow-y-auto custom-scrollbar">
+                                    <pre className="text-[8.5px] font-mono text-[#636366] whitespace-pre-wrap leading-relaxed">
+                                        {VECTRA_DOCS.slice(0, 800)}
+                                        {VECTRA_DOCS.length > 800 && '\n\n… (full docs delivered to agent via resources/read)'}
+                                    </pre>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
 
                 {/* ── Tool Reference ────────────────────────────────────────── */}
                 <div>

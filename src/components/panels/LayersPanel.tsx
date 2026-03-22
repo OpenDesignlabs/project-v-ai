@@ -18,7 +18,7 @@ interface LayerNodeProps {
 const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
     const {
         elements, selectedId, setSelectedId,
-        updateProject, deleteElement, duplicateElement, reorderElement,
+        updateProject, elementsRef, deleteElement, duplicateElement, reorderElement,
     } = useEditor();
     const element = elements[nodeId];
 
@@ -142,7 +142,12 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
                     dropIndicator === 'inside' && "bg-[#007acc]/20",
                 )}
                 style={{ paddingLeft: `${depth * 12 + 8}px` }}
-                onClick={(e) => { e.stopPropagation(); setSelectedId(nodeId); }}
+                onClick={(e) => {
+                    e.stopPropagation();
+                    setSelectedId(nodeId);
+                    // Pan canvas to center this element — same fire-and-forget pattern as vectra:zoom-to-fit.
+                    window.dispatchEvent(new CustomEvent('vectra:scroll-to-node', { detail: { id: nodeId } }));
+                }}
                 onDoubleClick={() => { setRenameVal(element.name); setIsRenaming(true); }}
                 onContextMenu={handleContextMenu}
             >
@@ -178,12 +183,26 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
                     <span className="flex-1 truncate">{element.name}</span>
                 )}
 
-                {/* Quick Actions (Hover) */}
+                {/* Lock + Eye toggles — hover-reveal. Buttons stopPropagation so they don't trigger row selection. */}
                 <div className={cn("flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity", isSelected && "opacity-100 text-white")}>
-                    <button onClick={(e) => { e.stopPropagation(); updateProject({ ...elements, [nodeId]: { ...element, locked: !element.locked } }) }}>
-                        <Lock size={12} className={element.locked ? "opacity-100" : "opacity-50"} />
+                    <button
+                        title={element.locked ? 'Unlock element' : 'Lock element'}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            const cur = elementsRef.current;
+                            updateProject({ ...cur, [nodeId]: { ...cur[nodeId], locked: !cur[nodeId]?.locked } });
+                        }}
+                    >
+                        <Lock size={12} className={element.locked ? "opacity-100 text-amber-400" : "opacity-50"} />
                     </button>
-                    <button onClick={(e) => { e.stopPropagation(); updateProject({ ...elements, [nodeId]: { ...element, hidden: !element.hidden } }) }}>
+                    <button
+                        title={element.hidden ? 'Show element' : 'Hide element'}
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            const cur = elementsRef.current;
+                            updateProject({ ...cur, [nodeId]: { ...cur[nodeId], hidden: !cur[nodeId]?.hidden } });
+                        }}
+                    >
                         <Eye size={12} className={element.hidden ? "opacity-50" : "opacity-100"} />
                     </button>
                 </div>

@@ -31,9 +31,66 @@ function useInteractionEngine() {
     // Runs on every pointermove during drag — applies position/size deltas and queries Wasm for snap guides.
     const handleInteractionMove = useCallback((e: PointerEvent) => {
         if (!interaction) return;
-        const { type, itemId, startX, startY, startRect, handle } = interaction as any;
+        const { type, itemId, startX, startY, startRect, handle, itemIds, startRects } = interaction as any;
         const deltaX = (e.clientX - (startX || 0)) / zoomRef.current;
         const deltaY = (e.clientY - (startY || 0)) / zoomRef.current;
+
+        // ── MULTI-MOVE-1: Group move — move all selected nodes in lockstep ─────
+        // Fires only when itemIds + startRects are present (multi-select drag).
+        // Each node translates by (deltaX, deltaY) from its own recorded origin.
+        // One updateProject call per frame — avoids N individual state updates.
+        // Snapping is intentionally skipped; snap is computed against the artboard
+        // boundary, not between sibling nodes.
+        if (type === 'MOVE' && itemIds && startRects) {
+            const curElements = elementsRef.current;
+            const bp = bpRef.current !== 'desktop' ? bpRef.current : null;
+            // C-1: spread-clone the whole map first, then overwrite each moved node.
+            const updates: Record<string, any> = { ...curElements };
+            for (const id of itemIds as string[]) {
+                const el = curElements[id];
+                if (!el) continue;
+                const origin = (startRects as Record<string, { left: number; top: number }>)[id];
+                if (!origin) continue;
+                const newLeft = origin.left + deltaX;
+                const newTop  = origin.top  + deltaY;
+                if (bp) {
+                    // Breakpoint-aware path (mirrors P2-B2 single-node pattern)
+                    updates[id] = {
+                        ...el,
+                        props: {
+                            ...el.props,
+                            breakpoints: {
+                                ...(el.props.breakpoints || {}),
+                                [bp]: {
+                                    ...(el.props.breakpoints?.[bp] || {}),
+                                    left: `${Math.round(newLeft)}px`,
+                                    top:  `${Math.round(newTop)}px`,
+                                    position: 'absolute' as const,
+                                },
+                            },
+                        },
+                    };
+                } else {
+                    // Desktop path — C-1 safe
+                    updates[id] = {
+                        ...el,
+                        props: {
+                            ...el.props,
+                            style: {
+                                ...el.props.style,
+                                left: `${Math.round(newLeft)}px`,
+                                top:  `${Math.round(newTop)}px`,
+                            },
+                        },
+                    };
+                }
+            }
+            updateProject(updates, { skipHistory: true }); // NM-7: skip 60fps history
+            setGuides([]);  // no snap guides during group move
+            return;         // short-circuit — skip single-node branch below
+        }
+
+        // ── Single-node path (unchanged) ─────────────────────────────────────
         let newRect = startRect ? { ...startRect } : { left: 0, top: 0, width: 0, height: 0 };
 
         if (type === 'MOVE') {
@@ -45,7 +102,17 @@ function useInteractionEngine() {
             if (snap) {
                 newRect.left = snap.x;
                 newRect.top = snap.y;
-                setGuides(snap.guides as any);
+                // Map raw Wasm guide shape to typed Guide interface.
+                // label is only populated for gap guides (distance between elements).
+                // Align guides show a shared-edge line; no numeric label needed.
+                setGuides(snap.guides.map((g: any) => ({
+                    orientation: g.orientation as 'horizontal' | 'vertical',
+                    pos:   g.pos,
+                    start: g.start,
+                    end:   g.end,
+                    type:  (g.guide_type === 'gap' ? 'gap' : 'align') as 'gap' | 'align',
+                    label: g.guide_type === 'gap' ? String(Math.round(g.end - g.start)) : undefined,
+                })));
             } else {
                 setGuides([]);
             }
