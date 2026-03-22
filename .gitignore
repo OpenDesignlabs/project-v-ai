@@ -42,12 +42,11 @@ wasm-pack.log
 # Private Notes
 inplem-clude.md
 comment_analysis.md
-# lock files
-pnpm-lock.yaml
+# lock files — pnpm-lock.yaml MUST be tracked for Vercel reproducible builds
 package-lock.json
 yarn.lock
 Cargo.lock
 
-# public
+# .agents internal tooling
 .agents/
-public
+# public/ is intentionally tracked — babel.min.js and tailwind.js must ship to Vercel
