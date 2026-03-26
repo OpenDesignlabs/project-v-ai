@@ -362,7 +362,7 @@ export const MagicBar = () => {
 
     return (
         <AnimatePresence>
-            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+            <div className="fixed inset-0 z-100 flex items-center justify-center p-4">
                 {/* Backdrop */}
                 <motion.div
                     initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -380,7 +380,7 @@ export const MagicBar = () => {
                     {status === 'generating' && (
                         <div className="absolute top-0 left-0 right-0 h-[2px] bg-zinc-800/80 overflow-hidden">
                             <motion.div
-                                className="h-full bg-gradient-to-r from-blue-500 to-violet-500"
+                                className="h-full bg-linear-to-r from-blue-500 to-violet-500"
                                 initial={{ width: '0%' }}
                                 animate={{ width: `${streamProgress}%` }}
                                 transition={{ duration: 0.3, ease: 'easeOut' }}
@@ -485,7 +485,7 @@ export const MagicBar = () => {
 
                     {/* Recent prompts — idle + empty + history exists */}
                     {!input && status === 'idle' && promptHistory.length > 0 && (
-                        <div className="px-4 pb-3 border-t border-white/[0.04]">
+                        <div className="px-4 pb-3 border-t border-white/4">
                             <p className="text-[9px] text-zinc-700 uppercase tracking-wider mb-1.5 mt-2">Recent</p>
                             <div className="flex flex-wrap gap-1.5">
                                 {promptHistory.slice(0, 4).map((p, i) => (

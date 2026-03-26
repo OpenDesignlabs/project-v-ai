@@ -288,7 +288,7 @@ interface UndoToastProps {
 
 const UndoToast: React.FC<UndoToastProps> = ({ projectName, durationMs, onUndo, onDismiss }) => (
     <div
-        className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[200] flex items-center gap-4 px-5 py-3 bg-[#1e1e1e] border border-white/10 rounded-xl shadow-2xl text-sm min-w-[320px]"
+        className="fixed bottom-8 left-1/2 -translate-x-1/2 z-200 flex items-center gap-4 px-5 py-3 bg-[#1e1e1e] border border-white/10 rounded-xl shadow-2xl text-sm min-w-[320px]"
         style={{ animation: 'slideUpFadeIn 0.2s ease-out' }}
         role="status"
         aria-live="polite"
@@ -438,13 +438,13 @@ const ProjectCard: React.FC<ProjectCardProps> = ({
                     </div>
                 )}
                 {/* Bottom fade gradient — blends thumbnail into card background */}
-                <div className="absolute inset-x-0 bottom-0 h-8 bg-gradient-to-t from-[#121214] to-transparent pointer-events-none" />
+                <div className="absolute inset-x-0 bottom-0 h-8 bg-linear-to-t from-[#121214] to-transparent pointer-events-none" />
             </div>
 
             {/* Card top row */}
             <div className="flex items-start justify-between mb-4">
                 {/* Framework icon */}
-                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500/10 to-blue-500/10 flex items-center justify-center border border-white/5 shrink-0 ml-3">
+                <div className="w-10 h-10 rounded-lg bg-linear-to-br from-purple-500/10 to-blue-500/10 flex items-center justify-center border border-white/5 shrink-0 ml-3">
                     {meta.framework === 'vite' ? (
                         <Code2 size={18} className="text-blue-400" />
                     ) : (
@@ -650,7 +650,7 @@ const CreateNewCard: React.FC<{ onClick: () => void }> = ({ onClick }) => (
     <button
         id="create-new-project-card"
         onClick={onClick}
-        className="group p-5 rounded-xl border border-dashed border-white/8 hover:border-white/18 bg-transparent hover:bg-white/[0.015] transition-all text-left"
+        className="group p-5 rounded-xl border border-dashed border-white/8 hover:border-white/18 bg-transparent hover:bg-white/1.5 transition-all text-left"
     >
         <div className="flex items-center justify-center w-full min-h-[180px] flex-col gap-3 text-zinc-700 group-hover:text-zinc-500 transition-colors">
             <div className="w-10 h-10 rounded-lg border border-dashed border-current flex items-center justify-center transition-transform group-hover:scale-110">
@@ -671,7 +671,7 @@ const EmptyState: React.FC<{ onCreateClick: () => void }> = ({ onCreateClick }) 
             </div>
             {/* Decoration rings */}
             <div className="absolute inset-0 rounded-2xl border border-white/3 scale-110" />
-            <div className="absolute inset-0 rounded-2xl border border-white/[0.015] scale-125" />
+            <div className="absolute inset-0 rounded-2xl border border-white/1.5 scale-125" />
         </div>
         <h2 className="text-xl font-bold text-zinc-400 mb-2">No projects yet</h2>
         <p className="text-zinc-600 text-sm mb-10 max-w-xs leading-relaxed">
@@ -913,9 +913,9 @@ export const Dashboard = () => {
                 </div>
 
                 {/* ── Sticky header ── */}
-                <header className="relative border-b border-white/5 px-8 py-4 flex items-center justify-between bg-[#09090b]/90 backdrop-blur-sm sticky top-0 z-10">
+                <header className="border-b border-white/5 px-8 py-4 flex items-center justify-between bg-[#09090b]/90 backdrop-blur-sm sticky top-0 z-10">
                     <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 bg-gradient-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-purple-500/20">
+                        <div className="w-8 h-8 bg-linear-to-br from-purple-600 to-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-purple-500/20">
                             <Layout size={18} className="text-white" />
                         </div>
                         <span className="font-bold text-lg tracking-tight">Vectra</span>
@@ -967,7 +967,7 @@ export const Dashboard = () => {
 
                         {/* Import error toast */}
                         {importError && (
-                            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[300] flex items-center gap-3 px-4 py-3 bg-red-950 border border-red-500/30 rounded-xl shadow-2xl text-sm text-red-300 max-w-sm">
+                            <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-300 flex items-center gap-3 px-4 py-3 bg-red-950 border border-red-500/30 rounded-xl shadow-2xl text-sm text-red-300 max-w-sm">
                                 <span className="text-red-400">⚠</span>
                                 <span className="flex-1">{importError}</span>
                                 <button onClick={() => setImportError(null)} className="text-red-500 hover:text-red-300 text-xs">✕</button>
@@ -1131,7 +1131,7 @@ export const Dashboard = () => {
                                 key={fw.id}
                                 onClick={() => setSelectedFramework(fw.id)}
                                 className={cn(
-                                    'relative p-6 rounded-2xl border text-left transition-all duration-200 bg-gradient-to-br',
+                                    'relative p-6 rounded-2xl border text-left transition-all duration-200 bg-linear-to-br',
                                     fw.gradient,
                                     isSelected
                                         ? `${fw.borderActive} shadow-lg shadow-black/30 scale-[1.01]`
@@ -1216,7 +1216,7 @@ export const Dashboard = () => {
                                             draggable={false}
                                         />
                                         {/* Fade gradient blends preview into card body */}
-                                        <div className="absolute inset-x-0 bottom-0 h-6 bg-gradient-to-t from-black/40 to-transparent pointer-events-none" />
+                                        <div className="absolute inset-x-0 bottom-0 h-6 bg-linear-to-t from-black/40 to-transparent pointer-events-none" />
                                     </div>
                                     {/* Card body */}
                                     <div className="p-3 flex items-start gap-2.5 w-full">

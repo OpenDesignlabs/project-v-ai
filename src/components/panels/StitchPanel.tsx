@@ -763,7 +763,7 @@ export const StitchPanel: React.FC = () => {
                                     className={cn(
                                         'w-full flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-bold transition-all',
                                         aiPrompt.trim()
-                                            ? 'bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white shadow-sm'
+                                            ? 'bg-linear-to-r from-blue-600 to-purple-600 hover:from-blue-500 hover:to-purple-500 text-white shadow-sm'
                                             : 'bg-[#2c2c2e] text-[#48484a] cursor-not-allowed'
                                     )}
                                 >
@@ -797,7 +797,7 @@ export const StitchPanel: React.FC = () => {
                         {aiStep === 'done' && (
                             <div className="p-2 space-y-3">
                                 <div className="flex flex-col items-center gap-2 py-6">
-                                    <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/20 flex items-center justify-center">
+                                    <div className="w-10 h-10 rounded-full bg-linear-to-br from-blue-500/20 to-purple-500/20 border border-blue-500/20 flex items-center justify-center">
                                         <CheckCircle2 size={20} className="text-emerald-400" />
                                     </div>
                                     <p className="text-[13px] font-bold text-white">Component Added</p>

@@ -7,9 +7,11 @@ import React, {
 import type { VectraProject, VectraNode, Page, ApiRoute, HttpMethod, Framework, ProjectMeta, SnapResult } from '../types/index.js';
 import { INITIAL_DATA, STORAGE_KEY } from '../data/constants';
 export const FRAMEWORK_KEY = 'vectra_framework';
-import { mergeAIContent } from '../utils/aiHelpers';
-import { deleteNodeRecursive, canDeleteNode } from '../utils/treeUtils';
-import { instantiateTemplate as instantiateTemplateTS } from '../utils/templateUtils';
+// ENGINE v0.3: mergeAIContent, deleteNodeRecursive, instantiateTemplate
+// are now handled by the Rust engine (§8, §10). JS versions kept as fallbacks.
+import { mergeAIContent as mergeAIContent_JS } from '../utils/aiHelpers';
+import { deleteNodeRecursive as deleteNodeRecursive_JS, canDeleteNode } from '../utils/treeUtils';
+import { instantiateTemplate as instantiateTemplateTS_JS } from '../utils/templateUtils';
 import { generateWithAI } from '../services/aiAgent';
 import {
     saveProjectIndexToDB, loadProjectIndexFromDB,
@@ -17,7 +19,8 @@ import {
     migrateFromLegacyStorage,
     type FullProjectSave,
 } from '../utils/db';
-import { generateLayoutThumbnail } from '../utils/generateThumbnail';
+// ENGINE v0.3: generateLayoutThumbnail moved to Rust (§12). JS version kept as fallback.
+import { generateLayoutThumbnail as generateLayoutThumbnail_JS } from '../utils/generateThumbnail';
 
 /** localStorage key that remembers which project was last open. */
 const ACTIVE_PROJECT_ID_KEY = 'vectra_active_id';
@@ -270,8 +273,17 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
     // Defensive flag — tells any future auto-sync effect to skip the O(N) grid rebuild during drag. Set to false by updateProject({skipLayout:true}) and automatically reset to true after each effect run
     const shouldSyncLayoutRef = useRef<boolean>(true);
 
-    // Fingerprint of the tree topology (ids+types+children). Rebuilds parentMap only when nodes are added/removed, not on style edits.
+    // GAP-4 FIX: Rust compute_structural_key (§17) — topology fingerprint for
+    // gating parentMap rebuilds. Only changes when nodes are added/moved/removed.
+    // Falls back to JS string concat if WASM not ready.
     const structuralKey = useMemo(() => {
+        const wasm = (window as any).vectraWasm;
+        if (wasm?.compute_structural_key) {
+            try {
+                return wasm.compute_structural_key(JSON.stringify(elements)) as string;
+            } catch { /* fall through */ }
+        }
+        // JS fallback — identical logic
         const nodeIds = Object.keys(elements).sort();
         return nodeIds.map(id => {
             const node = elements[id];
@@ -280,7 +292,19 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         }).join('|');
     }, [elements]);
 
+    // ENGINE v0.3/v0.4: Rust build_parent_map (§8) — single JSON round-trip
+    // replacing the O(N²) JS nested for-loop. Falls back to JS if WASM not ready.
     const parentMap = useMemo(() => {
+        const wasm = (window as any).vectraWasm;
+        if (wasm?.build_parent_map) {
+            try {
+                const raw = JSON.parse(
+                    wasm.build_parent_map(JSON.stringify(elements))
+                ) as Record<string, string>;
+                return new Map(Object.entries(raw));
+            } catch { /* fall through to JS */ }
+        }
+        // JS fallback — identical to the pre-v0.3 implementation
         const map = new Map<string, string>();
         for (const [nodeId, node] of Object.entries(elements)) {
             for (const childId of (node.children || [])) {
@@ -424,11 +448,27 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
 
                 // Persistent SWC Globals (interner created once)
                 compilerRef.current = new wasm.SwcCompiler();
+                // ENGINE v0.2: expose the compiler so useWasmEngine.ts can reach
+                // validate_jsx() and compile_minified() without importing ProjectContext.
+                (window as any).__vectraCompiler = compilerRef.current;
 
                 // Retained-mode LayoutEngine
                 layoutEngineRef.current = new wasm.LayoutEngine();
+                // ENGINE v0.2: expose LayoutEngine instance directly on vectraWasm
+                // so useWasmEngine hooks (find_overlapping_pairs, compute_selection_bbox)
+                // can call it without an extra import chain.
+                (window as any).vectraWasm.layoutEngine = layoutEngineRef.current;
 
-                console.log('[Vectra] Rust engine ready — SwcCompiler + LayoutEngine cached');
+                // GAP-2 FIX: expose get_rect_count on the layout engine instance
+                // so Header / debug panels can display live rect count
+                (window as any).vectraWasm.getRectCount = () =>
+                    layoutEngineRef.current?.get_rect_count() ?? 0;
+
+                // ENGINE v0.2: ColorEngine singleton — instantiated once here, used
+                // everywhere via useWasmEngine().colorEngine or the window reference.
+                (window as any).__vectraColorEngine = new wasm.ColorEngine();
+
+                console.log('[Vectra] Rust engine v0.3 ready — SwcCompiler + LayoutEngine + ColorEngine + TreeManager + AI Merger + CSS Gen + Thumbnail');
             } catch (e) {
                 console.warn('[Vectra] Rust engine init failed:', e);
             }
@@ -457,6 +497,22 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                         if (typeof index === 'number') setHistoryIndex(index);
                     }
                     catch (err) { console.error('[ProjectContext] History restore failed:', err); }
+                } else if (type === 'STATS_RESULT') {
+                    try {
+                        window.dispatchEvent(new CustomEvent('vectra:history-stats', {
+                            detail: JSON.parse(payload as string),
+                        }));
+                    } catch { /* malformed payload — ignore */ }
+                } else if (type === 'CAN_UNDO_RESULT' || type === 'CAN_REDO_RESULT') {
+                    // GAP-1 FIX: forward Rust can_undo/can_redo results to UI
+                    // Header undo/redo buttons listen to vectra:history-capability
+                    window.dispatchEvent(new CustomEvent('vectra:history-capability', {
+                        detail: { type, value: payload == 'true' },
+                    }));
+                } else if (type === 'MEMORY_USAGE_RESULT') {
+                    window.dispatchEvent(new CustomEvent('vectra:history-memory', {
+                        detail: Number(payload),
+                    }));
                 }
             };
 
@@ -539,6 +595,20 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 saveProjectIndexToDB(updated).catch(() => { });
                 return updated;
             });
+
+            // ENGINE v0.4: generate thumbnail on every autosave tick via Rust (§12).
+            // Runs entirely in WASM — never blocks the main thread.
+            // Keeps Dashboard card previews current without waiting for exitProject.
+            try {
+                const wasmThumb = (window as any).vectraWasm;
+                if (wasmThumb?.generate_thumbnail && projectId) {
+                    const svg = wasmThumb.generate_thumbnail(
+                        JSON.stringify(elementsRef.current),
+                        JSON.stringify(pages)
+                    ) as string;
+                    if (svg) localStorage.setItem(thumbKey(projectId), svg);
+                }
+            } catch { /* non-fatal — thumbnail is purely cosmetic */ }
         }, 1000);
         return () => clearTimeout(timer);
     }, [elements, pages, apiRoutes, theme, framework, projectId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -660,7 +730,20 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             return;
         }
         setElements(prev => {
-            const next = deleteNodeRecursive(prev, id);
+            // ENGINE v0.3: Rust delete_subtree (§8) — iterative DFS + parent unlink
+            // entirely in WASM. Falls back to JS if engine not yet loaded.
+            const wasm = (window as any).vectraWasm;
+            let next: VectraProject;
+            if (wasm?.delete_subtree) {
+                try {
+                    next = JSON.parse(wasm.delete_subtree(JSON.stringify(prev), id)) as VectraProject;
+                } catch (e) {
+                    console.warn('[engine] delete_subtree failed, using JS fallback:', e);
+                    next = deleteNodeRecursive_JS(prev, id);
+                }
+            } else {
+                next = deleteNodeRecursive_JS(prev, id);
+            }
             pushHistory(next);
             return next;
         });
@@ -674,8 +757,24 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         const source = current[id];
         if (!source) return null;
 
-        // Clone subtree with fresh collision-free IDs (uses crypto.randomUUID internally)
-        const { newNodes, rootId: newRootId } = instantiateTemplateTS(id, current);
+        // ENGINE v0.3: Rust clone_subtree (§8) — deep clone + UUID remap in WASM.
+        let newNodes: VectraProject;
+        let newRootId: string;
+        const wasmForClone = (window as any).vectraWasm;
+        if (wasmForClone?.clone_subtree) {
+            try {
+                const cloneResult = JSON.parse(wasmForClone.clone_subtree(JSON.stringify(current), id));
+                newNodes   = cloneResult.newNodes as VectraProject;
+                newRootId  = cloneResult.rootId  as string;
+            } catch (e) {
+                console.warn('[engine] clone_subtree failed, using JS fallback:', e);
+                const r = instantiateTemplateTS_JS(id, current);
+                newNodes = r.newNodes; newRootId = r.rootId;
+            }
+        } else {
+            const r = instantiateTemplateTS_JS(id, current);
+            newNodes = r.newNodes; newRootId = r.rootId;
+        }
 
         // Offset position so the copy doesn't land exactly on the original
         const newRoot = newNodes[newRootId];
@@ -1063,7 +1162,22 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
             // Generate + store wireframe thumbnail before leaving. Done here so the thumbnail always reflects the final saved state. elementsRef.current has the latest elements without stale closure issues
             try {
                 if (projectId) {
-                    const svg = generateLayoutThumbnail(elementsRef.current, pages);
+                    // ENGINE v0.3: Rust generate_thumbnail (§12) — never blocks main thread.
+                    const wasmThumb = (window as any).vectraWasm;
+                    let svg: string;
+                    if (wasmThumb?.generate_thumbnail) {
+                        try {
+                            svg = wasmThumb.generate_thumbnail(
+                                JSON.stringify(elementsRef.current),
+                                JSON.stringify(pages)
+                            ) as string;
+                        } catch (e) {
+                            console.warn('[engine] generate_thumbnail failed, using JS fallback:', e);
+                            svg = generateLayoutThumbnail_JS(elementsRef.current, pages);
+                        }
+                    } else {
+                        svg = generateLayoutThumbnail_JS(elementsRef.current, pages);
+                    }
                     localStorage.setItem(thumbKey(projectId), svg);
                 }
             } catch { /* localStorage unavailable — non-fatal */ }
@@ -1248,26 +1362,53 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
                 //      rapid AI call could slip in before history was committed.
                 // Using elementsRef.current + synchronous pushHistory(merged) eliminates
                 // both risks with zero behaviour change in production.
-                const merged = mergeAIContent(
-                    elementsRef.current,
-                    canvasNodeId,
-                    result.elements!,
-                    result.rootId!,
-                    isFullPage,
-                    result.aiMeta   // ← AI-SOURCE-1: thread prompt+model for provenance stamping
-                );
+                // ENGINE v0.3: Rust merge_ai_content (§10) — sanitize IDs + stamp
+                // aiSource + merge into project entirely inside WASM. Falls back to JS.
+                const wasmMerge = (window as any).vectraWasm;
+                let merged: VectraProject;
+                if (wasmMerge?.merge_ai_content) {
+                    try {
+                        merged = JSON.parse(wasmMerge.merge_ai_content(
+                            JSON.stringify(elementsRef.current),
+                            canvasNodeId,
+                            JSON.stringify(result.elements!),
+                            result.rootId!,
+                            isFullPage,
+                            result.aiMeta ? JSON.stringify(result.aiMeta) : ''
+                        )) as VectraProject;
+                    } catch (e) {
+                        console.warn('[engine] merge_ai_content failed, using JS fallback:', e);
+                        merged = mergeAIContent_JS(
+                            elementsRef.current, canvasNodeId,
+                            result.elements!, result.rootId!, isFullPage, result.aiMeta
+                        );
+                    }
+                } else {
+                    merged = mergeAIContent_JS(
+                        elementsRef.current, canvasNodeId,
+                        result.elements!, result.rootId!, isFullPage, result.aiMeta
+                    );
+                }
                 setElements(merged);
                 pushHistory(merged);
 
-                const sectionCount = Object.values(result.elements!).filter(
-                    n => n.type === 'custom_code'
-                ).length;
+                // ENGINE v0.2: discard any redo branch after AI generation.
+                // After the AI builds a page the redo stack would let the user
+                // "redo" back to a pre-AI blank state, which is almost never
+                // what they want and causes confusing canvas jumps.
+                historyWorkerRef.current?.postMessage({ type: 'CLEAR_FUTURE' });
 
-                // Fire-and-forget event for AISuccessToast.
-                // Listeners: src/components/modals/AISuccessToast.tsx (App.tsx render tree).
-                // Safe even if no listener — CustomEvent is silently dropped.
+                const aiSections = Object.values(result.elements!).filter(
+                    n => n.type === 'custom_code'
+                );
+                const sectionCount = aiSections.length;
+                const sectionNames = aiSections
+                    .map(n => (n as any).aiSource?.sectionName ?? n.name)
+                    .filter(Boolean)
+                    .slice(0, 5);     // cap at 5 — toast space is limited
+
                 window.dispatchEvent(new CustomEvent('vectra:ai-done', {
-                    detail: { sectionCount, prompt }
+                    detail: { sectionCount, sectionNames, prompt }
                 }));
 
                 console.log(
@@ -1460,7 +1601,7 @@ export const ProjectProvider: React.FC<{ children: ReactNode }> = ({ children })
         <ProjectContext.Provider value={{
             elements, setElements, elementsRef, updateProject, pushHistory,
             deleteElement, duplicateElement, reorderElement,
-            instantiateTemplate: instantiateTemplateTS,
+            instantiateTemplate: instantiateTemplateTS_JS,
             parentMap,
             pages, activePageId, setActivePageId, realPageId: activePageId,
             addPage, deletePage, switchPage, importPage, updatePageSEO,

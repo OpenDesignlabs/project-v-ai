@@ -144,7 +144,7 @@ export const Resizer: React.FC<ResizerProps> = ({ elementId }) => {
             {showRadiusHandle && (
                 <div
                     title={`Border radius: ${parseFloat(String(element.props.style?.borderRadius ?? '0')) || 0}px — drag to adjust`}
-                    className="absolute z-[60] w-3.5 h-3.5 bg-amber-400 border-2 border-amber-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform hover:bg-amber-300 pointer-events-auto"
+                    className="absolute z-60 w-3.5 h-3.5 bg-amber-400 border-2 border-amber-600 rounded-full shadow-md cursor-ew-resize hover:scale-125 transition-transform hover:bg-amber-300 pointer-events-auto"
                     style={{ top: '-10px', right: '-30px' }}
                     onPointerDown={startRadiusDrag}
                     onPointerMove={onRadiusPointerMove}

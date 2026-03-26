@@ -1,5 +1,15 @@
 import type { VectraNode, VectraProject } from '../types';
-import { repairJSON } from '../utils/aiHelpers';
+// ENGINE v0.3: repairJSON delegated to Rust repair_json (§9). JS version kept as fallback.
+import { repairJSON as repairJSON_JS } from '../utils/aiHelpers';
+
+// Thin shim: calls Rust repair_json when the engine is loaded, falls back to JS.
+const repairJSON = (s: string): string => {
+    const wasm = (window as any).vectraWasm;
+    if (wasm?.repair_json) {
+        try { return wasm.repair_json(s) as string; } catch { /* fall through */ }
+    }
+    return repairJSON_JS(s);
+};
 
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
 // Dual-key architecture: splits generation and debugging traffic across
@@ -588,9 +598,9 @@ export default function Navbar(props) {
 // SECTION: HeroSection
 export default function HeroSection(props) {
   return (
-    <section className="w-full min-h-[700px] bg-gradient-to-br from-slate-950 via-indigo-950/20 to-black flex flex-col items-center justify-center px-8 py-24 text-white">
+    <section className="w-full min-h-[700px] bg-linear-to-br from-slate-950 via-indigo-950/20 to-black flex flex-col items-center justify-center px-8 py-24 text-white">
       <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }} className="text-center">
-        <h1 className="text-6xl md:text-7xl font-black tracking-tight mb-6">Build <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-violet-400">Faster.</span></h1>
+        <h1 className="text-6xl md:text-7xl font-black tracking-tight mb-6">Build <span className="text-transparent bg-clip-text bg-linear-to-r from-blue-400 to-violet-400">Faster.</span></h1>
         <p className="text-xl text-slate-400 max-w-2xl mx-auto mb-10">The visual platform for teams who ship quality products.</p>
         <div className="flex flex-col sm:flex-row items-center gap-4 justify-center">
           <button className="px-8 py-4 bg-blue-600 rounded-xl text-white font-bold text-lg hover:bg-blue-500 transition-all">Start Free Trial</button>
@@ -634,7 +644,7 @@ export default function FeaturesSection(props) {
 // SECTION: CTASection
 export default function CTASection(props) {
   return (
-    <section className="w-full py-24 bg-gradient-to-br from-blue-950/50 to-slate-950 border-y border-white/10 text-white text-center px-8">
+    <section className="w-full py-24 bg-linear-to-br from-blue-950/50 to-slate-950 border-y border-white/10 text-white text-center px-8">
       <h2 className="text-5xl font-black mb-6">Ready to ship?</h2>
       <p className="text-slate-400 text-xl max-w-xl mx-auto mb-10">Join thousands of teams. Free to start.</p>
       <button className="px-10 py-4 bg-blue-600 rounded-xl text-white font-bold text-lg hover:bg-blue-500 transition-all">Start for free</button>

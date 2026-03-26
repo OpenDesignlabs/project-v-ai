@@ -1,4 +1,9 @@
-/* Tailwind is loaded via CDN in index.html (runtime JIT) — no @tailwind directives needed */
+/* Build-time Tailwind v4 — processed by @tailwindcss/postcss via Vite.
+   v4 uses a single @import instead of the three separate @tailwind directives.
+   Content paths are auto-detected in v4 (no tailwind.config.js needed).
+   The Play CDN (/public/tailwind.js) is kept only for the AI component sandbox. */
+@import "tailwindcss";
+
 
 
 /* --- LOGO ANIMATIONS --- */

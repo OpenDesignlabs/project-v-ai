@@ -18,6 +18,9 @@ const MagicBar     = lazy(() => import('./components/modals/MagicBar').then(m =>
 const AISuccessToast = lazy(() =>
     import('./components/modals/AISuccessToast').then(m => ({ default: m.AISuccessToast }))
 );
+const ShortcutsOverlay = lazy(() =>
+    import('./components/ui/ShortcutsOverlay').then(m => ({ default: m.ShortcutsOverlay }))
+);
 // 2. Dashboard — 1188-line route, only loaded on dashboard view
 const Dashboard    = lazy(() => import('./components/dashboard/Dashboard').then(m => ({ default: m.Dashboard })));
 // --- MONOCHROME ANIMATED LOGO ---
@@ -68,7 +71,7 @@ const VectraAnimatedLogo = () => (
 
 // --- MONOCHROME LOADING SCREEN ---
 const LoadingScreen = ({ message = "INITIALIZING ENVIRONMENT" }) => (
-  <div className="w-full h-screen bg-[#09090b] flex flex-col items-center justify-center gap-8 z-[9999] fixed inset-0">
+  <div className="w-full h-screen bg-[#09090b] flex flex-col items-center justify-center gap-8 z-9999 fixed inset-0">
     {/* Subtle Glow (White/Gray instead of Purple) */}
     <div className="absolute w-[500px] h-[500px] bg-white/5 rounded-full blur-[100px] animate-pulse" />
 
@@ -81,7 +84,7 @@ const LoadingScreen = ({ message = "INITIALIZING ENVIRONMENT" }) => (
     <div className="flex flex-col items-center gap-4 z-10">
       <div className="w-48 h-[2px] bg-[#27272a] rounded-full overflow-hidden">
         <div className="h-full bg-white w-1/3 animate-[shimmer_1s_infinite_linear] rounded-full relative">
-          <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-50" />
+          <div className="absolute inset-0 bg-linear-to-r from-transparent via-white to-transparent opacity-50" />
         </div>
       </div>
       <span className="text-[10px] font-bold text-[#52525b] tracking-[0.2em] uppercase font-mono text-center px-4">
@@ -414,78 +417,9 @@ const EditorLayout = () => {
         </Suspense>
       )}
 
-      {/* Keyboard shortcut reference modal. Opened with '?' key. */}
-      {showShortcuts && (
-        <div
-          className="fixed inset-0 z-[200] bg-black/70 backdrop-blur-sm flex items-center justify-center p-6"
-          onClick={() => setShowShortcuts(false)}
-        >
-          <div
-            className="bg-[#1e1e1e] border border-[#3f3f46] rounded-2xl shadow-2xl w-full max-w-2xl max-h-[80vh] overflow-y-auto"
-            onClick={e => e.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b border-[#2a2a2c]">
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <span className="text-[#007acc]">⌨</span> Keyboard Shortcuts
-              </h2>
-              <button onClick={() => setShowShortcuts(false)} className="text-[#555] hover:text-[#ccc] transition-colors text-xs">✕</button>
-            </div>
-            <div className="p-6 grid grid-cols-2 gap-8">
-              {([
-                { group: 'Canvas', items: [
-                  ['Space + drag',    'Pan canvas'],
-                  ['Ctrl/⌘ + scroll', 'Zoom in/out'],
-                  ['⌘0 / Ctrl+0',    'Zoom to fit'],
-                  ['Arrow keys',      'Nudge 1px'],
-                  ['Shift + Arrow',   'Nudge 10px'],
-                  ['Click empty',     'Deselect all'],
-                ]},
-                { group: 'Selection', items: [
-                  ['Click',                'Select element'],
-                  ['Shift + click',        'Add to multi-select'],
-                  ['Drag to box-select',   'Select multiple'],
-                  ['Escape',               'Deselect'],
-                  ['Delete / Backspace',   'Delete selected'],
-                  ['Right-click',          'Context menu'],
-                ]},
-                { group: 'Edit', items: [
-                  ['⌘D / Ctrl+D',     'Duplicate'],
-                  ['⌘G / Ctrl+G',     'Group into container'],
-                  ['⌘C / Ctrl+C',     'Copy'],
-                  ['⌘V / Ctrl+V',     'Paste (cross-page)'],
-                  ['⌘Z / Ctrl+Z',     'Undo (works on AI output)'],
-                  ['⌘⇧Z / Ctrl+Y',   'Redo'],
-                  ['Double-click',    'Edit text inline'],
-                ]},
-                { group: 'AI & View', items: [
-                  ['⌘K / Ctrl+K',    'Open AI magic bar'],
-                  ['↑/↓ in AI bar',  'Navigate prompt history'],
-                  ['I',              'Toggle insert drawer'],
-                  ['⌘I / Ctrl+I',   'Import component'],
-                  ['?',              'This shortcut list'],
-                  ['Escape',         'Close panels / dialogs'],
-                ]},
-              ] as const).map(({ group, items }) => (
-                <div key={group}>
-                  <div className="text-[10px] font-bold text-[#007acc] uppercase tracking-widest mb-3">{group}</div>
-                  <div className="space-y-2">
-                    {items.map(([key, desc]) => (
-                      <div key={key} className="flex items-center justify-between gap-4">
-                        <span className="text-[11px] text-[#888]">{desc}</span>
-                        <kbd className="text-[10px] font-mono bg-[#2a2a2d] border border-[#3e3e42] text-[#ccc] px-2 py-0.5 rounded shrink-0">{key}</kbd>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-            <div className="px-6 py-3 border-t border-[#2a2a2c] text-[10px] text-[#444] text-center">
-              Press <kbd className="font-mono bg-[#2a2a2d] border border-[#3e3e42] text-[#777] px-1.5 py-0.5 rounded">?</kbd> to toggle
-              · <kbd className="font-mono bg-[#2a2a2d] border border-[#3e3e42] text-[#777] px-1.5 py-0.5 rounded">Esc</kbd> to close
-            </div>
-          </div>
-        </div>
-      )}
+      <Suspense fallback={null}>
+        <ShortcutsOverlay open={showShortcuts} onClose={() => setShowShortcuts(false)} />
+      </Suspense>
     </div>
   );
 };

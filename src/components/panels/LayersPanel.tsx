@@ -3,7 +3,26 @@ import { useEditor } from '../../context/EditorContext';
 import { ChevronRight, ChevronDown, Lock, Eye, Copy, Trash2, BoxSelect } from 'lucide-react';
 import { cn } from '../../lib/utils';
 
-// ── DnD state lives outside React to avoid closure capture issues during drag ──
+// Type icon map — colour-coded symbol for each element type shown in layer rows.
+const TYPE_ICON: Record<string, { symbol: string; color: string }> = {
+    webpage:          { symbol: '⬜', color: '#60a5fa' },
+    canvas:           { symbol: '⬜', color: '#60a5fa' },
+    container:        { symbol: '▣', color: '#818cf8' },
+    section:          { symbol: '▤', color: '#818cf8' },
+    text:             { symbol: 'T',  color: '#34d399' },
+    heading:          { symbol: 'H',  color: '#34d399' },
+    paragraph:        { symbol: '¶',  color: '#6ee7b7' },
+    button:           { symbol: '⮭', color: '#f97316' },
+    link:             { symbol: '⤻', color: '#fb923c' },
+    image:            { symbol: '⬙', color: '#a78bfa' },
+    icon:             { symbol: '✦', color: '#e879f9' },
+    input:            { symbol: '▭', color: '#fbbf24' },
+    custom_code:      { symbol: '✶', color: '#c084fc' },
+    custom_component: { symbol: '⬡', color: '#818cf8' },
+};
+const getTypeIcon = (type: string) => TYPE_ICON[type] ?? { symbol: '◻', color: '#555' };
+
+// DnD state lives outside React to avoid closure capture issues during drag.
 let _dragNodeId: string | null = null;
 
 // Module-level search query — avoids prop-drilling through recursive LayerNode tree. Same pattern as _dragNodeId above. LayerNode reads this directly on each render — zero extra context subscriptions
@@ -180,7 +199,31 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
                         onClick={(e) => e.stopPropagation()}
                     />
                 ) : (
-                    <span className="flex-1 truncate">{element.name}</span>
+                    <>
+                        {/* Type icon — colour-coded by element type */}
+                        {(() => {
+                            const ti = getTypeIcon(element.type);
+                            return (
+                                <span
+                                    className="text-[9px] mr-1.5 shrink-0 w-3 text-center font-mono"
+                                    style={{ color: ti.color, opacity: isSelected ? 0.9 : 0.55 }}
+                                    title={element.type}
+                                >
+                                    {ti.symbol}
+                                </span>
+                            );
+                        })()}
+                        <span className="flex-1 truncate">{element.name}</span>
+                        {/* AI badge — only for AI-generated sections */}
+                        {(element as any).aiSource && (
+                            <span
+                                className="text-[8px] font-bold px-1 rounded shrink-0 ml-1"
+                                style={{ background: 'rgba(124,58,237,0.2)', color: '#a78bfa', border: '1px solid rgba(124,58,237,0.3)' }}
+                            >
+                                AI
+                            </span>
+                        )}
+                    </>
                 )}
 
                 {/* Lock + Eye toggles — hover-reveal. Buttons stopPropagation so they don't trigger row selection. */}
@@ -216,7 +259,7 @@ const LayerNode = ({ nodeId, depth, parentId }: LayerNodeProps) => {
             {/* Context Menu Portal */}
             {contextMenu && (
                 <div
-                    className="fixed z-[100] bg-[#252526] border border-[#3f3f46] shadow-xl rounded-md py-1 w-40 flex flex-col"
+                    className="fixed z-100 bg-[#252526] border border-[#3f3f46] shadow-xl rounded-md py-1 w-40 flex flex-col"
                     style={{ left: contextMenu.x, top: contextMenu.y }}
                 >
                     <div className="px-3 py-1.5 text-[10px] font-bold text-[#666] uppercase border-b border-[#3f3f46] mb-1 truncate">{element.name}</div>

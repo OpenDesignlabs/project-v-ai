@@ -7,7 +7,7 @@ import { ContainerPreview } from './ContainerPreview';
 import { FramePicker } from './FramePicker';
 import { TEMPLATES } from '../../data/templates';
 import { CanvasErrorBoundary } from './CanvasErrorBoundary';
-import { Copy, Trash2 } from 'lucide-react';
+import { Copy, Trash2, Wand2, Plus, MousePointerClick } from 'lucide-react';
 
 // Invisible 8px drag handle at the bottom of each artboard frame. Memoized — only re-renders when frameId or zoom changes.
 const ArtboardResizeHandle = React.memo<{ frameId: string; zoom: number }>(({ frameId, zoom }) => {
@@ -100,10 +100,10 @@ const SingleNodeToolbar: React.FC<{
 
     return (
         <div
-            className="fixed z-[10001] pointer-events-auto"
+            className="fixed z-10001 pointer-events-auto"
             style={{ left: Math.max(8, rect.left), top: toolbarY }}
         >
-            <div className="flex items-center gap-0.5 bg-[#1a1a1c]/95 border border-white/[0.09] rounded-xl px-1.5 py-1 shadow-2xl shadow-black/60 backdrop-blur-sm">
+            <div className="flex items-center gap-0.5 bg-[#1a1a1c]/95 border border-white/9 rounded-xl px-1.5 py-1 shadow-2xl shadow-black/60 backdrop-blur-sm">
                 {/* Duplicate */}
                 <button
                     title="Duplicate (Cmd+D)"
@@ -229,10 +229,10 @@ const AlignDistributeBar: React.FC<{
 
     return (
         <div
-            className="fixed z-[10001] pointer-events-auto"
+            className="fixed z-10001 pointer-events-auto"
             style={{ left: Math.max(8, rect.left), top: toolbarY }}
         >
-            <div className="flex items-center gap-0.5 bg-[#1a1a1c]/95 border border-white/[0.09] rounded-xl px-1.5 py-1 shadow-2xl shadow-black/60 backdrop-blur-sm">
+            <div className="flex items-center gap-0.5 bg-[#1a1a1c]/95 border border-white/9 rounded-xl px-1.5 py-1 shadow-2xl shadow-black/60 backdrop-blur-sm">
                 <span className="text-[9px] text-zinc-600 px-1.5 font-mono shrink-0">{selectedIds.size}</span>
                 <div className="w-px h-4 bg-white/10 mx-0.5" />
                 {btns.map((btn, i) => (
@@ -279,6 +279,7 @@ export const Canvas = () => {
         clearSelection, addToSelection,
         // selectedIds drives the bounding box overlay.
         selectedIds,
+        setMagicBarOpen,
     } = useUI();
 
     // ── Assembled bridge values (componentRegistry merges static + dynamic) ───
@@ -827,7 +828,7 @@ export const Canvas = () => {
         >
             {previewMode ? (
                 // ── Full-screen preview overlay ───────────────────────────────
-                <div className="absolute inset-0 z-[100] bg-black">
+                <div className="absolute inset-0 z-100 bg-black">
                     <ContainerPreview />
                 </div>
             ) : (
@@ -857,6 +858,41 @@ export const Canvas = () => {
                                 if (el.props?.collapsed) return null;  // collapsed frames skip
                                 return <ArtboardResizeHandle key={`arh-${cid}`} frameId={cid} zoom={zoom} />;
                             })}
+                            {/* Empty artboard state — shown when webpage has no children */}
+                            {(() => {
+                                const pageRoot = elements[activePageId];
+                                const webpageId = pageRoot?.children?.find(cid => elements[cid]?.type === 'webpage');
+                                if (!webpageId) return null;
+                                const isEmpty = !elements[webpageId]?.children?.length;
+                                if (!isEmpty) return null;
+                                return (
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 10 }}>
+                                        <div className="flex flex-col items-center gap-5 pointer-events-auto" style={{ userSelect: 'none' }}>
+                                            <div className="w-64 h-40 rounded-2xl flex items-center justify-center" style={{ border: '2px dashed #2e2e32', background: 'rgba(255,255,255,0.012)' }}>
+                                                <MousePointerClick size={28} style={{ color: '#2e2e32' }} />
+                                            </div>
+                                            <div className="text-center">
+                                                <div className="text-sm font-semibold mb-1" style={{ color: 'rgba(255,255,255,0.5)' }}>Your canvas is empty</div>
+                                                <div className="text-[11px]" style={{ color: '#444' }}>Generate with AI, drag from the insert panel, or drop a template</div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <button onClick={() => setMagicBarOpen(true)}
+                                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-[11px] font-bold text-white transition-all active:scale-95"
+                                                    style={{ background: 'linear-gradient(135deg,#7c3aed,#2563eb)', boxShadow: '0 4px 16px rgba(124,58,237,0.3)' }}>
+                                                    <Wand2 size={13} /> Generate with AI
+                                                    <kbd className="text-[9px] font-mono opacity-60 border border-white/20 px-1 rounded ml-1">⌘K</kbd>
+                                                </button>
+                                                <button onClick={() => { if (!isInsertDrawerOpen) toggleInsertDrawer(); }}
+                                                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-[11px] font-bold transition-all active:scale-95"
+                                                    style={{ background: '#2a2a2d', border: '1px solid #3e3e42', color: '#ccc' }}>
+                                                    <Plus size={13} /> Insert element
+                                                    <kbd className="text-[9px] font-mono opacity-40 border border-white/10 px-1 rounded ml-1">I</kbd>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                );
+                            })()}
                         </div>
                     </CanvasErrorBoundary>
 
@@ -864,39 +900,53 @@ export const Canvas = () => {
                     {guides.map((g, i) => {
                         const isVertical = g.orientation === 'vertical';
                         const lineLength = g.end - g.start;
-                        // Only show a label when the guide is long enough and carries a distance value
-                        const labelText  = g.label ? `${Math.round(parseFloat(g.label))}` : null;
+
+                        // ENGINE v0.2: gap guides carry gap_px (exact equal-spacing distance).
+                        // Align guides carry g.label (snapped position value).
+                        const isGapGuide = (g as any).guide_type === 'gap';
+                        const gapPx      = (g as any).gap_px as number | undefined;
+                        const labelText  = gapPx && gapPx > 0
+                            ? `${Math.round(gapPx)}px`
+                            : (g.label ? `${Math.round(parseFloat(g.label))}` : null);
                         const showLabel  = labelText !== null && lineLength > 20;
                         const midMain    = (g.start + g.end) / 2;
+
+                        // Gap guides = purple dashed; align guides = red solid
+                        const lineColor = isGapGuide ? '#8b5cf6' : '#ef4444';
+                        const labelBg   = isGapGuide ? 'rgba(109,40,217,0.92)' : 'rgba(220,38,38,0.92)';
 
                         return (
                             <React.Fragment key={i}>
                                 {/* Guide line */}
                                 <div
-                                    className="absolute bg-red-500 z-[9999] pointer-events-none"
+                                    className="absolute z-9999 pointer-events-none"
                                     style={{
-                                        left:   isVertical ? g.pos   : g.start,
-                                        top:    isVertical ? g.start : g.pos,
-                                        width:  isVertical ? '1px'   : lineLength,
-                                        height: isVertical ? lineLength : '1px',
+                                        left:            isVertical ? g.pos   : g.start,
+                                        top:             isVertical ? g.start : g.pos,
+                                        width:           isVertical ? '1px'   : lineLength,
+                                        height:          isVertical ? lineLength : '1px',
+                                        background:      isGapGuide ? undefined : lineColor,
+                                        backgroundImage: isGapGuide
+                                            ? `repeating-linear-gradient(${isVertical ? '180deg' : '90deg'}, ${lineColor} 0px, ${lineColor} 4px, transparent 4px, transparent 8px)`
+                                            : undefined,
                                     }}
                                 />
-                                {/* Distance label — floats at the midpoint of the guide */}
+                                {/* Distance / gap label */}
                                 {showLabel && (
                                     <div
-                                        className="absolute z-[10000] pointer-events-none select-none"
+                                        className="absolute z-10000 pointer-events-none select-none"
                                         style={{
-                                            left: isVertical ? g.pos + 4 : midMain - 16,
-                                            top:  isVertical ? midMain - 9 : g.pos + 4,
-                                            background: 'rgba(220,38,38,0.92)',
-                                            color: '#fff',
-                                            fontSize: '9px',
-                                            fontFamily: 'monospace',
-                                            fontWeight: 700,
-                                            padding: '1px 5px',
-                                            borderRadius: '3px',
-                                            whiteSpace: 'nowrap',
-                                            lineHeight: '16px',
+                                            left:          isVertical ? g.pos + 4 : midMain - 16,
+                                            top:           isVertical ? midMain - 9 : g.pos + 4,
+                                            background:    labelBg,
+                                            color:         '#fff',
+                                            fontSize:      '9px',
+                                            fontFamily:    'monospace',
+                                            fontWeight:    700,
+                                            padding:       '1px 5px',
+                                            borderRadius:  '3px',
+                                            whiteSpace:    'nowrap',
+                                            lineHeight:    '16px',
                                             letterSpacing: '0.03em',
                                         }}
                                     >
@@ -909,7 +959,7 @@ export const Canvas = () => {
                     {/* Item 2: Box-select rectangle */}
                     {boxSelectRect && (
                         <div
-                            className="absolute pointer-events-none z-[9999] border border-blue-500 bg-blue-500/10"
+                            className="absolute pointer-events-none z-9999 border border-blue-500 bg-blue-500/10"
                             style={{ left: boxSelectRect.x, top: boxSelectRect.y, width: boxSelectRect.w, height: boxSelectRect.h }}
                         />
                     )}
@@ -917,7 +967,7 @@ export const Canvas = () => {
                     {multiSelBBox && (
                         <div
                             data-multisel-bbox
-                            className="absolute pointer-events-none border border-dashed border-blue-400/80 bg-blue-500/[0.04]"
+                            className="absolute pointer-events-none border border-dashed border-blue-400/80 bg-blue-500/4"
                             style={{ left: multiSelBBox.x, top: multiSelBBox.y, width: multiSelBBox.w, height: multiSelBBox.h, zIndex: 9997 }}
                         >
                             <div
@@ -934,7 +984,7 @@ export const Canvas = () => {
             {/* Zoom level badge — outer container (not world div) so it never scales.
                 Click fires zoom-to-fit. Matches Header button behaviour exactly. */}
             {!previewMode && (
-                <div className="absolute bottom-4 left-4 z-[9990] pointer-events-none select-none">
+                <div className="absolute bottom-4 left-4 z-9990 pointer-events-none select-none">
                     <button
                         className="pointer-events-auto flex items-center gap-1 px-2 py-1 bg-[#252526]/90 border border-[#3f3f46] rounded text-[10px] font-mono text-[#666] hover:text-white hover:bg-[#2d2d2d] transition-colors backdrop-blur-sm"
                         onClick={() => window.dispatchEvent(new CustomEvent('vectra:zoom-to-fit'))}

@@ -7,6 +7,10 @@
 
 import type { VectraNode, VectraProject } from '../../types';
 
+// ENGINE v0.4: transformFigmaFrame delegated to Rust (§16).
+// JS implementation kept as fallback.
+const _wasm = (): any => typeof window !== 'undefined' ? (window as any).vectraWasm ?? null : null;
+
 // ─── FIGMA API TYPES ──────────────────────────────────────────────────────────
 // Subset of Figma v1 REST API — only fields Vectra actually reads.
 // Full spec: https://www.figma.com/developers/api#node-types
@@ -516,6 +520,28 @@ export const transformFigmaFrame = (
     frame: FigmaNode,
     importMode: 'page' | 'component',
 ): FigmaTransformResult => {
+    // ENGINE v0.4: Rust transform_figma_frame (§16)
+    // Handles: FIG-COORD-1 coords, fills, gradients, strokes, shadows,
+    // border-radius, auto-layout→flexbox, text styles, image tracking.
+    const w = _wasm();
+    if (w?.transform_figma_frame) {
+        try {
+            const raw = w.transform_figma_frame(JSON.stringify(frame), importMode) as string;
+            const result = JSON.parse(raw);
+            // Convert imageFillMap from plain object back to Map
+            const imageFillMap = new Map<string, string>(Object.entries(result.imageFillMap ?? {}));
+            return {
+                nodes: result.nodes as VectraProject,
+                rootId: result.rootId as string,
+                imageFillNodeIds: result.imageFillNodeIds as string[],
+                imageFillMap,
+                warnings: result.warnings as string[],
+            };
+        } catch (e) {
+            console.warn('[engine] transform_figma_frame failed, using JS fallback:', e);
+        }
+    }
+    // ── JS fallback ────────────────────────────────────────────────────────
     const ctx: TransformCtx = {
         nodeMap: {},
         imageFillNodeIds: [],

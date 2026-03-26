@@ -8,50 +8,11 @@
   <title>Vectra</title>
 
   <!--
-    ── Babel Standalone ──────────────────────────────────────────────────────
-    Primary:  /cdn/babel  — same-origin proxy route (Vite in dev, Vercel in prod).
-              No COEP/CORS issues because the request never crosses an origin.
-    Fallback: /babel.min.js — self-hosted copy in /public, served with
-              Cross-Origin-Resource-Policy: cross-origin header.
-    Guard:    window.Babel — checked after load; forces local copy if still unset.
+    Babel Standalone is no longer loaded here.
+    All JSX/TSX compilation is handled by the Rust/SWC WASM engine (vectra-engine).
+    The compiler.worker.ts and swc.worker.ts both load WASM directly via ES import.
+    /public/babel.min.js is kept as a git-tracked emergency fallback only.
   -->
-  <script
-    src="/cdn/babel"
-    onerror="this.onerror=null; this.src='/babel.min.js';"
-  ></script>
-  <script>
-    if (!window.Babel) {
-      // Proxy silently failed (e.g. vite preview without proxy) — load local fallback.
-      var s = document.createElement('script');
-      s.src = '/babel.min.js';
-      document.head.appendChild(s);
-    }
-  </script>
-
-  <!--
-    ── Tailwind CSS Play CDN ─────────────────────────────────────────────────
-    Primary:  /cdn/tailwind — same-origin proxy route (Vite in dev, Vercel in prod).
-              cdn.tailwindcss.com is a JS Play CDN (not a stylesheet), so we use
-              <script> here — the <link rel="stylesheet"> form causes MIME errors.
-    Fallback: /tailwind.js — self-hosted copy in /public.
-    Guard:    window.tailwind — checked with a short delay (CDN registers the global
-              asynchronously on DOMContentLoaded).
-  -->
-  <script
-    src="/cdn/tailwind"
-    onerror="this.onerror=null; this.src='/tailwind.js';"
-  ></script>
-  <script>
-    // Delay check — Tailwind Play CDN sets window.tailwind inside a DOMContentLoaded
-    // listener, so it may not be defined yet at parse time.
-    window.addEventListener('DOMContentLoaded', function () {
-      if (!window.tailwind && !document.querySelector('script[src="/tailwind.js"]')) {
-        var s = document.createElement('script');
-        s.src = '/tailwind.js';
-        document.head.appendChild(s);
-      }
-    });
-  </script>
 
 </head>
 

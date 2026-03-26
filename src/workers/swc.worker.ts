@@ -1,10 +1,16 @@
-// / <reference lib="webworker" /> --- SWC COMPILER WORKER --------------------------------------------------- Runs Rust-powered SWC compilation (TSX -> CJS JS) off the main thread
+// / <reference lib="webworker" />
+// ── SWC COMPILER WORKER v0.2 ─────────────────────────────────────────────────
+// New in v0.2:
+//   • VALIDATE message: parse-only check (~5ms vs ~50ms full compile).
+//     Used by RightSidebar Code tab for live feedback while the user types.
+//   • COMPILE_MINIFIED message: full compile with minification (~35% smaller).
+//     Used by Header ZIP export for smaller bundled output files.
+//   • Parse errors now include line:col from SWC span data.
 
 import init, { SwcCompiler } from '../../vectra-engine/pkg/vectra_engine.js';
 
 let compiler: SwcCompiler | null = null;
 
-// ── Boot: initialise Wasm and signal readiness ─────────────────────────────
 (async () => {
     try {
         await init();
@@ -16,44 +22,51 @@ let compiler: SwcCompiler | null = null;
     }
 })();
 
-// ── Pre-compile: strip ESM imports ────────────────────────────────────────
-// Safety net: upstream stripAndFixCode should already remove imports, but any
-// that survive would generate `require(...)` calls in SWC output that fail in
-// the iframe sandbox (no module system). We strip them here defensively.
+// ── Helpers (unchanged from v0.1) ────────────────────────────────────────────
 function stripImports(code: string): string {
     return code
-        // import type { X } from 'y' — type-only, always safe to remove
         .replace(/^[ \t]*import\s+type?\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*$/gm, '')
-        // import { X, Y } from 'y' — named import
         .replace(/^[ \t]*import\s+[^\n{]*?from\s+['"][^'"]+['"];?\s*$/gm, '')
-        // import 'y' — side-effect import
         .replace(/^[ \t]*import\s+['"][^'"]+['"];?\s*$/gm, '')
         .trim();
 }
 
-// ── Post-compile: ESM → CJS shim ────────────────────────────────────────── SWC emits ESM syntax. The iframe shell executes code via new Function() and expects CJS-style exports. Two cases:
 function shimExports(code: string): string {
     return code
-        // ── Default exports (order matters: specific before general) ──────
         .replace(/export\s+default\s+function\s+(\w+)/, 'exports.default = function $1')
         .replace(/export\s+default\s+class\s+(\w+)/, 'exports.default = class $1')
         .replace(/export\s+default\s+/, 'exports.default = ')
-        // ── Named exports: strip the `export` keyword, keep declaration ───
         .replace(/\bexport\s+(const|let|var|function|class)\b/g, '$1');
 }
 
-// ── Message handler ────────────────────────────────────────────────────────
-self.onmessage = (e: MessageEvent) => {
-    const { id, code } = e.data as { id: string; code: string };
+function makeErrorComponent(msg: string): string {
+    const escaped = msg.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    return [
+        'exports.default = function SyntaxError() {',
+        '  return React.createElement("div",',
+        '    { style: { padding: 16, color: "#ef4444", background: "#fef2f2",',
+        '        border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, fontFamily: "monospace" } },',
+        '    React.createElement("strong", null, "Compile Error: "),',
+        `    "${escaped}"`,
+        '  );',
+        '}',
+    ].join('\n');
+}
 
-    // Empty code: resolve immediately, no compilation needed
+// ── Message handler ───────────────────────────────────────────────────────────
+self.onmessage = (e: MessageEvent) => {
+    const { id, code, messageType } = e.data as {
+        id: string;
+        code: string;
+        /** 'COMPILE' (default) | 'VALIDATE' | 'COMPILE_MINIFIED' */
+        messageType?: string;
+    };
+
     if (!code?.trim()) {
         self.postMessage({ id, code: '' });
         return;
     }
 
-    // Compiler not ready yet: return an error component so the preview
-    // doesn't go blank while Wasm is booting
     if (!compiler) {
         self.postMessage({
             id,
@@ -69,29 +82,38 @@ self.onmessage = (e: MessageEvent) => {
         return;
     }
 
+    // ── NEW v0.2: VALIDATE — syntax check only, no transform ─────────────────
+    if (messageType === 'VALIDATE') {
+        try {
+            const error: string = compiler.validate_jsx(code);
+            // "" = valid; "line:col — parse error" = invalid
+            self.postMessage({ id, validationError: error });
+        } catch (err) {
+            self.postMessage({ id, validationError: String(err) });
+        }
+        return;
+    }
+
+    // ── NEW v0.2: COMPILE_MINIFIED — for ZIP export ───────────────────────────
+    if (messageType === 'COMPILE_MINIFIED') {
+        try {
+            const clean      = stripImports(code);
+            const transpiled = shimExports(compiler.compile_minified(clean));
+            self.postMessage({ id, code: transpiled });
+        } catch (err: unknown) {
+            const msg = err instanceof Error ? err.message : String(err);
+            self.postMessage({ id, code: makeErrorComponent(msg) });
+        }
+        return;
+    }
+
+    // ── Default: standard compile (unchanged from v0.1) ─────────────────────
     try {
-        const clean = stripImports(code);
+        const clean      = stripImports(code);
         const transpiled = shimExports(compiler.compile(clean));
         self.postMessage({ id, code: transpiled });
     } catch (err: unknown) {
-        const msg = (err instanceof Error ? err.message : String(err))
-            .replace(/\\/g, '\\\\')
-            .replace(/"/g, '\\"')
-            .replace(/\n/g, '\\n');
-
-        // Return a renderable error component — preview stays visible
-        self.postMessage({
-            id,
-            code: [
-                'exports.default = function SyntaxError() {',
-                '  return React.createElement("div",',
-                '    { style: { padding: 16, color: "#ef4444", background: "#fef2f2",',
-                '        border: "1px solid #fecaca", borderRadius: 6, fontSize: 13, fontFamily: "monospace" } },',
-                '    React.createElement("strong", null, "Compile Error: "),',
-                `    "${msg}"`,
-                '  );',
-                '}',
-            ].join('\n'),
-        });
+        const msg = err instanceof Error ? err.message : String(err);
+        self.postMessage({ id, code: makeErrorComponent(msg) });
     }
 };

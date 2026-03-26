@@ -1,4 +1,4 @@
-﻿/**
+/**
  * --- FILE SYSTEM TEMPLATES --------------------------------------------------
  * WebContainer VFS mount objects for each supported framework.
  * Each template defines the complete initial file tree (package.json,
@@ -48,7 +48,7 @@ export default function HeroGeometric({
     >
       {/* Background geometric shapes */}
       <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute inset-0 bg-gradient-to-r from-blue-500/10 via-transparent to-purple-500/10" />
+        <div className="absolute inset-0 bg-linear-to-r from-blue-500/10 via-transparent to-purple-500/10" />
         <motion.div
           animate={{ rotate: 360 }}
           transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
@@ -85,7 +85,7 @@ export default function HeroGeometric({
           className="text-6xl md:text-8xl font-bold tracking-tight mb-6"
         >
           <span className="text-white block">{title1}</span>
-          <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-purple-400 to-pink-400 block">
+          <span className="text-transparent bg-clip-text bg-linear-to-r from-blue-400 via-purple-400 to-pink-400 block">
             {title2}
           </span>
         </motion.div>
@@ -105,7 +105,7 @@ export default function HeroGeometric({
           transition={{ duration: 0.6, delay: 0.3 }}
           className="flex flex-col sm:flex-row items-center justify-center gap-4"
         >
-          <button className="px-8 py-3 rounded-full bg-gradient-to-r from-blue-500 to-purple-500 text-white font-semibold hover:opacity-90 transition-opacity">
+          <button className="px-8 py-3 rounded-full bg-linear-to-r from-blue-500 to-purple-500 text-white font-semibold hover:opacity-90 transition-opacity">
             Get Started
           </button>
           <button className="px-8 py-3 rounded-full border border-white/10 text-zinc-300 hover:bg-white/5 transition-colors">
@@ -144,7 +144,7 @@ export default function FeatureHover({
       )}
       style={style}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 via-transparent to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <div className="absolute inset-0 bg-linear-to-br from-blue-500/20 via-transparent to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
       <div className="relative z-10 flex flex-col h-full">
         <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-zinc-300 group-hover:text-blue-400 group-hover:scale-110 transition-all duration-300">
           <Icon size={24} />
@@ -189,9 +189,9 @@ export default function GeometricShapes({ style, className }: any) {
       <motion.div
         animate={{ scale: [1, 1.1, 1] }}
         transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-gradient-to-br from-blue-500/10 to-purple-500/10 rounded-2xl rotate-45"
+        className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-32 h-32 bg-linear-to-br from-blue-500/10 to-purple-500/10 rounded-2xl rotate-45"
       />
-      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent" />
+      <div className="absolute inset-0 bg-linear-to-t from-slate-950 via-transparent to-transparent" />
     </div>
   );
 }
@@ -216,19 +216,19 @@ export default function HeroGeometric({
 }: any) {
   return (
     <div className={cn("relative min-h-screen w-full flex items-center justify-center overflow-hidden bg-[#030303]", className)} style={style}>
-        <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/[0.05] via-transparent to-rose-500/[0.05] blur-3xl" />
+        <div className="absolute inset-0 bg-linear-to-br from-indigo-500/5 via-transparent to-rose-500/5 blur-3xl" />
         <div className="absolute inset-0 overflow-hidden">
-            <div className="absolute -left-[10%] top-[-10%] h-[500px] w-[500px] rounded-full bg-gradient-to-br from-indigo-500/20 to-purple-500/20 blur-[100px]" />
-            <div className="absolute right-[10%] bottom-[10%] h-[400px] w-[400px] rounded-full bg-gradient-to-br from-indigo-500/10 to-purple-500/10 blur-[80px]" />
+            <div className="absolute -left-[10%] top-[-10%] h-[500px] w-[500px] rounded-full bg-linear-to-br from-indigo-500/20 to-purple-500/20 blur-[100px]" />
+            <div className="absolute right-[10%] bottom-[10%] h-[400px] w-[400px] rounded-full bg-linear-to-br from-indigo-500/10 to-purple-500/10 blur-[80px]" />
         </div>
         <div className="relative z-10 container mx-auto px-4 md:px-6 text-center">
-             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/[0.03] border border-white/[0.08] mb-8 md:mb-12">
+             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/3 border border-white/8 mb-8 md:mb-12">
                 <span className="text-sm text-white/60 tracking-wide">{badge}</span>
              </div>
             <h1 className="text-4xl sm:text-6xl md:text-8xl font-bold mb-6 tracking-tight">
-              <span className="bg-clip-text text-transparent bg-gradient-to-b from-white to-white/80">{title1}</span>
+              <span className="bg-clip-text text-transparent bg-linear-to-b from-white to-white/80">{title1}</span>
               <br />
-              <span className="bg-clip-text text-transparent bg-gradient-to-r from-indigo-300 via-white/90 to-rose-300">{title2}</span>
+              <span className="bg-clip-text text-transparent bg-linear-to-r from-indigo-300 via-white/90 to-rose-300">{title2}</span>
             </h1>
             {subtitle && (
               <p className="text-lg md:text-xl text-white/60 max-w-2xl mx-auto">
@@ -266,7 +266,7 @@ export default function FeatureHover({
       )}
       style={style}
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-blue-500/20 via-transparent to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+      <div className="absolute inset-0 bg-linear-to-br from-blue-500/20 via-transparent to-purple-500/20 opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
       <div className="relative z-10 flex flex-col h-full">
         <div className="w-12 h-12 rounded-xl bg-white/5 border border-white/10 flex items-center justify-center mb-6 text-zinc-300 group-hover:text-blue-400 group-hover:scale-110 transition-all duration-300">
           <Icon size={24} />
@@ -301,7 +301,7 @@ export default function GeometricShapes({ style, className }: any) {
         transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
         className="absolute bottom-1/4 right-1/4 w-48 h-48 border border-slate-600/20 rounded-full border-dashed"
       />
-      <div className="absolute inset-0 bg-gradient-to-t from-slate-950 via-transparent to-transparent" />
+      <div className="absolute inset-0 bg-linear-to-t from-slate-950 via-transparent to-transparent" />
     </div>
   );
 }

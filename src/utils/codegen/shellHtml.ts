@@ -27,11 +27,7 @@ export const SHELL_HTML = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/tailwind.js"></script>
   <script>tailwind.config={darkMode:'class',theme:{extend:{}}}</script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js" crossorigin="anonymous"></script>
-  <!-- NOTE: babel.min.js intentionally removed (Phase 6). Code is pre-compiled by Rust SWC. -->
+
   <style>
     *,*::before,*::after{box-sizing:border-box}
     html,body{margin:0;padding:0;min-height:100vh;background:#000;color:#fff;font-family:system-ui,sans-serif}
@@ -40,77 +36,66 @@ export const SHELL_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div id="root"></div>
-  <script>
+  <script type="module">
+    // Shared React via esm.sh — no ?bundle flag so all packages use the SAME
+    // React module instance. ?bundle would embed React into each package
+    // separately, causing framer-motion.useContext() to hit a different React
+    // than ReactDOM, returning null and crashing renders.
+    import React       from 'https://esm.sh/react@18';
+    import ReactDOM    from 'https://esm.sh/react-dom@18/client?deps=react@18';
+    import * as Motion from 'https://esm.sh/framer-motion@11?deps=react@18,react-dom@18';
+    import * as LucideReact from 'https://esm.sh/lucide-react@0.577.0?deps=react@18';
+
+    // Expose on window so the new Function() sandbox can reference them
+    window.React       = React;
+    window.ReactDOM    = ReactDOM;
+    window.Motion      = Motion;
+    window.LucideReact = LucideReact;
+
     var _root = null;
 
-    // ─── runCode ──────────────────────────────────────────────────────────────
-    // Receives PRE-COMPILED ES5/CJS JavaScript from the host (Rust SWC engine).
-    // No transpilation happens here — new Function() executes directly.
     function runCode(src) {
       if (!src || !src.trim()) return;
       try {
         var fakeExports = {};
         var fakeModule  = { exports: fakeExports };
 
-        // Framer Motion: normalise window.Motion (UMD bundle key)
-        var Motion = window.Motion || {};
-
-        // cn helper (Tailwind class merge, no dependencies)
         var _cn = function() {
           return Array.prototype.filter.call(arguments, Boolean).join(' ');
         };
 
-        // ── Lucide proxy ───────────────────────────────────────────────────── Handles three export shapes from the Lucide UMD bundle: a) React component function (most icons in lucide@latest)
-        var _Lucide = new Proxy(window.lucide || {}, {
+        // Lucide proxy — unknown names fall back to a placeholder info-icon
+        var _lucideSource = LucideReact || {};
+        var _iconPlaceholder = function(pr) {
+          var s=(pr&&pr.size)||24, c=(pr&&pr.color)||'currentColor';
+          return React.createElement('svg',{xmlns:'http://www.w3.org/2000/svg',width:s,height:s,
+            viewBox:'0 0 24 24',fill:'none',stroke:c,strokeWidth:2},
+            React.createElement('circle',{cx:12,cy:12,r:10}),
+            React.createElement('line',{x1:12,y1:8,x2:12,y2:12}),
+            React.createElement('line',{x1:12,y1:16,x2:12.01,y2:16})
+          );
+        };
+        var _Lucide = new Proxy(_lucideSource, {
           get: function(t, p) {
+            if (typeof p !== 'string') return t[p];
             var e = t[p];
-            // Already a React component or element type
             if (typeof e === 'function' || (e && e.$$typeof)) return e;
-            // Legacy array format: [tag, attrs, children[]]
-            if (Array.isArray(e)) {
-              return function LI(pr) {
-                var s  = (pr && pr.size)        || 24;
-                var c  = (pr && pr.color)       || 'currentColor';
-                var sw = (pr && pr.strokeWidth) || 2;
-                var toEl = function(n) {
-                  return Array.isArray(n)
-                    ? React.createElement(n[0], n[1], (n[2] || []).map(toEl))
-                    : null;
-                };
-                return React.createElement(
-                  'svg',
-                  {
-                    xmlns:'http://www.w3.org/2000/svg',
-                    width:s, height:s, viewBox:'0 0 24 24',
-                    fill:'none', stroke:c, strokeWidth:sw,
-                    strokeLinecap:'round', strokeLinejoin:'round',
-                  },
-                  ((e[2] || [])).map(toEl)
-                );
-              };
-            }
-            // Fallback: placeholder SVG so the preview never crashes
-            return function() { return React.createElement('svg', { width:24, height:24 }); };
+            return _iconPlaceholder;
           }
         });
 
-        // DynamicIcon: resolves icon name at runtime (used by <DynamicIcon name="X" />)
         var _DynamicIcon = function(pr) {
-          var Comp = _Lucide[pr.name] || _Lucide.HelpCircle || function() { return null; };
-          return React.createElement(
-            typeof Comp === 'function' ? Comp : function() { return null; },
-            pr
-          );
+          var Comp = _Lucide[pr.name] || _Lucide.HelpCircle || _iconPlaceholder;
+          return React.createElement(typeof Comp === 'function' ? Comp : function(){ return null; }, pr);
         };
 
-        // ── Preamble ───────────────────────────────────────────────────────── Declares shorthand aliases expected by SWC-compiled code. SWC's Classic runtime emits React.createElement, hence no need to
+        // Preamble: destructure React hooks & Motion into scope for SWC-compiled code
         var preamble = [
           'const {useState,useEffect,useRef,useCallback,useMemo,useLayoutEffect,useReducer,useContext,Fragment}=React;',
           'const {motion,AnimatePresence,useAnimation,useInView,useMotionValue,useTransform}=_Motion;',
           'const cn=_cn, Lucide=_Lucide, DynamicIcon=_DynamicIcon;',
         ].join('');
 
-        // ── Execute pre-compiled code ───────────────────────────────────────── The code string was produced by Rust SWC (TSX→JS, ESM→CJS shimmed). It uses 'exports.default = ' for its default export
         new Function(
           'React','ReactDOM','_Motion','_cn','_Lucide','_DynamicIcon',
           'exports','module','require',
@@ -121,10 +106,9 @@ export const SHELL_HTML = `<!DOCTYPE html>
           function() { throw new Error('require() is not available in preview sandbox'); }
         );
 
-        // ── Resolve default export ────────────────────────────────────────────
         var Comp =
-          fakeExports['default']         ||
-          fakeModule.exports['default']  ||
+          fakeExports['default']        ||
+          fakeModule.exports['default'] ||
           Object.values(fakeExports).find(function(v) { return typeof v === 'function'; });
 
         if (!Comp) {
@@ -136,9 +120,15 @@ export const SHELL_HTML = `<!DOCTYPE html>
           return;
         }
 
-        // ── Render ──────────────────────────────────────────────────────────── Persistent root — React diffs on re-render, preserving DOM state (scroll position, form values, Framer Motion animations)
+        // Persistent root — React diffs on re-render, preserving scroll/form/animation state
         if (!_root) _root = ReactDOM.createRoot(document.getElementById('root'));
         _root.render(React.createElement(Comp, null));
+
+        // Ask Tailwind runtime to rescan DOM for new classes after paint
+        setTimeout(function() {
+          var tw = window.tailwind;
+          if (tw && tw.scan) { try { tw.scan(); } catch(e) { /* non-fatal */ } }
+        }, 50);
 
       } catch(err) {
         document.getElementById('root').innerHTML =
@@ -149,13 +139,11 @@ export const SHELL_HTML = `<!DOCTYPE html>
       }
     }
 
-    // Hot-reload listener: host sends { type:'UPDATE_CODE', code } on every edit
     window.addEventListener('message', function(ev) {
       if (!ev.data || ev.data.type !== 'UPDATE_CODE') return;
       runCode(ev.data.code);
     });
 
-    // Signal host that the shell is alive and ready to receive code
     window.parent.postMessage({ type: 'SHELL_READY' }, '*');
   </script>
 </body>
@@ -181,10 +169,6 @@ export const MOBILE_SHELL_HTML = `<!DOCTYPE html>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/tailwind.js"></script>
   <script>tailwind.config={darkMode:'class',theme:{extend:{}}}</script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/framer-motion@10.16.4/dist/framer-motion.js" crossorigin="anonymous"></script>
-  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js" crossorigin="anonymous"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box}
     html,body{
@@ -200,32 +184,42 @@ export const MOBILE_SHELL_HTML = `<!DOCTYPE html>
 </head>
 <body>
   <div id="root"></div>
-  <script>
+  <script type="module">
+    import React       from 'https://esm.sh/react@18';
+    import ReactDOM    from 'https://esm.sh/react-dom@18/client?deps=react@18';
+    import * as Motion from 'https://esm.sh/framer-motion@11?deps=react@18,react-dom@18';
+    import * as LucideReact from 'https://esm.sh/lucide-react@0.577.0?deps=react@18';
+
+    window.React       = React;
+    window.ReactDOM    = ReactDOM;
+    window.Motion      = Motion;
+    window.LucideReact = LucideReact;
+
     var _root = null;
     function runCode(src) {
       if (!src || !src.trim()) return;
       try {
         var fakeExports = {};
         var fakeModule  = { exports: fakeExports };
-        var Motion = window.Motion || {};
         var _cn = function() { return Array.prototype.filter.call(arguments, Boolean).join(' '); };
-        var _Lucide = new Proxy(window.lucide || {}, {
+        var _lucideSource = LucideReact || {};
+        var _iP = function(pr) {
+          var s=(pr&&pr.size)||24, c=(pr&&pr.color)||'currentColor';
+          return React.createElement('svg',{xmlns:'http://www.w3.org/2000/svg',width:s,height:s,
+            viewBox:'0 0 24 24',fill:'none',stroke:c,strokeWidth:2},
+            React.createElement('circle',{cx:12,cy:12,r:10}));
+        };
+        var _Lucide = new Proxy(_lucideSource, {
           get: function(t, p) {
+            if (typeof p !== 'string') return t[p];
             var e = t[p];
             if (typeof e === 'function' || (e && e.$$typeof)) return e;
-            if (Array.isArray(e)) {
-              return function LI(pr) {
-                var s=(pr&&pr.size)||24, c=(pr&&pr.color)||'currentColor', sw=(pr&&pr.strokeWidth)||2;
-                var toEl=function(n){return Array.isArray(n)?React.createElement(n[0],n[1],(n[2]||[]).map(toEl)):null;};
-                return React.createElement('svg',{xmlns:'http://www.w3.org/2000/svg',width:s,height:s,viewBox:'0 0 24 24',fill:'none',stroke:c,strokeWidth:sw,strokeLinecap:'round',strokeLinejoin:'round'},((e[2]||[])).map(toEl));
-              };
-            }
-            return function(){return React.createElement('svg',{width:24,height:24});};
+            return _iP;
           }
         });
         var _DynamicIcon = function(pr) {
-          var Comp = _Lucide[pr.name] || _Lucide.HelpCircle || function(){return null;};
-          return React.createElement(typeof Comp==='function'?Comp:function(){return null;}, pr);
+          var Comp = _Lucide[pr.name] || _Lucide.HelpCircle || function(){ return null; };
+          return React.createElement(typeof Comp === 'function' ? Comp : function(){ return null; }, pr);
         };
         var preamble = [
           'const {useState,useEffect,useRef,useCallback,useMemo,useLayoutEffect,useReducer,useContext,Fragment}=React;',
@@ -234,13 +228,17 @@ export const MOBILE_SHELL_HTML = `<!DOCTYPE html>
         ].join('');
         new Function('React','ReactDOM','_Motion','_cn','_Lucide','_DynamicIcon','exports','module','require', preamble+src)(
           React, ReactDOM, Motion, _cn, _Lucide, _DynamicIcon, fakeExports, fakeModule,
-          function(){throw new Error('require() not available in mobile shell');}
+          function(){ throw new Error('require() not available in mobile shell'); }
         );
         var Comp = fakeExports['default'] || fakeModule.exports['default'] ||
-          Object.values(fakeExports).find(function(v){return typeof v==='function';});
+          Object.values(fakeExports).find(function(v){ return typeof v === 'function'; });
         if (!Comp) return;
         if (!_root) _root = ReactDOM.createRoot(document.getElementById('root'));
         _root.render(React.createElement(Comp, null));
+        setTimeout(function() {
+          var tw = window.tailwind;
+          if (tw && tw.scan) { try { tw.scan(); } catch(e) { /* non-fatal */ } }
+        }, 50);
       } catch(err) {
         document.getElementById('root').innerHTML =
           '<div style="color:#f87171;padding:1rem;font-family:monospace;font-size:11px">' +

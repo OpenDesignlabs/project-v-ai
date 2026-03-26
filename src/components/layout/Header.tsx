@@ -8,7 +8,7 @@ import {
     Check, X, Copy, Trash2,
     Home, Wand2, Loader2, Download,
     Cpu, Maximize, ExternalLink, ChevronDown, Plus, FileText,
-    Upload, Send, FileArchive, Figma,
+    Upload, Send, FileArchive, Figma, RotateCcw,
 } from 'lucide-react';
 // PublishModal: 982-line modal, only needed when user clicks Publish
 const PublishModal = lazy(() => import('../modals/PublishModal').then(m => ({ default: m.PublishModal })));
@@ -133,6 +133,27 @@ export const Header = () => {
     const [isConvertingGrid, setIsConvertingGrid] = useState(false);
     const [useFrUnits, setUseFrUnits] = useState(false);
 
+    // ── DEV: full browser-state reset ─────────────────────────────────────────
+    const [resetConfirm, setResetConfirm] = useState(false);
+    const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const handleDevReset = async () => {
+        if (!resetConfirm) {
+            setResetConfirm(true);
+            resetTimerRef.current = setTimeout(() => setResetConfirm(false), 3000);
+            return;
+        }
+        // Wipe localStorage
+        localStorage.clear();
+        // Wipe all IndexedDB databases
+        const dbs = await indexedDB.databases?.() ?? [];
+        await Promise.allSettled(dbs.map(db => db.name && indexedDB.deleteDatabase(db.name)));
+        // Wipe service-worker cache (if any)
+        if ('caches' in window) {
+            const keys = await caches.keys();
+            await Promise.allSettled(keys.map(k => caches.delete(k)));
+        }
+        window.location.reload();
+    };
 
 
     const togglePreview = () => {
@@ -341,7 +362,7 @@ export const Header = () => {
                         </button>
 
                         {pageDropOpen && (
-                            <div className="absolute top-full left-0 mt-1 z-[200] bg-[#252526] border border-[#3f3f46] rounded-xl shadow-2xl py-1 min-w-[190px]">
+                            <div className="absolute top-full left-0 mt-1 z-200 bg-[#252526] border border-[#3f3f46] rounded-xl shadow-2xl py-1 min-w-[190px]">
                                 <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-widest border-b border-[#2a2a2c] mb-1">Pages</div>
                                 {pages.filter(p => !p.hidden).map(page => (
                                     <button
@@ -397,7 +418,7 @@ export const Header = () => {
                     {/* AI Magic Bar Toggle */}
                     <button
                         onClick={() => setMagicBarOpen(true)}
-                        className="flex items-center gap-2 px-3 py-1.5 bg-gradient-to-r from-[#7c3aed] to-[#2563eb] text-white rounded text-[10px] font-black hover:shadow-lg transition-all border border-white/10 group active:scale-95"
+                        className="flex items-center gap-2 px-3 py-1.5 bg-linear-to-r from-[#7c3aed] to-[#2563eb] text-white rounded text-[10px] font-black hover:shadow-lg transition-all border border-white/10 group active:scale-95"
                     >
                         <Wand2 size={12} className="group-hover:rotate-12 transition-transform" />
                         <span className="hidden lg:inline uppercase tracking-tight">Ask AI</span>
@@ -464,7 +485,7 @@ export const Header = () => {
                         </button>
 
                         {showImportMenu && (
-                            <div className="absolute right-0 top-full mt-1.5 w-52 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg shadow-2xl z-[300] overflow-hidden py-1">
+                            <div className="absolute right-0 top-full mt-1.5 w-52 bg-[#1e1e1e] border border-[#3e3e42] rounded-lg shadow-2xl z-300 overflow-hidden py-1">
                                 <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider">Import from</div>
 
                                 <button
@@ -517,6 +538,23 @@ export const Header = () => {
 
                     <div className="h-4 w-px bg-[#3e3e42] mx-2" />
 
+                    {/* ── DEV ONLY: Reset all browser state ─────────────────
+                        Remove this button before shipping to production.    */}
+                    <button
+                        id="dev-reset-all-btn"
+                        onClick={handleDevReset}
+                        title="DEV: Clear localStorage + IndexedDB + Cache then reload"
+                        className={cn(
+                            'flex items-center gap-1 px-2 py-1 rounded text-[10px] font-bold transition-all border',
+                            resetConfirm
+                                ? 'bg-orange-600 border-orange-500 text-white animate-pulse'
+                                : 'bg-[#252526] border-orange-500/30 text-orange-500/70 hover:bg-orange-600/15 hover:border-orange-500 hover:text-orange-400'
+                        )}
+                    >
+                        <RotateCcw size={10} />
+                        {resetConfirm ? '⚠ Sure?' : 'Reset All'}
+                    </button>
+
                     {/* WebContainer Status Indicator */}
                     <div className="flex items-center gap-2 mr-2">
                         <span className={`w-2 h-2 rounded-full ${status === 'ready' ? 'bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.5)]' : 'bg-yellow-500 animate-pulse'}`} />
@@ -564,7 +602,7 @@ export const Header = () => {
 
             {/* ── Item 3: Multi-page Grid Code Modal ─────────────────────────────── */}
             {showGridCode && (
-                <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-8 backdrop-blur-sm">
+                <div className="fixed inset-0 bg-black/80 z-100 flex items-center justify-center p-8 backdrop-blur-sm">
                     <div className="bg-[#1e1e1e] w-full max-w-5xl h-[85vh] rounded-xl shadow-2xl flex flex-col overflow-hidden border border-[#333]">
 
                         {/* Modal header */}
@@ -686,9 +724,26 @@ export const Header = () => {
                                 }
 
                                 return (
-                                    <pre className="p-6 text-[#d4d4d4] text-xs font-mono leading-relaxed whitespace-pre overflow-x-auto h-full">
-                                        <code>{activeResult.code}</code>
-                                    </pre>
+                                    <div className="flex flex-col h-full">
+                                        {/* ENGINE v0.2: fr unit info strip — shown when the layout has frColumns data */}
+                                        {activeResult.layout?.frColumns && (
+                                            <div className="px-6 py-2 border-b border-[#252526] bg-[#1a1a1a] flex items-center gap-4 shrink-0">
+                                                <span className="text-[9px] text-[#555] font-mono uppercase tracking-wider">fr units</span>
+                                                <div className="flex flex-col gap-0.5">
+                                                    <span className="text-[9px] font-mono text-purple-400/80">
+                                                        cols: {activeResult.layout.frColumns}
+                                                    </span>
+                                                    <span className="text-[9px] font-mono text-purple-400/60">
+                                                        rows: {activeResult.layout.frRows}
+                                                    </span>
+                                                </div>
+                                                <span className="text-[9px] text-[#444] ml-auto">fluid — scales with container width</span>
+                                            </div>
+                                        )}
+                                        <pre className="flex-1 p-6 text-[#d4d4d4] text-xs font-mono leading-relaxed whitespace-pre overflow-x-auto">
+                                            <code>{activeResult.code}</code>
+                                        </pre>
+                                    </div>
                                 );
                             })()}
                         </div>
@@ -701,7 +756,7 @@ export const Header = () => {
                                     : 'Replace app/page.tsx with this file, or use as a starting point.'}
                             </span>
                             <span className="ml-auto text-[9px] text-[#444] font-mono">
-                                Phase F2 — Rust WASM Grid Engine
+                                v0.2 — Rust WASM Grid Engine
                             </span>
                         </div>
                     </div>

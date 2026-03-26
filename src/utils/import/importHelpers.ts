@@ -1,4 +1,7 @@
 import { FileCode } from 'lucide-react';
+
+// ENGINE v0.4: all functions delegated to Rust (§14). JS implementations kept as fallbacks.
+const _wasm = (): any => typeof window !== 'undefined' ? (window as any).vectraWasm ?? null : null;
 import type { ComponentConfig, ComponentCategory, ComponentImportMeta } from '../../types';
 
 // ─── NAME DETECTION ───────────────────────────────────────────────────────────
@@ -35,8 +38,14 @@ const detectDefaultExport = (code: string): boolean =>
 // Converts raw React source into a ComponentConfig ready for registerComponent().
 // Sets code (for LiveComponent compile path) and importMeta (for CIS-1 identity stamping at drop time).
 export const processImportedCode = (code: string, filename?: string): ComponentConfig => {
-    const detectedName = detectComponentName(code, filename);
-    const isDefault = detectDefaultExport(code);
+    // ENGINE v0.4: detect_component_name + detect_default_export via Rust (§14)
+    const w = _wasm();
+    const detectedName = (w?.detect_component_name)
+        ? (w.detect_component_name(code, filename ?? '') as string)
+        : detectComponentName(code, filename);
+    const isDefault = (w?.detect_default_export)
+        ? (w.detect_default_export(code) as boolean)
+        : detectDefaultExport(code);
 
     // import identity — drives all export paths
     const importMeta: ComponentImportMeta = {
@@ -78,6 +87,11 @@ export const readFileContent = (file: File): Promise<string> =>
 
 /** Returns true if the code looks like a valid React component (has JSX or a React import + export). */
 export const isValidReactComponent = (code: string): boolean => {
+    // ENGINE v0.4: Rust is_valid_react_component (§14)
+    const w = _wasm();
+    if (w?.is_valid_react_component) {
+        try { return w.is_valid_react_component(code) as boolean; } catch { /* fall through */ }
+    }
     const hasReactImport = /import\s+.*from\s+['"]react['"]/.test(code);
     const hasJSX = /<[A-Za-z]/.test(code);
     const hasExport = /export\s+/.test(code);
@@ -86,6 +100,11 @@ export const isValidReactComponent = (code: string): boolean => {
 
 // Generates a collision-proof registry ID using crypto.randomUUID() rather than Date.now().
 export const generateComponentId = (name: string): string => {
+    // ENGINE v0.4: Rust generate_component_id (§14)
+    const w = _wasm();
+    if (w?.generate_component_id) {
+        try { return w.generate_component_id(name) as string; } catch { /* fall through */ }
+    }
     const baseId = name
         .toLowerCase()
         .replace(/[^a-z0-9]/g, '-')
@@ -108,6 +127,14 @@ export const getDetectionPreview = (
     filename?: string
 ): DetectionPreview | null => {
     if (!code.trim()) return null;
+    // ENGINE v0.4: Rust get_detection_preview (§14)
+    const w = _wasm();
+    if (w?.get_detection_preview) {
+        try {
+            const raw = w.get_detection_preview(code, filename ?? '') as string;
+            if (raw) return JSON.parse(raw) as DetectionPreview;
+        } catch { /* fall through */ }
+    }
     const name = detectComponentName(code, filename);
     const isDefault = detectDefaultExport(code);
     const importPath = `./components/${name}`;

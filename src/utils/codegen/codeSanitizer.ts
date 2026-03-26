@@ -6,7 +6,21 @@
  * SANDBOX_BLOCKED_PATTERNS is re-exported for use in the compiler worker.
  */
 
-export const sanitizeCode = (code: string): string =>
+// ENGINE v0.4: Rust sanitize_code (§13) handles all 6 stages.
+// JS implementation kept as fallback — called if WASM not yet loaded.
+const _getWasm = (): any => (window as any).vectraWasm ?? null;
+
+/** Rust-accelerated code sanitizer. Falls back to JS. */
+export const sanitizeCode = (code: string): string => {
+    const wasm = _getWasm();
+    if (wasm?.sanitize_code) {
+        try { return wasm.sanitize_code(code) as string; } catch { /* fall through */ }
+    }
+    return sanitizeCode_JS(code);
+};
+
+/** Original JS implementation — fallback only. */
+const sanitizeCode_JS = (code: string): string =>
     code
         // ── 1. Strip ES imports (3 safe line-anchored patterns) ────────────────
         // Named / typed:   import { Foo, type Bar } from '...'
@@ -41,6 +55,18 @@ export const sanitizeCode = (code: string): string =>
  * Security patterns that are blocked in the sandbox.
  * Run on the RAW (pre-sanitize) code so every call-site has the same list.
  */
+// ENGINE v0.4: Rust check_sandbox_violations (§13) — faster than JS RegExp find.
+/** Returns the first violation name or '' if code is clean. */
+export const checkSandboxViolations = (code: string): string => {
+    const wasm = _getWasm();
+    if (wasm?.check_sandbox_violations) {
+        try { return wasm.check_sandbox_violations(code) as string; } catch { /* fall through */ }
+    }
+    // JS fallback: test each pattern, return the source string of the first match
+    const hit = SANDBOX_BLOCKED_PATTERNS.find(p => p.test(code));
+    return hit ? hit.source : '';
+};
+
 export const SANDBOX_BLOCKED_PATTERNS: RegExp[] = [
     /\beval\s*\(/,
     /\bnew\s+Function\s*\(/,

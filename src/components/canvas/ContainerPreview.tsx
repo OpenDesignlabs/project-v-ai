@@ -75,7 +75,7 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 // ─── MAIN COMPONENT ───────────────────────────────────────────────────────────
 
 export const ContainerPreview = () => {
-  const { elements: liveElements, compileComponent } = useProject();
+  const { elements: liveElements, compileComponent, pages, activePageId } = useProject();
   // Gate SWC recompiles to settled state only. 60fps drag style updates are debounced away. buildAndInject only fires when the user stops editing for 400ms
   const elements = useDebouncedValue(liveElements, 400);
   const { previewMode, setPreviewMode, device, setDevice } = useUI();
@@ -101,11 +101,38 @@ export const ContainerPreview = () => {
   // ── Hot-reload: Compile (Rust SWC) → Send to shell ───────────────────────
   // Compilation happens HERE (host side, ~5ms via Rust) instead of
   // THERE (iframe Babel, 100–300ms). The shell just executes the received JS.
-  const buildAndInject = useCallback(async () => {
-    const customEls = Object.values(elements).filter(
-      el => (el.type === 'custom_code' || el.type === 'custom_component')
-        && typeof el.code === 'string' && (el.code as string).trim().length > 0
+  // FIX-ORDER-1: Walk active page tree in DFS order → correct top-to-bottom section sequence.
+  // Object.values(elements) gives JS insertion order which diverges from visual page order.
+  const getOrderedCustomEls = useCallback(() => {
+    const activePage = pages.find((p: any) => p.id === activePageId) ?? pages[0];
+    if (!activePage) return Object.values(elements).filter(
+      (el: any) => (el.type === 'custom_code' || el.type === 'custom_component')
+            && typeof el.code === 'string' && (el.code as string).trim().length > 0
     );
+    const result: any[] = [];
+    const visited = new Set<string>();
+    const walk = (nodeId: string) => {
+      if (visited.has(nodeId)) return;
+      visited.add(nodeId);
+      const node = (elements as any)[nodeId];
+      if (!node) return;
+      if ((node.type === 'custom_code' || node.type === 'custom_component')
+          && typeof node.code === 'string' && node.code.trim().length > 0) {
+        result.push(node);
+      }
+      if (node.children?.length) {
+        for (const childId of node.children) walk(childId);
+      }
+    };
+    walk(activePage.rootId ?? activePage.id);
+    return result.length > 0 ? result : Object.values(elements).filter(
+      (el: any) => (el.type === 'custom_code' || el.type === 'custom_component')
+            && typeof el.code === 'string' && (el.code as string).trim().length > 0
+    );
+  }, [elements, pages, activePageId]);
+
+  const buildAndInject = useCallback(async () => {
+    const customEls = getOrderedCustomEls();
 
     if (customEls.length === 0) {
       if (iframeRef.current?.contentWindow && iframeReady) {
@@ -187,7 +214,7 @@ exports['default'] = function VectraPage(props) {
     } finally {
       setTimeout(() => setIsCompiling(false), 300);
     }
-  }, [elements, iframeReady, compileComponent]);
+  }, [elements, iframeReady, compileComponent, getOrderedCustomEls]);
 
   useEffect(() => {
     if (iframeReady) buildAndInject();

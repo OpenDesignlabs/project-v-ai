@@ -1,5 +1,11 @@
-import React, { useRef, useState, useEffect, useMemo, Suspense, Component, useCallback } from 'react';
-import type { ErrorInfo } from 'react';
+import React, { useState, useRef, useEffect,
+    Suspense, Component, type ErrorInfo, useMemo, useCallback } from 'react';
+// Tailwind v4 browser runtime — served locally by Vite.
+// Needed because @tailwindcss/postcss/@tailwindcss/vite are BUILD-TIME tools
+// that scan static source files. AI-generated classes are created at RUNTIME,
+// so they're invisible to the build tools. This runtime watches live DOM mutations
+// and generates CSS on-the-fly — same behaviour as the CDN but without any CDN.
+import _twBrowserUrl from '@tailwindcss/browser?url';
 import { useProject } from '../../context/ProjectContext';
 import { useUI } from '../../context/UIContext';
 import { useHover } from '../../context/HoverContext';
@@ -145,8 +151,7 @@ import * as LucideAll from 'lucide-react';(() => {
 })();
 
 // ─── COMPILER WORKER (Singleton) ─────────────────────────────────────────────
-// Created ONCE at module level so Babel isn’t re-loaded on every component mount.
-// Classic worker mode: the worker uses importScripts('/babel.min.js') internally.
+// Created ONCE at module level so the WASM SwcCompiler isn't re-initialised on every mount.
 
 // ── WIDTH-AWARE DEVICE MIRROR CSS ──────────────────────────────────────────── //   Each spawned device frame gets a unique scope selector: [data-vectra-device-frame="frameId"]
 function buildDeviceCSS(frameId: string, frameWidth: number): string {
@@ -203,11 +208,40 @@ function buildDeviceCSS(frameId: string, frameWidth: number): string {
 
 const compilerWorker = new Worker(
     new URL('../../workers/compiler.worker.ts', import.meta.url),
-    { type: 'classic' }
+    { type: 'module' }  // module required: worker uses ES import to load WASM
 );
 
 // Module-level compile ID counter shared across all LiveComponent instances to prevent stale results.
 let _globalCompileId = 0;
+
+// FIX-TW-1: Canvas Tailwind color fix.
+// @tailwindcss/vite & @tailwindcss/postcss are BUILD-TIME only — they bundle
+// only classes found in static source files. AI-generated classes (bg-zinc-900,
+// text-emerald-400, etc.) are born at RUNTIME and never in the source files.
+// Solution: inject @tailwindcss/browser (the v4 browser runtime, same thing
+// as the old CDN script) served LOCALLY via Vite's ?url import above.
+let _twCDNInjected = false;
+const _ensureTailwindCDN = () => {
+    if (_twCDNInjected || typeof document === 'undefined') return;
+    // Already initialised by a previous mount — skip.
+    if ((window as any).tailwind?.config) { _twCDNInjected = true; return; }
+    // Inject @tailwindcss/browser (local Vite asset — no CDN request).
+    const script = document.createElement('script');
+    script.src = _twBrowserUrl; // resolved by Vite: local URL in dev, hashed in prod
+    script.setAttribute('data-vectra-tw', 'true');
+    script.onload = () => {
+        const tw = (window as any).tailwind;
+        if (tw) {
+            tw.config = {
+                darkMode: 'class',
+                theme: { extend: {} },
+            };
+        }
+        _twCDNInjected = true;
+    };
+    document.head.appendChild(script);
+    _twCDNInjected = true; // prevent double-inject
+};
 
 // Error boundary that catches both compile-time and React runtime errors. autoTrigger enables autonomous self-healing.
 class ComponentErrorBoundary extends Component<
@@ -333,8 +367,16 @@ const LiveComponent = ({
     useEffect(() => {
         if (!code) return;
 
+        // FIX-TW-1: Ensure Tailwind CDN is active for canvas color rendering
+        _ensureTailwindCDN();
+
         // ── Fast security scan on the main thread (no async needed) ──────────
-        const violation = SANDBOX_BLOCKED_PATTERNS.find(p => p.test(code));
+        // ENGINE v0.4: Rust check_sandbox_violations (§13) — string scan, no RegExp overhead
+        const _wasmSand = (window as any).vectraWasm;
+        const _violationStr = _wasmSand?.check_sandbox_violations
+            ? (_wasmSand.check_sandbox_violations(code) as string)
+            : (SANDBOX_BLOCKED_PATTERNS.find(p => p.test(code))?.source ?? '');
+        const violation = _violationStr ? { source: _violationStr } : undefined;
         if (violation) {
             setError(`Security violation: ${violation.source.slice(0, 60)}`);
             return;
@@ -389,6 +431,12 @@ const LiveComponent = ({
                 setComponent(() => Comp);
                 setError(null);
                 autoFixRetries.current = 0; // ✨ Reset on clean success
+                // FIX-TW-1: Ask Tailwind CDN to rescan DOM for new classes after paint
+                // This catches classes that weren't present when the CDN first ran
+                setTimeout(() => {
+                    const tw = (window as any).tailwind;
+                    if (tw?.scan) { try { tw.scan(); } catch { /* non-fatal */ } }
+                }, 50);
 
                 // ── Write cleanCode back into the element tree ──────────────── The worker already sanitised the code (stripped imports, fixed quotes, fixed icon syntax). Persisting this means subsequent
                 if (e.data.cleanCode && e.data.cleanCode !== code) {
@@ -464,70 +512,86 @@ const LiveComponent = ({
 // Portal-rendered fixed context menu for right-click on canvas elements.
 // MUST use fixed positioning — artboard is overflow:hidden.
 interface CanvasContextMenuProps {
-    x: number; y: number; elementId: string;
+    x: number; y: number; elementId: string; elementName: string;
     isLocked: boolean; isHidden: boolean; isArtboard: boolean;
     onClose: () => void; onDuplicate: () => void; onDelete: () => void;
     onLock: () => void; onHide: () => void;
     onWrapInContainer: () => void; onSelectParent: () => void; onCopy: () => void;
+    onBringToFront: () => void; onSendToBack: () => void;
+    onBringForward: () => void; onSendBackward: () => void;
 }
-const CtxBtn: React.FC<{ label: string; onClick: () => void; danger?: boolean; icon: string }> = ({ label, onClick, danger, icon }) => (
+const CtxBtn: React.FC<{ label: string; onClick: () => void; danger?: boolean; icon: string; shortcut?: string }> = ({ label, onClick, danger, icon, shortcut }) => (
     <button
         onPointerDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
         onClick={(e) => { e.stopPropagation(); onClick(); }}
-        className={`flex items-center gap-2.5 px-3 py-2 text-[11px] w-full text-left transition-colors ${
+        className={`flex items-center gap-2.5 px-3 py-[7px] text-[11px] w-full text-left transition-colors ${
             danger ? 'text-red-400 hover:bg-red-500/15 hover:text-red-300'
                    : 'text-[#ccc] hover:bg-[#007acc] hover:text-white'
         }`}
     >
         <span className="w-3.5 text-center opacity-60 text-[10px] shrink-0">{icon}</span>
-        {label}
+        <span className="flex-1">{label}</span>
+        {shortcut && <kbd className="text-[9px] font-mono text-[#555] bg-[#1e1e1e] border border-[#333] px-1 py-0.5 rounded ml-2 shrink-0">{shortcut}</kbd>}
     </button>
 );
+const CtxSep = () => <div className="h-px bg-[#333] my-1 mx-2" />;
+const CtxLabel = ({ children }: { children: React.ReactNode }) => (
+    <div className="px-3 py-1 text-[9px] font-bold text-[#444] uppercase tracking-widest">{children}</div>
+);
 const CanvasContextMenu: React.FC<CanvasContextMenuProps> = ({
-    x, y, elementId, isLocked, isHidden, isArtboard,
+    x, y, elementId, elementName, isLocked, isHidden, isArtboard,
     onClose, onDuplicate, onDelete, onLock, onHide, onWrapInContainer, onSelectParent, onCopy,
+    onBringToFront, onSendToBack, onBringForward, onSendBackward,
 }) => {
     useEffect(() => {
-        // BUG-CTX-1 FIX: capture-phase pointerdown fires BEFORE stopPropagation in RenderNode.
-        // Old bubble 'mousedown' never reached window because every RenderNode calls stopPropagation.
         const close = (e: PointerEvent) => {
             const menu = document.getElementById('vectra-ctx-menu');
-            if (menu && menu.contains(e.target as Node)) return; // click inside menu = keep open
+            if (menu && menu.contains(e.target as Node)) return;
             onClose();
         };
-        const timer = setTimeout(() => {
-            window.addEventListener('pointerdown', close, { capture: true });
-        }, 80);
-        return () => {
-            clearTimeout(timer);
-            window.removeEventListener('pointerdown', close, { capture: true });
-        };
+        const timer = setTimeout(() => window.addEventListener('pointerdown', close, { capture: true }), 80);
+        return () => { clearTimeout(timer); window.removeEventListener('pointerdown', close, { capture: true }); };
     }, [onClose]);
 
-    // BUG-CTX-2 FIX: minWidth 210 so 'Wrap in Container' (17 chars) doesn't clip at 172px.
-    const MIN_W = 210;
-    const EST_H = 292;
+    const MIN_W = 230;
+    const EST_H = 420;
     const clampedX = Math.min(x, window.innerWidth  - MIN_W - 8);
     const clampedY = Math.min(y, window.innerHeight - EST_H - 8);
     return (
         <div
             id="vectra-ctx-menu"
-            className="fixed z-[9999] bg-[#252526] border border-[#3f3f46] shadow-2xl rounded-lg py-1 flex flex-col"
+            className="fixed z-9999 bg-[#252526] border border-[#3f3f46] shadow-2xl rounded-xl py-1.5 flex flex-col"
             style={{ left: clampedX, top: clampedY, minWidth: MIN_W }}
             onContextMenu={(e) => e.preventDefault()}
         >
-            <div className="px-3 py-1.5 text-[9px] font-bold text-[#555] uppercase tracking-wider border-b border-[#3f3f46] mb-1 font-mono truncate">
-                {elementId.slice(0, 24)}
+            {/* Header — element name */}
+            <div className="px-3 pb-1.5 flex items-center gap-2 border-b border-[#333] mb-1">
+                <span className="text-[10px] font-semibold text-[#ccc] truncate max-w-[160px]">{elementName}</span>
+                <span className="text-[9px] text-[#444] font-mono shrink-0 ml-auto">{elementId.slice(0, 8)}</span>
             </div>
-            <CtxBtn icon="⍘"  label="Duplicate"          onClick={onDuplicate} />
-            <CtxBtn icon="C"  label="Copy"                onClick={onCopy} />
-            {!isArtboard && <CtxBtn icon="⊞" label="Wrap in Container" onClick={onWrapInContainer} />}
-            <CtxBtn icon="↑"  label="Select Parent"       onClick={onSelectParent} />
-            <div className="h-px bg-[#3f3f46] my-1" />
+            <CtxBtn icon="⍘" label="Duplicate"        onClick={onDuplicate}      shortcut="⌘D" />
+            <CtxBtn icon="⎘" label="Copy"              onClick={onCopy}           shortcut="⌘C" />
+            {!isArtboard && <CtxBtn icon="⊞" label="Wrap in Container" onClick={onWrapInContainer} shortcut="⌘G" />}
+            <CtxBtn icon="↖" label="Select Parent"     onClick={onSelectParent} />
+            {!isArtboard && (
+                <>
+                    <CtxSep />
+                    <CtxLabel>Layer Order</CtxLabel>
+                    <CtxBtn icon="⇑" label="Bring to Front"  onClick={onBringToFront}  shortcut="⌘⇧]" />
+                    <CtxBtn icon="↑" label="Bring Forward"    onClick={onBringForward}  shortcut="⌘]"  />
+                    <CtxBtn icon="↓" label="Send Backward"    onClick={onSendBackward}  shortcut="⌘["  />
+                    <CtxBtn icon="⇓" label="Send to Back"     onClick={onSendToBack}    shortcut="⌘⇧[" />
+                </>
+            )}
+            <CtxSep />
             <CtxBtn icon={isLocked ? "🔓" : "🔒"} label={isLocked ? 'Unlock' : 'Lock'} onClick={onLock} />
             <CtxBtn icon={isHidden ? "👁" : "◌"}  label={isHidden ? 'Show'  : 'Hide'}  onClick={onHide} />
-            <div className="h-px bg-[#3f3f46] my-1" />
-            {!isArtboard && <CtxBtn icon="✕" label="Delete" onClick={onDelete} danger />}
+            {!isArtboard && (
+                <>
+                    <CtxSep />
+                    <CtxBtn icon="✕" label="Delete" onClick={onDelete} danger shortcut="Del" />
+                </>
+            )}
         </div>
     );
 };
@@ -561,7 +625,7 @@ const FloatingFormatBar: React.FC<{ anchorId: string; onClose: () => void }> = (
     return (
         <div
             ref={barRef}
-            className="fixed z-[9999] flex items-center gap-0.5 px-2 py-1 bg-[#1e1e1e] border border-[#3f3f46] rounded-lg shadow-2xl"
+            className="fixed z-9999 flex items-center gap-0.5 px-2 py-1 bg-[#1e1e1e] border border-[#3f3f46] rounded-lg shadow-2xl"
             style={{ top: pos.top, left: pos.left }}
             onMouseDown={(e) => e.preventDefault()}
         >
@@ -692,7 +756,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
     // useUI:      re-renders when UI state changes (selection, hover, tool, zoom)
     // Keeping them separate means hovering an element doesn't re-render every
     // RenderNode that only uses project data, and vice-versa.
-    const { elements, setElements, elementsRef, updateProject, pushHistory, instantiateTemplate, syncLayoutEngine, parentMap, duplicateElement, deleteElement } = useProject();
+    const { elements, setElements, elementsRef, updateProject, pushHistory, instantiateTemplate, syncLayoutEngine, parentMap, duplicateElement, deleteElement, reorderElement } = useProject();
     const {
         selectedId, setSelectedId,
         previewMode, dragData, setDragData,
@@ -798,6 +862,19 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
         if (pid) setSelectedId(pid);
         closeCtxMenu();
     }, [elementId, parentMap, setSelectedId, closeCtxMenu]);
+
+    // Layer ordering — reorders node within its parent's children[]. C-1/H-3 safe.
+    const handleLayerOrder = useCallback((dir: 'front' | 'back' | 'forward' | 'backward') => {
+        const pid = parentMap.get(elementId);
+        if (!pid) { closeCtxMenu(); return; }
+        const siblings = elementsRef.current[pid]?.children ?? [];
+        const idx = siblings.indexOf(elementId);
+        if (idx === -1) { closeCtxMenu(); return; }
+        const last = siblings.length - 1;
+        const target = dir === 'front' ? last : dir === 'back' ? 0 : dir === 'forward' ? Math.min(idx + 1, last) : Math.max(idx - 1, 0);
+        if (target !== idx) reorderElement(elementId, pid, target);
+        closeCtxMenu();
+    }, [elementId, parentMap, elementsRef, reorderElement, closeCtxMenu]);
 
     if (!element) return null;
     if (previewMode && element.type === 'canvas') return null;
@@ -1376,7 +1453,7 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     const tier = frameW < 640 ? 'Mobile' : frameW < 1024 ? 'Tablet' : 'Desktop';
                     const tierColor = frameW < 640 ? '#34d399' : frameW < 1024 ? '#a78bfa' : '#60a5fa';
                     return (
-                        <div className="absolute top-0 left-0 z-[60] flex items-center" style={{ pointerEvents: 'none' }}>
+                        <div className="absolute top-0 left-0 z-60 flex items-center" style={{ pointerEvents: 'none' }}>
                             <div style={{
                                 display: 'flex', alignItems: 'center', gap: '6px',
                                 background: 'rgba(0,0,0,0.72)',
@@ -1781,6 +1858,11 @@ export const RenderNode: React.FC<RenderNodeProps> = ({ elementId, isMobileMirro
                     }}
                     onWrapInContainer={handleWrapInContainer}
                     onSelectParent={handleSelectParent}
+                    elementName={element.name || element.type}
+                    onBringToFront={() => handleLayerOrder('front')}
+                    onSendToBack={() => handleLayerOrder('back')}
+                    onBringForward={() => handleLayerOrder('forward')}
+                    onSendBackward={() => handleLayerOrder('backward')}
                 />
             )}
         </motion.div>

@@ -178,3 +178,52 @@ export const parseGradient = (classes: string): { direction: string; from: strin
 
     return result;
 };
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ENGINE v0.2 — Rust TailwindOptimizer (Feature 5)
+// These three functions delegate to the WASM engine when it is loaded.
+// They fall back to the original string so they are always safe to call,
+// even before Wasm has initialised (e.g. during SSR or cold-boot).
+// ══════════════════════════════════════════════════════════════════════════════
+
+const _getWasm = (): any =>
+    typeof window !== 'undefined' ? (window as any).vectraWasm ?? null : null;
+
+/**
+ * Remove duplicate and conflicting Tailwind classes using the Rust engine.
+ *
+ * When two classes target the same CSS property (e.g. `p-2 p-4`) the LAST
+ * one wins — matching the CSS cascade. 43 conflict groups checked in O(N).
+ *
+ * @example deduplicateClasses('p-2 p-4 text-sm text-lg') → 'p-4 text-lg'
+ */
+export function deduplicateClasses(classes: string): string {
+    if (!classes.trim()) return classes;
+    const wasm = _getWasm();
+    if (!wasm?.deduplicate_classes) return classes;
+    try { return wasm.deduplicate_classes(classes) as string; }
+    catch { return classes; }
+}
+
+/**
+ * Sort Tailwind classes into canonical order using the Rust engine.
+ * layout → position → size → spacing → typography → colour → effects → variants.
+ *
+ * @example sortClasses('bg-blue-500 flex p-4 text-white rounded') → 'flex p-4 text-white bg-blue-500 rounded'
+ */
+export function sortClasses(classes: string): string {
+    if (!classes.trim()) return classes;
+    const wasm = _getWasm();
+    if (!wasm?.sort_tailwind_classes) return classes;
+    try { return wasm.sort_tailwind_classes(classes) as string; }
+    catch { return classes; }
+}
+
+/**
+ * Deduplicate + sort in one call.
+ * Use wherever a className string is committed to the element tree —
+ * e.g. in RightSidebar's updateProp('className', optimizeClasses(val)) handler.
+ */
+export function optimizeClasses(classes: string): string {
+    return sortClasses(deduplicateClasses(classes));
+}

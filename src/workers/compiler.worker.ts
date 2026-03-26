@@ -1,15 +1,22 @@
-// / <reference lib="webworker" /> --- COMPILER WEB WORKER --------------------------------------------------- Runs heavy JSX/TSX work off the main thread so the editor stays at 60fps
+// / <reference lib="webworker" /> --- COMPILER WEB WORKER ----------------------------------------
+// Runs heavy JSX/TSX compilation off the main thread so the editor stays at 60fps.
+// Migrated from Babel (importScripts) to Rust/SWC (WASM) — same API, 20-70x faster.
 
-declare function importScripts(...urls: string[]): void;
+import init, { SwcCompiler } from '../../vectra-engine/pkg/vectra_engine.js';
 
-// Load Babel from the local public folder (same origin, avoids CORS on workers)
-try {
-    importScripts('/babel.min.js');
-} catch (e) {
-    // Worker will still start; individual compile requests will fail gracefully
-    // with "Babel not available" rather than crashing the whole worker.
-    console.error('[Worker] Failed to load Babel via importScripts:', e);
-}
+let compiler: SwcCompiler | null = null;
+
+// ── Boot: initialise WASM SwcCompiler ──────────────────────────────────────
+// Module workers (type:'module') support top-level await and ES imports.
+// WASM init is async; messages received before it completes return a graceful error.
+(async () => {
+    try {
+        await init();
+        compiler = new SwcCompiler();
+    } catch (e) {
+        console.error('[CompilerWorker] WASM init failed:', e);
+    }
+})();
 
 // ── Security block-list ───────────────────────────────────────────────────────
 const BLOCKED: RegExp[] = [
@@ -27,7 +34,8 @@ const BLOCKED: RegExp[] = [
     /location\s*\.\s*(href|replace|assign)/,
 ];
 
-// ── Code sanitiser ──────────────────────────────────────────────────────────── Kept in-sync with codeSanitizer.ts manually. If you update codeSanitizer.ts, update this block too
+// ── Code sanitiser ────────────────────────────────────────────────────────────
+// Kept in-sync with codeSanitizer.ts manually.
 function sanitize(code: string): string {
     return code
         .replace(/^[ \t]*import\s+type?\s*\{[^}]*\}\s*from\s*['"][^'"]+['"];?\s*$/gm, '')
@@ -44,6 +52,29 @@ function sanitize(code: string): string {
         .trim();
 }
 
+// ── Post-compile: ESM → CJS shim ─────────────────────────────────────────────
+// SWC emits ESM syntax; the iframe sandbox executes via new Function() which
+// expects CJS-style exports. Mirrors the shim in swc.worker.ts.
+function shimExports(code: string): string {
+    return code
+        .replace(/export\s+default\s+function\s+(\w+)/, 'exports.default = function $1')
+        .replace(/export\s+default\s+class\s+(\w+)/, 'exports.default = class $1')
+        .replace(/export\s+default\s+/, 'exports.default = ')
+        .replace(/\bexport\s+(const|let|var|function|class)\b/g, '$1');
+}
+
+// ── Sandbox preamble ─────────────────────────────────────────────────────────
+// Hooks + Framer extras + DynamicIcon pre-declared so compiled code needs no imports.
+const PREAMBLE = [
+    'const { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useReducer, useContext, Fragment } = React;',
+    'const { useAnimation: _ua, useInView: _uiv, useMotionValue: _umv, useTransform: _utr } = _framerExtras;',
+    'const useAnimation = _ua, useInView = _uiv, useMotionValue = _umv, useTransform = _utr;',
+    'const DynamicIcon = ({ name, ...props }) => {',
+    '  const Comp = Lucide[name] || Lucide.HelpCircle || (() => null);',
+    '  return React.createElement(typeof Comp === "function" ? Comp : () => null, props);',
+    '};',
+].join('\n');
+
 self.onmessage = (e: MessageEvent) => {
     const { code, id } = e.data;
 
@@ -52,8 +83,17 @@ self.onmessage = (e: MessageEvent) => {
         return;
     }
 
+    // WASM not ready yet — return graceful error
+    if (!compiler) {
+        (self as any).postMessage({
+            id,
+            error: 'SWC compiler warming up — retry in a moment',
+        });
+        return;
+    }
+
     try {
-        // ── 1. Security scan (on raw code before any transform) ──────────────
+        // 1. Security scan (on raw code before any transform)
         const violation = BLOCKED.find(p => p.test(code));
         if (violation) {
             (self as any).postMessage({
@@ -63,73 +103,15 @@ self.onmessage = (e: MessageEvent) => {
             return;
         }
 
-        // ── 2. Sanitize: strip imports, fix curly quotes, fix icon syntax ────
+        // 2. Sanitize: strip imports, fix curly quotes, fix icon syntax
         const cleanCode = sanitize(code);
 
-        // ── 3. Babel transpilation — 3-tier fallback ─────────────────────────
-        const Babel = (self as any).Babel;
-        if (!Babel) {
-            (self as any).postMessage({
-                id,
-                error: 'Babel not available in worker — ensure /babel.min.js exists in public/',
-            });
-            return;
-        }
+        // 3. Compile TSX → JS via Rust SWC (20-70x faster than Babel)
+        const compiled = compiler.compile(cleanCode);
 
-        const BABEL_BASE = {
-            sourceType: 'module' as const,
-            configFile: false,
-            babelrc: false,
-        };
+        // 4. Shim ESM exports → CJS so the iframe sandbox can execute it
+        const sandboxCode = PREAMBLE + '\n' + shimExports(compiled);
 
-        let transpiled = '';
-        try {
-            // Tier 1: Full TypeScript + React + CommonJS
-            transpiled = Babel.transform(cleanCode, {
-                ...BABEL_BASE,
-                presets: [
-                    ['env', { modules: 'commonjs' }],
-                    ['react', { runtime: 'classic' }],
-                    ['typescript', { isTSX: true, allExtensions: true }],
-                ],
-                filename: 'component.tsx',
-            }).code;
-        } catch (_e1) {
-            try {
-                // Tier 2: Drop TypeScript preset (handles JSX-only components)
-                transpiled = Babel.transform(cleanCode, {
-                    ...BABEL_BASE,
-                    presets: [
-                        ['env', { modules: 'commonjs' }],
-                        ['react', { runtime: 'classic' }],
-                    ],
-                    filename: 'component.jsx',
-                }).code;
-            } catch (_e2) {
-                // Tier 3: Bare React transform only
-                transpiled = Babel.transform(cleanCode, {
-                    ...BABEL_BASE,
-                    presets: [['react', { runtime: 'classic' }]],
-                    filename: 'component.jsx',
-                }).code;
-            }
-        }
-
-        // ── 4. Assemble sandbox preamble ──────────────────────────────────────
-        // Hooks + Framer extras + DynamicIcon are pre-declared so the compiled
-        // code doesn't need any imports. Runtime values are injected by new Function().
-        const sandboxCode = [
-            'const { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect, useReducer, useContext, Fragment } = React;',
-            'const { useAnimation: _ua, useInView: _uiv, useMotionValue: _umv, useTransform: _utr } = _framerExtras;',
-            'const useAnimation = _ua, useInView = _uiv, useMotionValue = _umv, useTransform = _utr;',
-            'const DynamicIcon = ({ name, ...props }) => {',
-            '  const Comp = Lucide[name] || Lucide.HelpCircle || (() => null);',
-            '  return React.createElement(typeof Comp === "function" ? Comp : () => null, props);',
-            '};',
-            transpiled,
-        ].join('\n');
-
-        // Return both compiled code AND the cleaned source string. The main thread uses cleanCode to update element state so the next compile pass skips re-sanitising already-clean code
         (self as any).postMessage({ id, sandboxCode, cleanCode });
 
     } catch (err: any) {
@@ -137,8 +119,7 @@ self.onmessage = (e: MessageEvent) => {
     }
 };
 
-// ── NO export {} HERE ────────────────────────────────────────────────────────
-// An export statement switches TypeScript into ES module mode which causes
-// "importScripts is not defined" at runtime in classic workers.
-// The /// <reference lib="webworker" /> directive at the top of this file is
-// the correct way to get WorkerGlobalScope types without using export {}.
+// ── NO export {} HERE ─────────────────────────────────────────────────────────
+// Switching from classic worker (importScripts) to module worker (type:'module')
+// means we use ES imports at the top — no export{} needed, as the /// reference
+// directive handles WorkerGlobalScope types.

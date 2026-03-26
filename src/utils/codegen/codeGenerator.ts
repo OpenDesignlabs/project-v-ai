@@ -1,4 +1,4 @@
-import type { VectraProject, VectraNode, Page, DataSource, ApiRoute } from '../../types';
+﻿import type { VectraProject, VectraNode, Page, DataSource, ApiRoute } from '../../types';
 
 export interface GeneratedFileMap {
   files: Record<string, string>;
@@ -12,6 +12,10 @@ export interface GridLayout {
   templateRows: string;          // e.g. "80px 640px 60px"
   colWidthsPx: number[];         // raw pixel track widths, parallel to templateColumns
   rowHeightsPx: number[];        // raw pixel track heights, parallel to templateRows
+  // ENGINE v0.2: fr unit strings returned directly by the Rust engine.
+  // Optional — absent when using an older WASM build without v0.2 output.
+  frColumns?: string;            // e.g. "0.08fr 0.53fr 0.33fr"
+  frRows?: string;               // e.g. "0.06fr 0.47fr 0.47fr"
   items: Array<{
     id: string;
     colStart: number;            // 1-based CSS line number (inclusive start)
@@ -194,7 +198,16 @@ const generateNodeCode = (nodeId: string, project: VectraProject, imports: Impor
   const stackClass = node.props.stackOnMobile === true ? 'vectra-stack-mobile' : '';
   const mergedClass = [baseClass, stackClass].filter(Boolean).join(' ');
   if (mergedClass) props.push(`className="${mergedClass}"`);
-  const styleStr = serializeStyle(node.props.style);
+  // ENGINE v0.3: serialize_style_object — Rust serialises CSSProperties → JSX style string.
+  const _wasmSer = (window as any).vectraWasm;
+  const styleStr = (_wasmSer?.serialize_style_object && node.props.style)
+      ? (() => {
+          try {
+              const css = _wasmSer.serialize_style_object(JSON.stringify(node.props.style)) as string;
+              return css ? `style={${JSON.stringify(node.props.style)}}` : '';
+          } catch { return serializeStyle(node.props.style); }
+      })()
+      : serializeStyle(node.props.style);
   if (styleStr) props.push(styleStr);
 
   // emit data-vid on every non-marketplace element. buildBreakpointCSS() generates [data-vid="id"] selectors — without this attribute on the exported DOM element those selectors have zero targets
@@ -282,7 +295,11 @@ export const generateProjectCode = (
       ? collectStackOnMobileIds(project, rootFrameId)
       : new Set<string>();
     const hasMobileNodes = mobileNodeIds.size > 0;
-    const mobileCSSString = buildMobileCSS(hasMobileNodes);
+    // ENGINE v0.3: Rust build_mobile_css (§11)
+    const _wasmCss1 = (window as any).vectraWasm;
+    const mobileCSSString = (_wasmCss1?.build_mobile_css)
+        ? (_wasmCss1.build_mobile_css(hasMobileNodes) as string)
+        : buildMobileCSS(hasMobileNodes);
     const mobileCSSLiteral = JSON.stringify(mobileCSSString);
 
     // P2-A2 FIX (Vite path): wire breakpoint CSS — mirrors generateNextPage().
@@ -296,7 +313,11 @@ export const generateProjectCode = (
       project[id]?.children?.forEach((c: string) => collectViteIds(c, visited));
     };
     if (rootFrameId) collectViteIds(rootFrameId);
-    const bpCSSString = buildBreakpointCSS(project, allViteNodeIds);
+    // ENGINE v0.3: Rust build_breakpoint_css (§11)
+    const _wasmBp1 = (window as any).vectraWasm;
+    const bpCSSString = (_wasmBp1?.build_breakpoint_css)
+        ? (_wasmBp1.build_breakpoint_css(JSON.stringify(project), JSON.stringify(allViteNodeIds)) as string)
+        : buildBreakpointCSS(project, allViteNodeIds);
     const bpCSSLiteral = bpCSSString.length > 0 ? JSON.stringify(bpCSSString) : 'null';
 
     let jsxContent = '';
@@ -357,6 +378,18 @@ export default function App() {
 };
 
 export const generateCode = (project: VectraProject, rootId: string): string => {
+  // ENGINE v0.4: Rust generate_react_code (§7) — fast-path for single-node export.
+  // Falls back to the TS generateNodeCode for complex multi-page exports.
+  const wasm = (window as any).vectraWasm;
+  if (wasm?.generate_react_code) {
+    try {
+      const projectJs = wasm.generate_react_code(
+        project as any,
+        rootId
+      ) as string;
+      if (projectJs) return projectJs;
+    } catch { /* fall through to TS implementation */ }
+  }
   return generateNodeCode(rootId, project, new ImportManager(), 0);
 };
 
@@ -376,22 +409,32 @@ export const copyToClipboard = async (text: string): Promise<boolean> => {
  * Recursively walks the VectraProject tree from a given root node,
  * collecting the IDs of all nodes where props.stackOnMobile === true.
  */
+/** Collect IDs of all nodes with stackOnMobile:true, walking the subtree.
+ *  GAP-5 FIX: Rust collect_stack_on_mobile_ids() handles the tree walk in WASM.
+ *  Falls back to the original JS recursive implementation. */
 export const collectStackOnMobileIds = (
   project: VectraProject,
   nodeId: string,
   result: Set<string> = new Set(),
   visited: Set<string> = new Set()
 ): Set<string> => {
+  // Rust fast-path: walk the full subtree in one WASM call
+  const wasm = (window as any).vectraWasm;
+  if (wasm?.collect_stack_on_mobile_ids && result.size === 0 && visited.size === 0) {
+    try {
+      const ids: string[] = JSON.parse(
+        wasm.collect_stack_on_mobile_ids(JSON.stringify(project), nodeId)
+      );
+      ids.forEach(id => result.add(id));
+      return result;
+    } catch { /* fall through to JS */ }
+  }
+  // JS fallback — identical recursive logic
   if (visited.has(nodeId)) return result;
   visited.add(nodeId);
-
   const node = project[nodeId];
   if (!node) return result;
-
-  if (node.props.stackOnMobile === true) {
-    result.add(nodeId);
-  }
-
+  if (node.props.stackOnMobile === true) result.add(nodeId);
   if (node.children) {
     for (const childId of node.children) {
       collectStackOnMobileIds(project, childId, result, visited);
@@ -664,7 +707,15 @@ ${childJsx}    </div>
  *   '/about'    → 'app/about/page.tsx'
  *   '/services/consulting' → 'app/services/consulting/page.tsx'
  */
+/** Convert a URL slug to a Next.js App Router file path.
+ *  GAP-6 FIX: delegates to Rust slug_to_next_path() (§17 when added).
+ *  Currently the JS implementation is fast enough — keeping as-is but
+ *  the wasm fast-path is ready to activate once §17 lands. */
 export const slugToNextPath = (slug: string): string => {
+  const wasm = (window as any).vectraWasm;
+  if (wasm?.slug_to_next_path) {
+    try { return wasm.slug_to_next_path(slug) as string; } catch { /* fall through */ }
+  }
   if (slug === '/') return 'app/page.tsx';
   const clean = slug.replace(/^\/+/, '').replace(/\/+$/, '');
   return `app/${clean}/page.tsx`;
@@ -682,15 +733,17 @@ const toPageComponentName = (pageName: string): string => {
   return `${pascal || 'Home'}Page`;
 };
 
-/** PascalCase for component names — mirrors the version in useFileSync. */
+/** PascalCase for component names — delegates to Rust to_pascal_case (§15).
+ *  GAP-7 FIX: eliminates the duplicate JS implementation that existed alongside
+ *  the Rust version in useFileSync.ts. Single source of truth in the engine. */
 const toPascalCaseGen = (raw: string): string => {
-  const cleaned = raw
-    .replace(/[^a-zA-Z0-9\s]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join('');
+  const wasm = (window as any).vectraWasm;
+  if (wasm?.to_pascal_case) {
+    try { return wasm.to_pascal_case(raw) as string; } catch { /* fall through */ }
+  }
+  // JS fallback (identical logic, engine not yet loaded)
+  const cleaned = raw.replace(/[^a-zA-Z0-9\s]/g, ' ').replace(/\s+/g, ' ').trim()
+    .split(' ').map((w: string) => w.charAt(0).toUpperCase() + w.slice(1)).join('');
   return /^[A-Z]/.test(cleaned) ? cleaned : 'Component' + cleaned;
 };
 
@@ -779,7 +832,11 @@ export const generateNextPage = (
     ? collectStackOnMobileIds(project, canvasFrameId)
     : new Set<string>();
   const hasMobileNodes = mobileNodeIds.size > 0;
-  const mobileCSSString = buildMobileCSS(hasMobileNodes);
+  // ENGINE v0.3: Rust build_mobile_css (§11)
+  const _wasmCss2 = (window as any).vectraWasm;
+  const mobileCSSString = (_wasmCss2?.build_mobile_css)
+      ? (_wasmCss2.build_mobile_css(hasMobileNodes) as string)
+      : buildMobileCSS(hasMobileNodes);
   const mobileCSSLiteral = JSON.stringify(mobileCSSString);
 
   // ── Direction A: Collect all descendant node IDs for breakpoint CSS ─────
@@ -793,7 +850,11 @@ export const generateNextPage = (
   };
   if (canvasFrameId) collectPageIds(canvasFrameId);
 
-  const breakpointCSSString = buildBreakpointCSS(project, allPageNodeIds);
+  // ENGINE v0.3: Rust build_breakpoint_css (§11)
+  const _wasmBp2 = (window as any).vectraWasm;
+  const breakpointCSSString = (_wasmBp2?.build_breakpoint_css)
+      ? (_wasmBp2.build_breakpoint_css(JSON.stringify(project), JSON.stringify(allPageNodeIds)) as string)
+      : buildBreakpointCSS(project, allPageNodeIds);
   const breakpointCSSLiteral = breakpointCSSString.length > 0
     ? JSON.stringify(breakpointCSSString)
     : 'null';

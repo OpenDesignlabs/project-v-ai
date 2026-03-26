@@ -1,5 +1,4 @@
 import React, { useMemo } from 'react';
-import * as Babel from '@babel/standalone';
 import * as LucideIcons from 'lucide-react';
 
 interface CodeRendererProps {
@@ -67,29 +66,17 @@ export const CodeRenderer: React.FC<CodeRendererProps> = ({ code }) => {
                 }
             }
 
-            // 3. TRANSPILE (THE HEAVY LIFTING)
+            // 3. TRANSPILE via Rust/SWC (WASM) — no Babel dependency
             let transpiledCode = "";
 
-            if ((window as any).vectraWasm?.compile_component) {
-                // --- RUST PATH (SWC) ---
-                // Uses WASM to strip types and convert JSX -> JS. Extremely fast (20-70x faster than Babel).
-                try {
-                    transpiledCode = (window as any).vectraWasm.compile_component(functionalCode);
-                    console.log("Live compiler: Rust/SWC path used");
-                } catch (e) {
-                    console.warn("Rust compilation failed, falling back to Babel", e);
-                    // Fallback to Babel if Rust panics or fails
-                    transpiledCode = Babel.transform(functionalCode, {
-                        presets: ['react', 'env', 'typescript'],
-                        filename: 'file.tsx'
-                    }).code || '';
-                }
+            const swc = (window as any).vectraWasm;
+            if (swc?.compile_component) {
+                // Primary path: SwcCompiler instantiated in ProjectContext on boot.
+                transpiledCode = swc.compile_component(functionalCode);
             } else {
-                // --- LEGACY PATH (Babel) ---
-                transpiledCode = Babel.transform(functionalCode, {
-                    presets: ['react', 'env', 'typescript'],
-                    filename: 'file.tsx'
-                }).code || '';
+                // WASM not ready yet (e.g. still booting) — throw so the
+                // catch block shows the "Compiler warming up" error UI.
+                throw new Error('SWC compiler not ready — retry in a moment');
             }
 
             if (!transpiledCode) throw new Error('Compilation failed');
